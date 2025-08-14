@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/Edgeberry/fleethub/core-service
 Environment=NODE_ENV=production
+Environment=PORT=80
 EnvironmentFile=-/etc/Edgeberry/fleethub/core.env
 # Optionally serve built UI from /opt/Edgeberry/fleethub/ui/build
 Environment=UI_DIST=/opt/Edgeberry/fleethub/ui/build

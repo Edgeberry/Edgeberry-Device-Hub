@@ -6,7 +6,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 
 const app = express();
-const PORT = Number(process.env.PORT || 8080);
+const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 8080));
 
 app.use(morgan('dev'));
 app.use(cors());

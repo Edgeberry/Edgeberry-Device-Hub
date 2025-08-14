@@ -105,22 +105,22 @@ ensure_deps() {
 }
 
 ensure_deps "$ROOT_DIR/core-service"
-ensure_deps "$ROOT_DIR/api"
 ensure_deps "$ROOT_DIR/provisioning-service"
 ensure_deps "$ROOT_DIR/twin-service"
 ensure_deps "$ROOT_DIR/registry-service"
-ensure_deps "$ROOT_DIR/ui"  # optional
 
-start_mosquitto
+if [[ "${DEV_MOSQUITTO:-0}" = "1" ]]; then
+  start_mosquitto
+else
+  log "skipping mosquitto (set DEV_MOSQUITTO=1 to enable)"
+fi
+# Core-service exposes both API and UI on port 8080 in development
 start_service core-service core-service
-start_service api api
 start_service provisioning-service provisioning-service
 start_service twin-service twin-service
 start_service registry-service registry-service
-# UI is optional; start if present
-start_service ui ui || true
 
-log "all dev processes started (PIDs: ${PIDS[*]-}). Press Ctrl-C to stop."
+log "all dev processes started (PIDs: ${PIDS[*]-}). Core-service listening on http://localhost:8080. Press Ctrl-C to stop."
 
 # Wait on any to exit, then shutdown all
 wait -n || true
