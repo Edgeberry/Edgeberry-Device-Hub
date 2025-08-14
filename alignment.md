@@ -174,7 +174,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `/health` — detailed health view
 - `/devices/:assetId` — device detail placeholder
 - `/settings` — placeholder
-- Additional placeholders: `/login`, `/register`, `/logout`
+- Auth routes: `/login`, `/logout` (registration disabled for MVP; UI hides any register links)
 
 ### Core Components
 
@@ -255,7 +255,27 @@ Registry includes certificate metadata to anchor identity:
 
 - `cert_subject`, `cert_fingerprint`, `cert_expires_at`
 
-Enrollment binds the presented certificate to the device record. Certificate rotation will be handled post-MVP.
+- Enrollment binds the presented certificate to the device record. Certificate rotation will be handled post-MVP.
+
+### Admin Authentication (MVP)
+
+For the dashboard and HTTP APIs, the MVP uses a simple single-user admin login enforced by `core-service`:
+
+- Login required for all UI pages and `/api/*` endpoints, except health (`/healthz`, `/api/health`) and auth endpoints.
+- No registration endpoint exists in the MVP; registration links are hidden in the UI.
+- Endpoints:
+  - `POST /api/auth/login` with `{ username, password }`.
+  - `POST /api/auth/logout` clears the session.
+  - `GET /api/auth/me` returns `{ authenticated, user? }`.
+- Session:
+  - HttpOnly cookie `fh_session`; in-memory session store (sufficient for MVP, single-instance).
+  - SameSite=Lax; set `Secure` when behind HTTPS in production.
+- Configuration:
+  - `ADMIN_USER` (default `admin`)
+  - `ADMIN_PASSWORD` (default `admin`; MUST be overridden in production)
+- UI behavior:
+  - When the SPA is present, `core-service` injects a minimal auth bar showing the current admin and a Logout button, and hides common registration affordances.
+  - When the SPA is absent (fallback HTML), the page includes a login form and a header that reflects the signed-in admin.
 
 ### Fleet Provisioning Model (Current)
 

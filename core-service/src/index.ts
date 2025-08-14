@@ -5,12 +5,14 @@ import cors from 'cors';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
+import crypto from 'crypto';
 
 const app = express();
 const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 8080));
 
 app.use(morgan('dev'));
 app.use(cors());
+app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' }));
 
 // Core-service owns the public HTTP(S) surface: define API routes here.
@@ -55,6 +57,299 @@ function buildJournalctlArgs(opts: {
   args.push('-o', opts.output ?? 'json');
   return args;
 }
+
+// ===== Simple single-user admin authentication =====
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin'; // NOTE: change in production
+const SESSION_COOKIE = 'fh_session';
+type Session = { user: string; createdAt: number };
+const sessions = new Map<string, Session>();
+
+function parseCookies(header?: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  const parts = header.split(';');
+  for (const p of parts) {
+    const idx = p.indexOf('=');
+    if (idx === -1) continue;
+    const k = decodeURIComponent(p.slice(0, idx).trim());
+    const v = decodeURIComponent(p.slice(idx + 1).trim());
+    out[k] = v;
+  }
+  return out;
+}
+
+function getSession(req: Request): Session | null {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies[SESSION_COOKIE];
+  if (!token) return null;
+  const s = sessions.get(token);
+  return s || null;
+}
+
+function setSessionCookie(res: Response, token: string) {
+  const isHttps = false; // adjust if terminating TLS here
+  const attrs = [
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (isHttps) attrs.push('Secure');
+  res.setHeader('Set-Cookie', attrs.join('; '));
+}
+
+function clearSessionCookie(res: Response) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
+}
+
+// Auth routes (no registration)
+app.post('/api/auth/login', (req: Request, res: Response) => {
+  const { username, password } = req.body || {};
+  if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
+    const token = crypto.randomBytes(24).toString('hex');
+    sessions.set(token, { user: ADMIN_USER, createdAt: Date.now() });
+    setSessionCookie(res, token);
+    res.json({ ok: true, user: ADMIN_USER });
+  } else {
+    res.status(401).json({ ok: false, error: 'invalid credentials' });
+  }
+});
+
+app.post('/api/auth/logout', (req: Request, res: Response) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies[SESSION_COOKIE];
+  if (token) sessions.delete(token);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/me', (req: Request, res: Response) => {
+  const s = getSession(req);
+  if (!s) { res.status(401).json({ authenticated: false }); return; }
+  res.json({ authenticated: true, user: s.user });
+});
+
+// Middleware: protect APIs (except health and auth) and UI
+function authRequired(req: Request, res: Response, next: NextFunction) {
+  // Public endpoints
+  if (req.path === '/healthz' || req.path === '/api/health') return next();
+  if (req.path.startsWith('/api/auth/')) return next();
+  const s = getSession(req);
+  if (!s) {
+    if (req.path.startsWith('/api/')) {
+      res.status(401).json({ error: 'unauthorized' });
+    } else {
+      // For GET pages, show login
+      if (req.method === 'GET') return serveLoginPage(req, res);
+      res.status(401).send('unauthorized');
+    }
+    return;
+  }
+  next();
+}
+
+app.use(authRequired);
+
+function serveLoginPage(_req: Request, res: Response) {
+  res.type('html').send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet Hub — Login</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;line-height:1.4;margin:2rem;color:#111;display:flex;align-items:center;justify-content:center;height:100vh;background:#f6f8fa}
+      .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.06);padding:24px;max-width:340px;width:100%}
+      h1{font-size:18px;margin:0 0 12px}
+      label{display:block;font-size:12px;color:#555;margin-top:8px}
+      input{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;margin-top:4px}
+      button{width:100%;margin-top:14px;padding:10px 12px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:8px;cursor:pointer}
+      .err{color:#b00020;font-size:12px;height:14px;margin-top:6px}
+      .muted{color:#666;font-size:12px;margin-top:8px}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Admin login</h1>
+      <label>Username</label>
+      <input id="u" placeholder="admin" />
+      <label>Password</label>
+      <input id="p" type="password" placeholder="••••••" />
+      <div class="err" id="e"></div>
+      <button onclick="login()">Sign in</button>
+      <div class="muted">Registration is disabled.</div>
+    </div>
+    <script>
+      async function login(){
+        const username = (document.getElementById('u')).value || 'admin';
+        const password = (document.getElementById('p')).value || '';
+        const res = await fetch('/api/auth/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ username, password })});
+        if (res.ok){ location.href = '/'; } else { const d = await res.json().catch(()=>({})); document.getElementById('e').textContent = d.error || 'Login failed'; }
+      }
+      window.addEventListener('keydown', (e)=>{ if(e.key==='Enter') login(); });
+    </script>
+  </body>
+</html>`);
+}
+
+// ===== Server Settings & Certificate Management =====
+// Filesystem layout (configurable via env):
+//  ROOT: CERTS_DIR (default: ./data/certs relative to process cwd)
+//   - root/ca.key, root/ca.crt
+//   - provisioning/ (issued provisioning certs)
+const CERTS_DIR = process.env.CERTS_DIR || path.resolve(process.cwd(), 'data', 'certs');
+const ROOT_DIR = path.join(CERTS_DIR, 'root');
+const PROV_DIR = path.join(CERTS_DIR, 'provisioning');
+const CA_KEY = path.join(ROOT_DIR, 'ca.key');
+const CA_CRT = path.join(ROOT_DIR, 'ca.crt');
+
+function ensureDirs() {
+  for (const d of [CERTS_DIR, ROOT_DIR, PROV_DIR]) {
+    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  }
+}
+
+function runCmd(cmd: string, args: string[], input?: string): Promise<{ code: number | null; out: string; err: string }>{
+  return new Promise((resolve) => {
+    const p = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const out: string[] = [];
+    const err: string[] = [];
+    p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
+    p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
+    if (input) {
+      p.stdin.write(input);
+      p.stdin.end();
+    }
+    p.on('close', (code) => resolve({ code, out: out.join(''), err: err.join('') }));
+  });
+}
+
+async function caExists(): Promise<boolean> {
+  return fs.existsSync(CA_KEY) && fs.existsSync(CA_CRT);
+}
+
+async function generateRootCA(params?: { cn?: string; days?: number; keyBits?: number }): Promise<void> {
+  ensureDirs();
+  const cn = params?.cn || 'Edgeberry Fleet Hub Root CA';
+  const days = String(params?.days ?? 3650);
+  const keyBits = String(params?.keyBits ?? 4096);
+  // Generate private key
+  const keyRes = await runCmd('openssl', ['genrsa', '-out', CA_KEY, keyBits]);
+  if (keyRes.code !== 0) throw new Error(`openssl genrsa failed: ${keyRes.err || keyRes.out}`);
+  // Self-signed cert
+  const subj = `/CN=${cn}`;
+  const crtRes = await runCmd('openssl', ['req', '-x509', '-new', '-nodes', '-key', CA_KEY, '-sha256', '-days', days, '-subj', subj, '-out', CA_CRT]);
+  if (crtRes.code !== 0) throw new Error(`openssl req -x509 failed: ${crtRes.err || crtRes.out}`);
+}
+
+async function readCertMeta(pemPath: string): Promise<{ fingerprintSha256?: string; notAfter?: string; subject?: string }>{
+  if (!fs.existsSync(pemPath)) return {};
+  const fp = await runCmd('openssl', ['x509', '-noout', '-fingerprint', '-sha256', '-in', pemPath]);
+  const nd = await runCmd('openssl', ['x509', '-noout', '-enddate', '-in', pemPath]);
+  const sj = await runCmd('openssl', ['x509', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', pemPath]);
+  return {
+    fingerprintSha256: fp.out.toString().trim().split('=').pop(),
+    notAfter: nd.out.toString().trim().split('=').pop(),
+    subject: sj.out.toString().trim().replace(/^subject=/, ''),
+  };
+}
+
+async function issueProvisioningCert(name: string, days?: number): Promise<{ certPath: string; keyPath: string }>{
+  ensureDirs();
+  if (!(await caExists())) throw new Error('Root CA not found. Generate it first.');
+  const base = name.replace(/[^A-Za-z0-9._-]/g, '_');
+  const keyPath = path.join(PROV_DIR, `${base}.key`);
+  const csrPath = path.join(PROV_DIR, `${base}.csr`);
+  const crtPath = path.join(PROV_DIR, `${base}.crt`);
+  const daysStr = String(days ?? 825);
+  // key
+  let r = await runCmd('openssl', ['genrsa', '-out', keyPath, '2048']);
+  if (r.code !== 0) throw new Error(`openssl genrsa failed: ${r.err || r.out}`);
+  // csr
+  r = await runCmd('openssl', ['req', '-new', '-key', keyPath, '-subj', `/CN=${name}`,'-out', csrPath]);
+  if (r.code !== 0) throw new Error(`openssl req -new failed: ${r.err || r.out}`);
+  // sign with CA
+  r = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT, '-CAkey', CA_KEY, '-CAcreateserial', '-out', crtPath, '-days', daysStr, '-sha256']);
+  if (r.code !== 0) throw new Error(`openssl x509 -req failed: ${r.err || r.out}`);
+  // cleanup csr (optional)
+  try { fs.unlinkSync(csrPath); } catch {}
+  return { certPath: crtPath, keyPath };
+}
+
+// GET /api/settings/server -> snapshot of server-level settings
+app.get('/api/settings/server', async (_req: Request, res: Response) => {
+  try {
+    ensureDirs();
+    const rootPresent = await caExists();
+    const caMeta = await readCertMeta(CA_CRT);
+    const mqttUrl = process.env.MQTT_URL || 'mqtt://localhost:1883';
+    res.json({
+      certsDir: CERTS_DIR,
+      root: { present: rootPresent, key: CA_KEY, cert: CA_CRT, meta: caMeta },
+      provisioningDir: PROV_DIR,
+      settings: { MQTT_URL: mqttUrl, UI_DIST: process.env.UI_DIST || '/opt/Edgeberry/fleethub/ui/build' }
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to read settings' });
+  }
+});
+
+// GET /api/settings/certs/root -> PEM + meta (if present)
+app.get('/api/settings/certs/root', async (_req: Request, res: Response) => {
+  try {
+    if (!(await caExists())) { res.status(404).json({ error: 'root CA not found' }); return; }
+    const pem = fs.readFileSync(CA_CRT, 'utf8');
+    const meta = await readCertMeta(CA_CRT);
+    res.json({ pem, meta });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to read root cert' });
+  }
+});
+
+// POST /api/settings/certs/root { cn?, days?, keyBits? }
+app.post('/api/settings/certs/root', async (req: Request, res: Response) => {
+  try {
+    if (await caExists()) { res.status(409).json({ error: 'root CA already exists' }); return; }
+    const { cn, days, keyBits } = req.body || {};
+    await generateRootCA({ cn, days, keyBits });
+    const meta = await readCertMeta(CA_CRT);
+    res.json({ ok: true, key: CA_KEY, cert: CA_CRT, meta });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to generate root CA' });
+  }
+});
+
+// GET /api/settings/certs/provisioning -> list issued provisioning certs (metadata)
+app.get('/api/settings/certs/provisioning', async (_req: Request, res: Response) => {
+  try {
+    ensureDirs();
+    if (!fs.existsSync(PROV_DIR)) { res.json({ certs: [] }); return; }
+    const files = fs.readdirSync(PROV_DIR).filter(f => f.endsWith('.crt'));
+    const certs = await Promise.all(files.map(async (f) => {
+      const full = path.join(PROV_DIR, f);
+      const name = path.basename(f, '.crt');
+      const meta = await readCertMeta(full);
+      return { name, cert: full, key: path.join(PROV_DIR, `${name}.key`), meta };
+    }));
+    res.json({ certs });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to list provisioning certs' });
+  }
+});
+
+// POST /api/settings/certs/provisioning { name, days? }
+app.post('/api/settings/certs/provisioning', async (req: Request, res: Response) => {
+  try {
+    const { name, days } = req.body || {};
+    if (!name || typeof name !== 'string') { res.status(400).json({ error: 'name is required' }); return; }
+    const result = await issueProvisioningCert(name, typeof days === 'number' ? days : undefined);
+    const meta = await readCertMeta(result.certPath);
+    res.json({ ok: true, cert: result.certPath, key: result.keyPath, meta });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to issue provisioning cert' });
+  }
+});
 
 // GET /api/services -> systemd unit status snapshot
 app.get('/api/services', async (_req: Request, res: Response) => {
@@ -317,8 +612,13 @@ if (!UI_READY) {
     </style>
   </head>
   <body>
-    <h1>Edgeberry Fleet Hub</h1>
-    <div class="muted">Hello World demo — core-service serves UI and API</div>
+    <header style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div>
+        <h1 style="margin:0">Edgeberry Fleet Hub</h1>
+        <div class="muted">Hello World demo — core-service serves UI and API</div>
+      </div>
+      <div id="nav-user" class="muted">Loading user…</div>
+    </header>
     <div class="actions">
       <button id="emit">Emit demo hello logs</button>
     </div>
@@ -329,6 +629,16 @@ if (!UI_READY) {
     </table>
     <h2>Recent logs</h2>
     <pre id="logs">loading…</pre>
+    <h2>Server settings</h2>
+    <div id="settings">
+      <button id="load-settings">Load settings</button>
+      <button id="gen-root">Generate Root CA</button>
+      <div><pre id="set-json">(click Load settings)</pre></div>
+      <div>
+        <input id="prov-name" placeholder="provisioning cert name" />
+        <button id="issue-prov">Issue provisioning cert</button>
+      </div>
+    </div>
     <script>
       async function refreshServices(){
         const res = await fetch('/api/services');
@@ -358,9 +668,44 @@ if (!UI_READY) {
         await fetch('/api/logs/hello', { method: 'POST' });
         setTimeout(loadLogs, 500);
       }
+      async function whoAmI(){
+        try{
+          const r = await fetch('/api/auth/me');
+          if(!r.ok) throw new Error('unauth');
+          const d = await r.json();
+          const el = document.getElementById('nav-user');
+          el.innerHTML = 'Signed in as <b>' + (d.user || 'admin') + '</b> · <a href="#" id="logout">Logout</a>';
+          document.getElementById('logout').addEventListener('click', async (e)=>{ e.preventDefault(); await fetch('/api/auth/logout',{method:'POST'}); location.reload(); });
+        }catch{
+          const el = document.getElementById('nav-user');
+          el.textContent = 'Not signed in';
+        }
+      }
+      async function loadSettings(){
+        const res = await fetch('/api/settings/server');
+        const data = await res.json();
+        document.getElementById('set-json').textContent = JSON.stringify(data, null, 2);
+      }
+      async function genRoot(){
+        const res = await fetch('/api/settings/certs/root', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        alert('Root CA: ' + (data.error || data.cert));
+        loadSettings();
+      }
+      async function issueProv(){
+        const name = document.getElementById('prov-name').value || 'provisioning';
+        const res = await fetch('/api/settings/certs/provisioning', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+        const data = await res.json();
+        alert('Issued: ' + (data.error || data.cert));
+        loadSettings();
+      }
       document.getElementById('emit').addEventListener('click', emitHello);
+      document.getElementById('load-settings').addEventListener('click', loadSettings);
+      document.getElementById('gen-root').addEventListener('click', genRoot);
+      document.getElementById('issue-prov').addEventListener('click', issueProv);
       refreshServices();
       loadLogs();
+      whoAmI();
       setInterval(refreshServices, 5000);
     </script>
   </body>
@@ -371,10 +716,31 @@ if (!UI_READY) {
 // Serve built UI and SPA fallback only when UI is ready
 if (UI_READY) {
   app.use(express.static(UI_DIST));
+  // Lightweight admin page available even when UI exists
+  app.get('/admin/settings', (_req: Request, res: Response) => {
+    res.redirect('/'); // In a future commit, this can serve a dedicated admin page within SPA
+  });
+
+  // Inject an auth navbar and hide registration affordances when serving index.html
+  function renderInjectedIndex(_req: Request, res: Response) {
+    try {
+      let html = fs.readFileSync(UI_INDEX, 'utf8');
+      const injectHead = `\n<style>\n  .fh-authbar{position:sticky;top:0;z-index:1000;background:#0b1020;color:#e6edf3;padding:8px 12px;display:flex;justify-content:flex-end;gap:8px;font:14px system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}\n  .fh-authbar a{color:#8ab4f8}\n</style>\n`;
+      const injectBodyEnd = `\n<script>\n(async function(){\n  try{\n    const r = await fetch('/api/auth/me');\n    if(!r.ok) throw new Error();\n    const d = await r.json();\n    // Add auth bar\n    const bar = document.createElement('div');\n    bar.className='fh-authbar';\n    bar.innerHTML = 'Signed in as <b>' + (d.user||'admin') + '</b> · <a href="#" id="fh-logout">Logout</a>';\n    document.body.prepend(bar);\n    document.getElementById('fh-logout').addEventListener('click', async function(e){ e.preventDefault(); await fetch('/api/auth/logout',{method:'POST'}); location.reload(); });\n    // Hide registration affordances (best-effort)\n    const hideSelectors = [\n      'a[href*="register"]', 'a[href*="signup"]', 'a[href*="sign-up"]',\n      '#register', '#signup', '.register', '.signup'\n    ];\n    for (const sel of hideSelectors){ document.querySelectorAll(sel).forEach(el => { (el).style.display = 'none'; }); }\n    // Hide by text content (case-insensitive contains)\n    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);\n    while (walker.nextNode()){\n      const el = walker.currentNode;\n      if (el && el.textContent && /register|sign\s*up/i.test(el.textContent)){ try{ el.style.display='none'; }catch{} }\n    }\n  }catch(e){ /* not logged in: let auth middleware show login */ }\n})();\n</script>\n`;
+      html = html.replace('</head>', injectHead + '</head>');
+      html = html.replace('</body>', injectBodyEnd + '</body>');
+      res.type('html').send(html);
+    } catch (e) {
+      // Fallback
+      res.sendFile(UI_INDEX);
+    }
+  }
+
+  // Root and SPA fallback
+  app.get('/', renderInjectedIndex);
   app.get('*', (_req: Request, res: Response, next: NextFunction) => {
-    res.sendFile(UI_INDEX, (err: unknown) => {
-      if (err) next();
-    });
+    // Serve the SPA index with injection for client-side routes
+    renderInjectedIndex(_req, res);
   });
 }
 

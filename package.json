@@ -5,6 +5,7 @@
   "description": "Edgeberry Fleet Hub monorepo root",
   "license": "GPL-3.0-or-later",
   "scripts": {
+    "predev": "bash scripts/build-all.sh",
     "dev": "bash scripts/dev_start.sh",
     "build": "bash scripts/build-all.sh",
     "deploy": "bash scripts/deploy.sh"
