@@ -12,6 +12,13 @@ export async function getPublicConfig(){ return jsonOrMessage(await fetch(base()
 
 // Core-service unified services status
 export async function getServices(){ return jsonOrMessage(await fetch(base()+"/services", { credentials:'include' })); }
+export async function getMetrics(){
+  try{
+    return await jsonOrMessage(await fetch(base()+"/metrics", { credentials:'include' }));
+  }catch{
+    return {} as any;
+  }
+}
 export async function getServiceLogs(unit: string, lines: number = 200){
   const url = base()+`/logs?unit=${encodeURIComponent(unit)}&lines=${encodeURIComponent(lines)}`;
   return jsonOrMessage(await fetch(url, { credentials:'include' }));

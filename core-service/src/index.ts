@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import cors from 'cors';
 import { spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 
 const app = express();
 const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 8080));
@@ -76,6 +77,93 @@ app.get('/api/services', async (_req: Request, res: Response) => {
   res.json({ services: checks });
 });
 
+// GET /api/metrics -> system metrics snapshot
+app.get('/api/metrics', async (_req: Request, res: Response) => {
+  try {
+    // CPU
+    const load = os.loadavg();
+    const cores = os.cpus()?.length || 1;
+    const cpu = {
+      load1: load[0],
+      load5: load[1],
+      load15: load[2],
+      cores,
+      // Approximate usage: 1-min load divided by cores, as percentage (capped 100)
+      approxUsagePercent: Math.min(100, Math.max(0, (load[0] / cores) * 100)),
+    };
+
+    // Memory
+    const total = os.totalmem();
+    const free = os.freemem();
+    const used = total - free;
+    const mem = {
+      total,
+      free,
+      used,
+      usedPercent: total > 0 ? (used / total) * 100 : 0,
+    };
+
+    // Disk (use df)
+    const disk = await new Promise<{ mounts: Array<{ target: string; usedBytes: number; sizeBytes: number; usedPercent: number }> }>((resolve) => {
+      const p = spawn('df', ['-k', '--output=target,size,used', '-x', 'tmpfs', '-x', 'devtmpfs']);
+      const out: string[] = [];
+      p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
+      p.on('close', () => {
+        const lines = out.join('').trim().split('\n');
+        // header: Mounted on Size Used
+        const mounts: Array<{ target: string; usedBytes: number; sizeBytes: number; usedPercent: number }> = [];
+        for (let i = 1; i < lines.length; i++) {
+          const parts = lines[i].trim().split(/\s+/);
+          if (parts.length < 3) continue;
+          const target = parts[0];
+          const sizeKB = Number(parts[1]);
+          const usedKB = Number(parts[2]);
+          const sizeBytes = sizeKB * 1024;
+          const usedBytes = usedKB * 1024;
+          const usedPercent = sizeBytes > 0 ? (usedBytes / sizeBytes) * 100 : 0;
+          mounts.push({ target, usedBytes, sizeBytes, usedPercent });
+        }
+        resolve({ mounts });
+      });
+    });
+
+    // Network (/proc/net/dev)
+    function readNetDev(){
+      try{
+        const txt = fs.readFileSync('/proc/net/dev', 'utf8');
+        const lines = txt.split('\n').slice(2); // skip headers
+        const ifaces: Record<string, { rxBytes: number; txBytes: number }> = {};
+        for(const line of lines){
+          const m = line.trim().match(/([^:]+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)/);
+          if(!m) continue;
+          const name = m[1].trim();
+          const rxBytes = Number(m[2]);
+          const txBytes = Number(m[3]);
+          if (name === 'lo') continue; // skip loopback
+          ifaces[name] = { rxBytes, txBytes };
+        }
+        return ifaces;
+      }catch{
+        return {} as Record<string, { rxBytes: number; txBytes: number }>;
+      }
+    }
+    const netIfaces = readNetDev();
+    const netSummary = Object.values(netIfaces).reduce((acc, v) => {
+      acc.rxBytes += v.rxBytes; acc.txBytes += v.txBytes; return acc;
+    }, { rxBytes: 0, txBytes: 0 });
+
+    res.json({
+      cpu,
+      memory: mem,
+      disk,
+      network: { total: netSummary, interfaces: netIfaces },
+      uptimeSec: os.uptime(),
+      timestamp: Date.now()
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to read metrics' });
+  }
+});
 // GET /api/logs -> recent logs snapshot
 // Query: units=comma,separated (optional), lines=number (default 200), since=systemd-time (optional)
 app.get('/api/logs', (req: Request, res: Response) => {

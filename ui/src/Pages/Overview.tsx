@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Table } from 'react-bootstrap';
 import HealthWidget from '../components/HealthWidget';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
+import SystemMetricsWidget from '../components/SystemMetricsWidget';
 import { getDevices } from '../api/fleethub';
 import { Link } from 'react-router-dom';
 
@@ -20,6 +21,7 @@ export default function Overview(props:{user:any}){
     <div>
       <HealthWidget />
       <ServiceStatusWidget user={props.user} />
+      <SystemMetricsWidget />
 
       <Card>
         <Card.Header>Devices</Card.Header>
