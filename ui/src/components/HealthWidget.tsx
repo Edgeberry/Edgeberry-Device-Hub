@@ -1,3 +1,10 @@
+/**
+ * Health widget
+ *
+ * Summarizes service health/status/version/public config using `/api/health`,
+ * `/api/status`, `/api/version`, and `/api/config/public`. Intended for quick
+ * at-a-glance status on the dashboard.
+ */
 import { useEffect, useState } from 'react';
 import { Card, Col, Row, Badge, Spinner } from 'react-bootstrap';
 import { getHealth, getStatus, getVersion, getPublicConfig } from '../api/fleethub';

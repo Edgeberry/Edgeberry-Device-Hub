@@ -1,3 +1,12 @@
+/**
+ * App shell and routing.
+ *
+ * Auth model: single-user admin. We verify authentication via `/api/auth/me`
+ * and store a minimal `user` object in state with `roles: ['admin']`.
+ * All application routes are wrapped in `RequireAuth`, which redirects to `/login`
+ * when unauthenticated. After login/logout the shell refreshes auth state
+ * using `refreshUser()` which re-queries `/api/auth/me`.
+ */
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard from './Pages/Dashboard';

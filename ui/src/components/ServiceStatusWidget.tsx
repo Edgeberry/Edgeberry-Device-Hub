@@ -1,3 +1,10 @@
+/**
+ * Services status widget
+ *
+ * Lists systemd service units exposed by the core-service and allows
+ * viewing recent logs and performing admin actions (start/stop/restart).
+ * Action buttons are enabled only for authenticated admin (single-user MVP).
+ */
 import React, { useEffect, useState } from 'react';
 import { Card, Badge, Spinner, Button, Row, Col, Modal } from 'react-bootstrap';
 import { getServices, getServiceLogs, startService, stopService, restartService } from '../api/fleethub';

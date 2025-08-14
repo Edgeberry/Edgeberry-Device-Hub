@@ -1,3 +1,9 @@
+/**
+ * Top navigation bar and off-canvas menu.
+ *
+ * Shows inline auth status ("Signed in as ...") and conditionally renders
+ * admin-only links (Settings, Logout) when a `user` is present.
+ */
 import { Button, Container, ListGroup, Nav, Navbar, Offcanvas } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faBars, faCogs, faGear, faMicrochip, faSignOutAlt } from "@fortawesome/free-solid-svg-icons";
@@ -40,7 +46,7 @@ const NavigationBar = (props:{user:any|null})=>{
                             <ListGroup.Item as={Link} to='/logout' onClick={()=>{setShow(false)}}>
                                 <FontAwesomeIcon icon={faSignOutAlt} /> Log out
                             </ListGroup.Item>
-                            {/* Admin features are integrated; no dedicated page/link */}
+                            {/* Admin features are integrated across pages; no dedicated page/link */}
                         </> : <>
                             <ListGroup.Item as={Link} to='/login' onClick={()=>{setShow(false)}}>
                                 Login

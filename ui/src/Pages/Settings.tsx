@@ -1,3 +1,10 @@
+/**
+ * Settings page
+ *
+ * Shows server snapshot, Root CA status/generation/download, and provisioning
+ * certificates (list, issue, inspect, delete, download bundle). Interacts with
+ * `/api/settings/*` endpoints and requires admin login.
+ */
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Card, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
 

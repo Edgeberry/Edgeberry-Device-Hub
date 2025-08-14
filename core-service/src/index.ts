@@ -1,3 +1,13 @@
+/**
+ * Edgeberry Fleet Hub core-service
+ *
+ * Responsibilities:
+ * - Serve the SPA and expose JSON APIs under `/api/*`.
+ * - Single-user admin auth using JWT stored in an HttpOnly cookie (`fh_session`).
+ * - Global no-cache headers for `/api/*` to avoid stale auth/UI state.
+ * - Certificate management: Root CA and provisioning certificates (inspect, create, delete, download).
+ * - Convenience downloads: Root CA PEM and provisioning bundle tar.gz.
+ */
 import express, { type Request, type Response, type NextFunction } from 'express';
 import path from 'path';
 import morgan from 'morgan';

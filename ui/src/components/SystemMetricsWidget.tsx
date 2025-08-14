@@ -1,3 +1,9 @@
+/**
+ * System metrics widget
+ *
+ * Displays CPU, memory, disk and network metrics from the core-service `/metrics` endpoint.
+ * Auto-refreshes every 10 seconds. Clicking a tile opens a modal with details.
+ */
 import React, { useEffect, useState } from 'react';
 import { Badge, Button, Card, Col, Modal, Row, Spinner } from 'react-bootstrap';
 import { getMetrics } from '../api/fleethub';

@@ -1,16 +1,25 @@
-/* Fleet Hub API client */
+/**
+ * Fleet Hub API client
+ *
+ * Thin wrapper around `fetch` for the core-service API. All requests include
+ * `credentials: 'include'` so the HttpOnly JWT cookie is sent automatically.
+ *
+ * Conventions:
+ * - Each function returns JSON (or an `{ message }` object) for easy rendering.
+ * - Endpoints are grouped by feature area (health, services, devices).
+ */
 async function jsonOrMessage(res: Response){
   try{ return await res.json(); }catch(err:any){ return { message: err?.toString?.() || 'Invalid JSON' }; }
 }
 const base = () => window.location.origin + '/api';
 
-// Health/config/version/status
+// --- Health/config/version/status ---
 export async function getHealth(){ return jsonOrMessage(await fetch(base()+"/health", { credentials:'include' })); }
 export async function getStatus(){ return jsonOrMessage(await fetch(base()+"/status", { credentials:'include' })); }
 export async function getVersion(){ return jsonOrMessage(await fetch(base()+"/version", { credentials:'include' })); }
 export async function getPublicConfig(){ return jsonOrMessage(await fetch(base()+"/config/public", { credentials:'include' })); }
 
-// Core-service unified services status
+// --- Core-service services and logs ---
 export async function getServices(){ return jsonOrMessage(await fetch(base()+"/services", { credentials:'include' })); }
 export async function getMetrics(){
   try{
@@ -39,7 +48,7 @@ export async function restartService(unit: string){
   return jsonOrMessage(res);
 }
 
-// Devices registry
+// --- Devices registry (future expansion) ---
 export async function getDevices(){ return jsonOrMessage(await fetch(base()+"/devices", { credentials:'include' })); }
 export async function getDevice(id: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(id)}`, { credentials:'include' })); }
 export async function getDeviceEvents(id: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(id)}/events`, { credentials:'include' })); }
