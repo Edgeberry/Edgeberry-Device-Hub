@@ -1,6 +1,6 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
-import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE } from './config.js';
-import { upsertDevice } from './db.js';
+import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST } from './config.js';
+import { upsertDevice, getWhitelistByUuid, markWhitelistUsed } from './db.js';
 import type { Json } from './types.js';
 
 // Topic helpers
@@ -41,10 +41,21 @@ export function startMqtt(db: any): MqttClient {
     if (!deviceId) return;
     try {
       const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
+      const uuid = typeof (body as any).uuid === 'string' ? String((body as any).uuid) : undefined;
+      if (ENFORCE_WHITELIST) {
+        if (!uuid) throw new Error('missing_uuid');
+        const entry = getWhitelistByUuid((db as any), uuid);
+        if (!entry) throw new Error('uuid_not_whitelisted');
+        if (entry.used_at) throw new Error('uuid_already_used');
+        if (entry.device_id !== deviceId) throw new Error('uuid_device_mismatch');
+      }
       const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
       const meta = typeof body.meta === 'object' && body.meta ? (body.meta as Json) : undefined;
       upsertDevice(db, deviceId, name, token, meta);
+      if (ENFORCE_WHITELIST && uuid) {
+        try { markWhitelistUsed(db, uuid); } catch {}
+      }
       const respTopic = TOPICS.accepted(deviceId);
       client.publish(respTopic, JSON.stringify({ deviceId, status: 'ok' }), { qos: 1 });
     } catch (e) {

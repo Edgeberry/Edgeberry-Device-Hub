@@ -34,13 +34,15 @@ function start() {
     client.subscribe([provAccTopic, provRejTopic], { qos: 1 }, (err) => {
       if (err) console.error('[virtual-device] subscribe error', err);
       // Send provisioning request
-      const body = {
+      const provisionPayload: any = {
         name: `Virtual Device ${DEVICE_ID}`,
-        token: undefined,
+        token: process.env.DEVICE_TOKEN || undefined,
         meta: { model: 'simulator', firmware: '0.0.1', startedAt: new Date().toISOString() },
       };
-      console.log(`[virtual-device] -> ${provReqTopic} ${JSON.stringify(body)}`);
-      client.publish(provReqTopic, JSON.stringify(body), { qos: 1 });
+      const uuid = process.env.PROV_UUID || process.env.UUID;
+      if (uuid) provisionPayload.uuid = uuid;
+      console.log(`[virtual-device] -> ${provReqTopic} ${JSON.stringify(provisionPayload)}`);
+      client.publish(provReqTopic, JSON.stringify(provisionPayload), { qos: 1 });
     });
   });
 

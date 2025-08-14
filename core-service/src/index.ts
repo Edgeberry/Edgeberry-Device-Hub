@@ -269,6 +269,57 @@ function bufferToMaybeJson(b: any){
   }catch{ return null; }
 }
 
+// ===== Admin: UUID Whitelist Management =====
+// Table lives in provisioning.db as `uuid_whitelist` with columns
+// (uuid PRIMARY KEY, device_id TEXT, name TEXT, note TEXT, created_at TEXT, used_at TEXT)
+
+// GET /api/admin/uuid-whitelist -> list entries
+app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ res.json({ entries: [] }); return; }
+  try{
+    const rows = db.prepare('SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
+    res.json({ entries: rows });
+  }catch{
+    res.json({ entries: [] });
+  }finally{ try{ db.close(); }catch{} }
+});
+
+// POST /api/admin/uuid-whitelist { device_id, name?, note?, uuid? }
+app.post('/api/admin/uuid-whitelist', (req: Request, res: Response) => {
+  const { device_id, name, note } = req.body || {};
+  let { uuid } = req.body || {};
+  if(!device_id || typeof device_id !== 'string') { res.status(400).json({ error: 'invalid_device_id' }); return; }
+  if(uuid && typeof uuid !== 'string'){ res.status(400).json({ error: 'invalid_uuid' }); return; }
+  if(!uuid){ uuid = crypto.randomUUID(); }
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try{
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO uuid_whitelist (uuid, device_id, name, note, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(uuid, device_id, (typeof name === 'string' ? name : null), (typeof note === 'string' ? note : null), now);
+    const row = db.prepare('SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid);
+    res.status(201).json(row);
+  }catch(e:any){
+    const msg = (e && e.message) || 'insert_failed';
+    if(String(msg).includes('UNIQUE')){ res.status(409).json({ error: 'uuid_exists' }); }
+    else { res.status(500).json({ error: 'insert_failed', message: msg }); }
+  }finally{ try{ db.close(); }catch{} }
+});
+
+// DELETE /api/admin/uuid-whitelist/:uuid
+app.delete('/api/admin/uuid-whitelist/:uuid', (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  if(!uuid){ res.status(400).json({ error: 'invalid_uuid' }); return; }
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try{
+    const info = db.prepare('DELETE FROM uuid_whitelist WHERE uuid = ?').run(uuid);
+    res.json({ deleted: info.changes > 0 });
+  }catch{ res.status(500).json({ error: 'delete_failed' }); }
+  finally{ try{ db.close(); }catch{} }
+});
+
 // ===== Server Settings & Certificate Management =====
 // Endpoints backing the Settings page in the UI. Root CA must exist before issuing
 // provisioning certificates. Files are written under CERTS_DIR.

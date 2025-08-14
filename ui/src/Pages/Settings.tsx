@@ -6,7 +6,7 @@
  * `/api/settings/*` endpoints and requires admin login.
  */
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
 
 type ServerSettings = {
   mqttUrl?: string;
@@ -29,6 +29,8 @@ export default function Settings(_props:{user:any}){
   const [server, setServer] = useState<ServerSettings|undefined>();
   const [root, setRoot] = useState<RootMeta|undefined>();
   const [provList, setProvList] = useState<ProvCert[]>([]);
+  const [whitelist, setWhitelist] = useState<any[]>([]);
+  const [devices, setDevices] = useState<any[]>([]);
 
   const [issuing, setIssuing] = useState(false);
   const [genning, setGenning] = useState(false);
@@ -62,6 +64,16 @@ export default function Settings(_props:{user:any}){
       // Provisioning certs list
       const l = await (await fetch('/api/settings/certs/provisioning')).json();
       setProvList(Array.isArray(l?.certs) ? l.certs : (Array.isArray(l)? l : []));
+    }catch{ /* ignore */ }
+    try{
+      // Whitelist entries
+      const wl = await (await fetch('/api/admin/uuid-whitelist')).json();
+      setWhitelist(Array.isArray(wl?.entries) ? wl.entries : (Array.isArray(wl)? wl : []));
+    }catch{ /* ignore */ }
+    try{
+      // Devices snapshot for lifecycle status
+      const d = await (await fetch('/api/devices')).json();
+      setDevices(Array.isArray(d?.devices) ? d.devices : (Array.isArray(d)? d : []));
     }catch{ /* ignore */ }
     setLoading(false);
   }
@@ -114,6 +126,37 @@ export default function Settings(_props:{user:any}){
       else { setError(d?.error || 'Failed to issue provisioning cert'); }
     } finally { setIssuing(false); }
   }
+
+  // Whitelist form state
+  const [wlDeviceId, setWlDeviceId] = useState('');
+  const [wlName, setWlName] = useState('');
+  const [wlNote, setWlNote] = useState('');
+  const [wlUuid, setWlUuid] = useState('');
+  const [wlBusy, setWlBusy] = useState(false);
+
+  async function createWhitelistEntry(){
+    if (!wlDeviceId) { setError('Device ID is required'); return; }
+    setWlBusy(true);
+    try{
+      const body:any = { device_id: wlDeviceId };
+      if (wlName) body.name = wlName; if (wlNote) body.note = wlNote; if (wlUuid) body.uuid = wlUuid;
+      const res = await fetch('/api/admin/uuid-whitelist', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+      const d = await res.json().catch(()=>({}));
+      if (res.ok){ setWlDeviceId(''); setWlName(''); setWlNote(''); setWlUuid(''); await loadAll(); }
+      else { setError(d?.error || 'Failed to create whitelist entry'); }
+    } finally { setWlBusy(false); }
+  }
+
+  async function deleteWhitelistEntry(uuid:string){
+    if (!confirm('Delete whitelist entry? This cannot be undone.')) return;
+    const res = await fetch(`/api/admin/uuid-whitelist/${encodeURIComponent(uuid)}`, { method:'DELETE' });
+    if (res.ok){ await loadAll(); }
+    else { const d = await res.json().catch(()=>({})); setError(d?.error || 'Failed to delete whitelist entry'); }
+  }
+
+  function fmtDate(s?:string){ try{ return s? new Date(s).toLocaleString() : '-'; }catch{ return s || '-'; } }
+  const onlineCount = devices.filter((d:any)=>!!d.online).length;
+  const offlineCount = devices.length - onlineCount;
 
   return (
     <div style={{textAlign:'left'}}>
@@ -170,6 +213,106 @@ export default function Settings(_props:{user:any}){
           </Card>
         </Col>
       </Row>
+
+      <Card className='mb-3'>
+        <Card.Header>Provisioning Whitelist</Card.Header>
+        <Card.Body>
+          <Form onSubmit={(e)=>{e.preventDefault(); createWhitelistEntry();}}>
+            <Row className='g-2'>
+              <Col md={3}><Form.Label>Device ID</Form.Label>
+                <Form.Control value={wlDeviceId} onChange={e=>setWlDeviceId(e.target.value)} placeholder='device-123' /></Col>
+              <Col md={3}><Form.Label>Name (optional)</Form.Label>
+                <Form.Control value={wlName} onChange={e=>setWlName(e.target.value)} placeholder='Lab Unit' /></Col>
+              <Col md={3}><Form.Label>Note (optional)</Form.Label>
+                <Form.Control value={wlNote} onChange={e=>setWlNote(e.target.value)} placeholder='purpose or location' /></Col>
+              <Col md={3}><Form.Label>UUID (optional)</Form.Label>
+                <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='autogenerate if empty' /></Col>
+            </Row>
+            <Button className='mt-2' disabled={wlBusy} onClick={createWhitelistEntry} variant='success'>
+              {wlBusy? <Spinner animation='border' size='sm'/> : 'Create entry'}
+            </Button>
+          </Form>
+
+          <div style={{marginTop:12}}>
+            {loading && whitelist.length===0 ? <Spinner animation='border' size='sm'/> : (
+              <div style={{overflowX:'auto'}}>
+                <table className='table table-sm'>
+                  <thead>
+                    <tr>
+                      <th>UUID</th>
+                      <th>Device ID</th>
+                      <th>Name</th>
+                      <th>Note</th>
+                      <th>Created</th>
+                      <th>Used</th>
+                      <th style={{width:220}}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {whitelist.length===0 ? (
+                      <tr><td colSpan={7} style={{color:'#666'}}>No whitelist entries.</td></tr>
+                    ) : whitelist.map((w:any)=> (
+                      <tr key={w.uuid}>
+                        <td style={{fontFamily:'monospace'}}>{w.uuid}</td>
+                        <td>{w.device_id}</td>
+                        <td>{w.name || '-'}</td>
+                        <td>{w.note || '-'}</td>
+                        <td>{fmtDate(w.created_at)}</td>
+                        <td>
+                          {w.used_at ? <Badge bg='secondary'>Used</Badge> : <Badge bg='success'>Unused</Badge>}
+                          <div style={{fontSize:12, opacity:.8}}>{w.used_at ? fmtDate(w.used_at) : ''}</div>
+                        </td>
+                        <td>
+                          <Button size='sm' variant='outline-primary' style={{marginRight:8}}
+                            onClick={()=>{ navigator.clipboard?.writeText(w.uuid).catch(()=>{}); }}>
+                            Copy UUID
+                          </Button>
+                          <Button size='sm' variant='outline-danger' onClick={()=>deleteWhitelistEntry(w.uuid)}>
+                            Delete
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Card.Body>
+      </Card>
+
+      <Card className='mb-3'>
+        <Card.Header>Device Lifecycle Status</Card.Header>
+        <Card.Body>
+          <div style={{marginBottom:10}}>
+            <Badge bg='secondary' style={{marginRight:8}}>Total {devices.length}</Badge>
+            <Badge bg='success' style={{marginRight:8}}>Online {onlineCount}</Badge>
+            <Badge bg='dark'>Offline {offlineCount}</Badge>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table className='table table-sm'>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Last seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {devices.slice(0, 15).map((d:any)=> (
+                  <tr key={d.id || d._id || d.name}>
+                    <td>{d.id || d._id || d.name}</td>
+                    <td>{d.name || '-'}</td>
+                    <td>{d.online ? <Badge bg='success'>Online</Badge> : <Badge bg='secondary'>Offline</Badge>}</td>
+                    <td>{d.last_seen ? fmtDate(d.last_seen) : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card.Body>
+      </Card>
 
       <Card className='mb-3'>
         <Card.Header>Provisioning Certificates</Card.Header>
