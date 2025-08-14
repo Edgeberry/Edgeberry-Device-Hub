@@ -1,5 +1,6 @@
 import { connect, IClientOptions, MqttClient, ISubscriptionGrant } from 'mqtt';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE } from './config.js';
+import { prepareInsert } from './db.js';
 
 function extractDeviceId(topic: string): string | null {
   const parts = topic.split('/');
@@ -23,8 +24,7 @@ export function startMqtt(db: any): MqttClient {
   });
   client.on('error', (err) => console.error(`[${SERVICE}] mqtt error`, err));
 
-  // Lazy load prepared insert
-  const { prepareInsert } = require('./db.js');
+  // Prepare insert statement once
   const insert = prepareInsert(db);
 
   client.on('message', (topic: string, payload: Buffer) => {

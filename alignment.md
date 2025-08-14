@@ -82,6 +82,16 @@ These choices are made to maximize simplicity, performance, and long-term mainta
 
 The Fleet Hub is a set of smaller projects in a single monorepo to keep development tight and interfaces explicit:
 
+### Code Organization (Generalized)
+
+- **Self-contained services**: Each microservice is organized by concern and starts from a thin entrypoint that only bootstraps dependencies and wiring.
+- **Separation of concerns**: Configuration, data access, messaging, and shutdown live in focused modules. Business logic is isolated from startup code.
+- **Cohesive modules, not micro-files**: Related logic is grouped into a few larger files per service (e.g., a single messaging module), prioritizing readability over fragmentation.
+- **Consistent patterns**: Naming, logging style, and import conventions are uniform across services to reduce cognitive load.
+- **Gateway service**: One service exposes the public HTTP API and serves the UI; internal workers communicate via their own channels.
+- **Environment-driven**: Behavior is configured via environment variables (ports, paths, secrets, endpoints) and remains explicit.
+- **Graceful teardown**: Each service provides a clear shutdown path to close external resources safely.
+
 External presentation: To the outside world, Edgeberry Fleet Hub is a monolithic product — a single hostname, a single API surface, and a single dashboard UI. Internal modularity is an implementation detail and must not leak into the public surface area. The `core-service` acts as the orchestrator and public entrypoint for the UI.
 
 Public Surface Area (single HTTP(S) server):
