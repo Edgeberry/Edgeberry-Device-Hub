@@ -1,3 +1,15 @@
+/**
+ * DeviceDetail Page
+ *
+ * Purpose: Show raw details for a single device identified by `assetId` (URL param).
+ *
+ * Data:
+ *  - Fetched via `getDevice(assetId)` from `ui/src/api/fleethub.ts`.
+ *  - Rendered as JSON for simplicity (MVP).
+ *
+ * Auth:
+ *  - Route protected by `RequireAuth` in `App.tsx`. `props.user` is the authenticated admin.
+ */
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card } from 'react-bootstrap';

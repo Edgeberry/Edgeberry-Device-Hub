@@ -1,3 +1,17 @@
+/**
+ * Overview Page
+ *
+ * Purpose: Landing dashboard for authenticated users.
+ *  - Renders `HealthWidget`, `ServiceStatusWidget`, and `SystemMetricsWidget`.
+ *  - Shows a small devices table linking to `DeviceDetail`.
+ *
+ * Data:
+ *  - Devices: fetched via `getDevices()` from `ui/src/api/fleethub.ts`.
+ *  - Widgets fetch their own data from the backend (`/api/health`, `/api/services`, `/api/metrics`).
+ *
+ * Auth:
+ *  - This route is protected by `RequireAuth` in `App.tsx`. `props.user` is the authenticated admin.
+ */
 import React, { useEffect, useState } from 'react';
 import { Card, Table } from 'react-bootstrap';
 import HealthWidget from '../components/HealthWidget';

@@ -35,6 +35,40 @@ Edgeberry Fleet Hub is a self-hostable device management server for Edgeberry de
 
 See `alignment.md` for architecture and interface details.
 
+## Architecture (MVP)
+
+- __Core-service (`core-service/`)__ serves the SPA and exposes JSON under `/api/*`.
+- __Auth model__: single-user admin, JWT stored in HttpOnly cookie `fh_session`.
+  - Endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+  - UI gates routes via `RequireAuth` in `ui/src/App.tsx`.
+- __Caching policy__: ETag disabled and strict no-cache headers on `/api/*` to avoid stale auth/UI state.
+- __Certificates__ (Settings page): Root CA generate/download; Provisioning certs issue/inspect/delete/download bundle.
+  - Root CA: `GET/POST /api/settings/certs/root`, `GET /api/settings/certs/root/download`.
+  - Provisioning: `GET/POST /api/settings/certs/provisioning`, `GET/DELETE /api/settings/certs/provisioning/:name`, `GET .../:name/download`.
+- __Services & metrics__: `/api/services`, `/api/logs`, `/api/metrics` consumed by dashboard widgets.
+
+## Development
+
+- __Prereqs__: Node 18+, a local MQTT broker (e.g., Mosquitto) for metrics/device features.
+- __Environment__ (core-service): `ADMIN_USER`, `ADMIN_PASSWORD`, `JWT_SECRET`, `JWT_TTL_SECONDS`, `MQTT_URL`.
+- __Workflow__:
+  1. Build UI first so core-service serves fresh SPA bundles:
+     ```bash
+     cd ui && npm run build
+     ```
+  2. Start core-service (dev or prod):
+     ```bash
+     # dev convenience
+     npm run dev
+     # or just core-service
+     cd core-service && npm start
+     ```
+  3. Open http://localhost:8080 → login → navigate to Settings to manage certificates.
+- __Gotchas__:
+  - Hard refresh the browser after UI rebuilds to bust cache if needed.
+  - All UI `fetch` calls include `credentials: 'include'` so the JWT cookie is sent.
+  - Admin-only actions (e.g., service start/stop) are enabled after login.
+
 ## Current Implementation (MVP)
 
 The repository contains a working MVP focused on MQTT- and SQLite-backed microservices with a minimal UI and example Node-RED node.

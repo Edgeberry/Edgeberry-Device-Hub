@@ -1,3 +1,16 @@
+/**
+ * Login Page
+ *
+ * Purpose: Simple admin login form that posts to `/api/auth/login`.
+ *
+ * Flow:
+ *  - On submit, sends username/password to backend.
+ *  - Backend sets HttpOnly cookie `fh_session` (JWT) on success.
+ *  - Calls `props.onLogin()` to refresh auth state (via `/api/auth/me`), then navigates home.
+ *
+ * Notes:
+ *  - Registration is not supported in the MVP.
+ */
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 

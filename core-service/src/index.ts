@@ -94,6 +94,7 @@ app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' }));
 
 // Core-service owns the public HTTP(S) surface: define API routes here.
+// GET /api/health
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
 // Log a startup hello from core-service
@@ -137,12 +138,15 @@ function buildJournalctlArgs(opts: {
 }
 
 // ===== Simple single-user admin authentication using JWT =====
+// The UI authenticates via `/api/auth/login` which sets an HttpOnly cookie (`fh_session`).
+// We do not track server-side sessions; JWT is verified on each request.
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin'; // NOTE: change in production
 const SESSION_COOKIE = 'fh_session'; // cookie name retained
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-change-me';
 const JWT_TTL_SECONDS = Number(process.env.JWT_TTL_SECONDS || 60 * 60 * 24); // 24h default
 
+// Parse a Http Cookie header into a simple key/value map
 function parseCookies(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
@@ -157,6 +161,7 @@ function parseCookies(header?: string): Record<string, string> {
   return out;
 }
 
+// Validate JWT from cookie and return minimal user info
 function getSession(req: Request): { user: string } | null {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies[SESSION_COOKIE];
@@ -171,6 +176,7 @@ function getSession(req: Request): { user: string } | null {
   }
 }
 
+// Set the HttpOnly cookie containing the JWT
 function setSessionCookie(res: Response, token: string) {
   const isHttps = false; // adjust if terminating TLS here
   const attrs = [
@@ -183,11 +189,14 @@ function setSessionCookie(res: Response, token: string) {
   res.setHeader('Set-Cookie', attrs.join('; '));
 }
 
+// Clear the session cookie (stateless logout)
 function clearSessionCookie(res: Response) {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
 }
 
 // Auth routes (no registration)
+// POST /api/auth/login
+// Authenticate admin user and set JWT session cookie
 app.post('/api/auth/login', (req: Request, res: Response) => {
   const { username, password } = req.body || {};
   if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
@@ -205,6 +214,7 @@ app.post('/api/auth/logout', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// GET /api/auth/me -> verify cookie and report authentication status
 app.get('/api/auth/me', (req: Request, res: Response) => {
   const s = getSession(req);
   if (!s) { res.status(401).json({ authenticated: false }); return; }
@@ -212,6 +222,7 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
 });
 
 // Middleware: protect APIs (except health and auth) and UI
+// If unauthenticated and requesting a page, we render a small server login form.
 function authRequired(req: Request, res: Response, next: NextFunction) {
   // Public endpoints
   if (req.path === '/healthz' || req.path === '/api/health') return next();
@@ -275,6 +286,8 @@ function serveLoginPage(_req: Request, res: Response) {
 }
 
 // ===== Server Settings & Certificate Management =====
+// Endpoints backing the Settings page in the UI. Root CA must exist before issuing
+// provisioning certificates. Files are written under CERTS_DIR.
 // Filesystem layout (configurable via env):
 //  ROOT: CERTS_DIR (default: ./data/certs relative to process cwd)
 //   - root/ca.key, root/ca.crt
@@ -310,6 +323,7 @@ async function caExists(): Promise<boolean> {
   return fs.existsSync(CA_KEY) && fs.existsSync(CA_CRT);
 }
 
+// Generate a new Root CA (private key + self-signed certificate)
 async function generateRootCA(params?: { cn?: string; days?: number; keyBits?: number }): Promise<void> {
   ensureDirs();
   const cn = params?.cn || 'Edgeberry Fleet Hub Root CA';
@@ -324,6 +338,7 @@ async function generateRootCA(params?: { cn?: string; days?: number; keyBits?: n
   if (crtRes.code !== 0) throw new Error(`openssl req -x509 failed: ${crtRes.err || crtRes.out}`);
 }
 
+// Read some basic certificate metadata via openssl
 async function readCertMeta(pemPath: string): Promise<{ fingerprintSha256?: string; notAfter?: string; subject?: string }>{
   if (!fs.existsSync(pemPath)) return {};
   const fp = await runCmd('openssl', ['x509', '-noout', '-fingerprint', '-sha256', '-in', pemPath]);
@@ -336,6 +351,7 @@ async function readCertMeta(pemPath: string): Promise<{ fingerprintSha256?: stri
   };
 }
 
+// Issue a provisioning certificate signed by the Root CA
 async function issueProvisioningCert(name: string, days?: number): Promise<{ certPath: string; keyPath: string }>{
   ensureDirs();
   if (!(await caExists())) throw new Error('Root CA not found. Generate it first.');
@@ -358,7 +374,7 @@ async function issueProvisioningCert(name: string, days?: number): Promise<{ cer
   return { certPath: crtPath, keyPath };
 }
 
-// GET /api/settings/server -> snapshot of server-level settings
+// GET /api/settings/server -> snapshot of server-level settings (used by UI)
 app.get('/api/settings/server', async (_req: Request, res: Response) => {
   try {
     ensureDirs();
@@ -388,7 +404,7 @@ app.get('/api/settings/certs/root', async (_req: Request, res: Response) => {
   }
 });
 
-// POST /api/settings/certs/root { cn?, days?, keyBits? }
+// POST /api/settings/certs/root { cn?, days?, keyBits? } -> create Root CA if absent
 app.post('/api/settings/certs/root', async (req: Request, res: Response) => {
   try {
     if (await caExists()) { res.status(409).json({ error: 'root CA already exists' }); return; }
@@ -419,7 +435,7 @@ app.get('/api/settings/certs/provisioning', async (_req: Request, res: Response)
   }
 });
 
-// POST /api/settings/certs/provisioning { name, days? }
+// POST /api/settings/certs/provisioning { name, days? } -> issue a new provisioning cert
 app.post('/api/settings/certs/provisioning', async (req: Request, res: Response) => {
   try {
     const { name, days } = req.body || {};
@@ -463,7 +479,8 @@ app.delete('/api/settings/certs/provisioning/:name', async (req: Request, res: R
   }
 });
 
-// GET /api/services -> systemd unit status snapshot
+// ===== Services & Logs =====
+// GET /api/services -> systemd unit status snapshot consumed by ServiceStatusWidget
 app.get('/api/services', async (_req: Request, res: Response) => {
   const units = DEFAULT_LOG_UNITS;
   const checks = await Promise.all(units.map(async (u) => {

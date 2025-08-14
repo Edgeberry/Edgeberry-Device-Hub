@@ -1,3 +1,12 @@
+/**
+ * Logout Page
+ *
+ * Purpose: Immediately logs the user out when navigated to.
+ *
+ * Flow:
+ *  - Calls `/api/auth/logout` to clear the HttpOnly cookie.
+ *  - Invokes `props.onLogout()` (clears UI auth state), then navigates to `/login`.
+ */
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
