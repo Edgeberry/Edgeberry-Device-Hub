@@ -24,6 +24,47 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
+
+// GET /api/settings/certs/provisioning/:name/download -> tar.gz bundle for device
+app.get('/api/settings/certs/provisioning/:name/download', async (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) { res.status(400).json({ error: 'invalid name' }); return; }
+    ensureDirs();
+    const crtPath = path.join(PROV_DIR, `${name}.crt`);
+    const keyPath = path.join(PROV_DIR, `${name}.key`);
+    if (!fs.existsSync(crtPath) || !fs.existsSync(keyPath)) { res.status(404).json({ error: 'certificate not found' }); return; }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleethub-bundle-'));
+    const bundleDir = path.join(tmpDir, `provisioning-${name}`);
+    fs.mkdirSync(bundleDir);
+
+    // Copy files into bundle directory with friendly names
+    const caOut = path.join(bundleDir, 'ca.crt');
+    const certOut = path.join(bundleDir, `${name}.crt`);
+    const keyOut = path.join(bundleDir, `${name}.key`);
+    fs.copyFileSync(CA_CRT, caOut);
+    fs.copyFileSync(crtPath, certOut);
+    fs.copyFileSync(keyPath, keyOut);
+
+    const mqttUrl = process.env.MQTT_URL || 'mqtt://localhost:1883';
+    const cfg = { mqttUrl, caCert: 'ca.crt', cert: `${name}.crt`, key: `${name}.key` };
+    fs.writeFileSync(path.join(bundleDir, 'config.json'), JSON.stringify(cfg, null, 2));
+
+    // Stream tar.gz
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', `attachment; filename="provisioning-bundle-${name}.tgz"`);
+    const tar = spawn('tar', ['-czf', '-', '-C', tmpDir, path.basename(bundleDir)]);
+    tar.stdout.pipe(res);
+    tar.stderr.on('data', () => {});
+    tar.on('close', () => {
+      // Cleanup
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    });
+  } catch (e:any) {
+    res.status(500).json({ error: e?.message || 'failed to create bundle' });
+  }
+});
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' }));
@@ -364,6 +405,37 @@ app.post('/api/settings/certs/provisioning', async (req: Request, res: Response)
     res.json({ ok: true, cert: result.certPath, key: result.keyPath, meta });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'failed to issue provisioning cert' });
+  }
+});
+
+// GET /api/settings/certs/provisioning/:name -> inspect a provisioning cert (PEM + meta)
+app.get('/api/settings/certs/provisioning/:name', async (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) { res.status(400).json({ error: 'invalid name' }); return; }
+    const crtPath = path.join(PROV_DIR, `${name}.crt`);
+    if (!fs.existsSync(crtPath)) { res.status(404).json({ error: 'not found' }); return; }
+    const pem = fs.readFileSync(crtPath, 'utf8');
+    const meta = await readCertMeta(crtPath);
+    res.json({ name, pem, meta });
+  } catch (e:any) {
+    res.status(500).json({ error: e?.message || 'failed to read provisioning cert' });
+  }
+});
+
+// DELETE /api/settings/certs/provisioning/:name -> remove cert and corresponding key
+app.delete('/api/settings/certs/provisioning/:name', async (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) { res.status(400).json({ error: 'invalid name' }); return; }
+    const crtPath = path.join(PROV_DIR, `${name}.crt`);
+    const keyPath = path.join(PROV_DIR, `${name}.key`);
+    if (!fs.existsSync(crtPath) && !fs.existsSync(keyPath)) { res.status(404).json({ error: 'not found' }); return; }
+    try { if (fs.existsSync(crtPath)) fs.rmSync(crtPath); } catch {}
+    try { if (fs.existsSync(keyPath)) fs.rmSync(keyPath); } catch {}
+    res.json({ ok: true, deleted: { cert: fs.existsSync(crtPath) ? false : true, key: fs.existsSync(keyPath) ? false : true } });
+  } catch (e:any) {
+    res.status(500).json({ error: e?.message || 'failed to delete provisioning cert' });
   }
 });
 

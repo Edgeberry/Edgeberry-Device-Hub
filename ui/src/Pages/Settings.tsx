@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Row, Spinner } from 'react-bootstrap';
+import { Alert, Button, Card, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
 
 type ServerSettings = {
   mqttUrl?: string;
@@ -51,6 +51,29 @@ export default function Settings(_props:{user:any}){
   }
 
   useEffect(()=>{ loadAll(); },[]);
+
+  // Inspect modal state
+  const [showInspect, setShowInspect] = useState(false);
+  const [inspectName, setInspectName] = useState<string|undefined>();
+  const [inspectPem, setInspectPem] = useState<string|undefined>();
+  const [inspectMeta, setInspectMeta] = useState<any>();
+  const [inspectLoading, setInspectLoading] = useState(false);
+
+  async function openInspect(name:string){
+    setInspectName(name); setInspectPem(undefined); setInspectMeta(undefined); setInspectLoading(true); setShowInspect(true);
+    try{
+      const d = await (await fetch(`/api/settings/certs/provisioning/${encodeURIComponent(name)}`)).json();
+      if (d?.pem){ setInspectPem(d.pem); setInspectMeta(d.meta); }
+      else { setInspectPem('Not found'); }
+    } finally { setInspectLoading(false); }
+  }
+
+  async function deleteCert(name:string){
+    if (!confirm(`Delete provisioning certificate "${name}"? This cannot be undone.`)) return;
+    const res = await fetch(`/api/settings/certs/provisioning/${encodeURIComponent(name)}`, { method:'DELETE' });
+    if (res.ok){ await loadAll(); if (inspectName===name) setShowInspect(false); }
+    else { const d = await res.json().catch(()=>({})); setError(d.error || 'Failed to delete certificate'); }
+  }
 
   async function generateRoot(){
     try{
@@ -155,16 +178,24 @@ export default function Settings(_props:{user:any}){
                       <th>Name</th>
                       <th>Created</th>
                       <th>Expires</th>
+                      <th style={{width:260}}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {provList.length===0 ? (
-                      <tr><td colSpan={3} style={{color:'#666'}}>No provisioning certificates found.</td></tr>
+                      <tr><td colSpan={4} style={{color:'#666'}}>No provisioning certificates found.</td></tr>
                     ) : provList.map((c,idx)=> (
                       <tr key={idx}>
                         <td>{c.name}</td>
                         <td>{c.createdAt || '-'}</td>
                         <td>{c.expiresAt || '-'}</td>
+                        <td>
+                          <Button size='sm' variant='secondary' onClick={()=>openInspect(c.name)} style={{marginRight:8}}>Inspect</Button>
+                          <a className='btn btn-sm btn-outline-primary' style={{marginRight:8}} href={`/api/settings/certs/provisioning/${encodeURIComponent(c.name)}/download`}>
+                            Download
+                          </a>
+                          <Button size='sm' variant='outline-danger' onClick={()=>deleteCert(c.name)}>Delete</Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -174,6 +205,34 @@ export default function Settings(_props:{user:any}){
           </div>
         </Card.Body>
       </Card>
+
+      {/* Inspect Modal */}
+      <Modal show={showInspect} onHide={()=>setShowInspect(false)} size='lg'>
+        <Modal.Header closeButton>
+          <Modal.Title>Provisioning Certificate: {inspectName}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {inspectLoading ? <Spinner animation='border' size='sm'/> : (
+            <div>
+              {inspectMeta && (
+                <div style={{marginBottom:12}}>
+                  <div><b>Subject:</b> {inspectMeta?.subject || '-'}</div>
+                  <div><b>Valid:</b> {inspectMeta?.validFrom || '-'} → {inspectMeta?.validTo || '-'}</div>
+                </div>
+              )}
+              <Form.Group>
+                <Form.Label>Certificate (PEM)</Form.Label>
+                <Form.Control as='textarea' rows={12} readOnly value={inspectPem || ''} style={{fontFamily:'monospace'}}/>
+              </Form.Group>
+            </div>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          {inspectName && <a className='btn btn-outline-primary' href={`/api/settings/certs/provisioning/${encodeURIComponent(inspectName||'')}/download`}>Download</a>}
+          {inspectName && <Button variant='outline-danger' onClick={()=>deleteCert(inspectName)}>Delete</Button>}
+          <Button variant='secondary' onClick={()=>setShowInspect(false)}>Close</Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   );
 }
