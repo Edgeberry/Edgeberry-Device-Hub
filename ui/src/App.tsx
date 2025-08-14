@@ -18,18 +18,19 @@ function App(){
     <div className="App">
       <BrowserRouter>
         <Routes>
-          <Route index element={<Navigate to="/" />} />
+          { /* No top-level index redirect; rely on child index under '/' */ }
           <Route path='/login' element={<Login user={user} onLogin={()=>{onLogin()}}/>} />
           <Route path='/register' element={<Register user={user} onLogin={()=>{onLogin()}}/>} />
           <Route path='/' element={<Dashboard user={user}/> }>
             <Route index element={<Overview user={user} />} />
-            <Route path='/logout' element={<Logout user={user} onLogout={()=>{onLogin()}}/>} />
-            <Route path='/overview' element={<Overview user={user} />} />
-            <Route path='/devices/:assetId' element={<DeviceDetail user={user} />} />
-            <Route path='/settings' element={<Settings user={user} />}/>
-            <Route path='/health' element={<Health />}/>
-            <Route path='/*' element={<NotFound />} />
+            <Route path='logout' element={<Logout user={user} onLogout={()=>{onLogin()}}/>} />
+            <Route path='overview' element={<Overview user={user} />} />
+            <Route path='devices/:assetId' element={<DeviceDetail user={user} />} />
+            <Route path='settings' element={<Settings user={user} />}/>
+            <Route path='health' element={<Health />}/>
+            <Route path='*' element={<NotFound />} />
           </Route>
+          <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>
       </BrowserRouter>
     </div>

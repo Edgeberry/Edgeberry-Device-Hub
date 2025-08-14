@@ -3,8 +3,10 @@
   "private": true,
   "version": "0.0.1",
   "description": "Edgeberry Fleet Hub monorepo root",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "scripts": {
-    "dev": "bash scripts/dev_start.sh"
+    "dev": "bash scripts/dev_start.sh",
+    "build": "bash scripts/build-all.sh",
+    "deploy": "bash scripts/deploy.sh"
   }
 }

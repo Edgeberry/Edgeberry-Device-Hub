@@ -10,7 +10,7 @@ const NavigationBar = (props:{user:any|null})=>{
         <>
             <Navbar sticky="top" bg={'dark'} data-bs-theme={'dark'}>
                 <Container className="container-fluid" style={{paddingRight:'10px', paddingLeft:'10px'}}>
-                    <Navbar.Brand href='/'>Edgeberry Fleet Hub</Navbar.Brand>
+                    <Navbar.Brand as={Link} to='/'>Edgeberry Fleet Hub</Navbar.Brand>
                     <Nav>
                         <Button variant={'transparent'} className="btn-outline-light" onClick={()=>{setShow(true)}}><FontAwesomeIcon icon={faBars}/></Button>
                     </Nav>
