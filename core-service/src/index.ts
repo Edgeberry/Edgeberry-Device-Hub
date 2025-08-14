@@ -17,6 +17,7 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import Database from 'better-sqlite3';
 import {
   PORT,
   ADMIN_USER,
@@ -31,6 +32,8 @@ import {
   CA_CRT,
   UI_DIST,
   MQTT_URL,
+  PROVISIONING_DB,
+  REGISTRY_DB,
 } from './config.js';
 import { ensureDirs, caExists, generateRootCA, readCertMeta, issueProvisioningCert } from './certs.js';
 import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
@@ -167,6 +170,81 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
 // Middleware moved to src/auth.ts
 
 app.use(authRequired);
+
+// ===== Devices & Events (read-only MVP) =====
+// Data sources:
+//  - provisioning.db (table `devices`)
+//  - registry.db (table `device_events`)
+// For MVP we access SQLite files directly. In future, route via shared repos or D-Bus.
+
+function openDb(file: string){
+  try{
+    const db: any = new (Database as any)(file);
+    db.pragma('journal_mode = WAL');
+    return db as any;
+  }catch(e){
+    return null;
+  }
+}
+
+// GET /api/devices -> list known devices from provisioning DB
+app.get('/api/devices', (_req: Request, res: Response) => {
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ res.json({ devices: [] }); return; }
+  try{
+    const rows = db.prepare('SELECT id, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
+    const devices = rows.map((r: any) => ({ id: r.id, name: r.name, token: r.token, meta: tryParseJson(r.meta), created_at: r.created_at }));
+    res.json({ devices });
+  }catch{
+    res.json({ devices: [] });
+  }finally{
+    try{ db.close(); }catch{}
+  }
+});
+
+// GET /api/devices/:id -> single device
+app.get('/api/devices/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ res.status(404).json({ error: 'not found' }); return; }
+  try{
+    const row = db.prepare('SELECT id, name, token, meta, created_at FROM devices WHERE id = ?').get(id);
+    if(!row){ res.status(404).json({ error: 'not found' }); return; }
+    res.json({ id: row.id, name: row.name, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at });
+  }catch{
+    res.status(500).json({ error: 'failed to read device' });
+  }finally{
+    try{ db.close(); }catch{}
+  }
+});
+
+// GET /api/devices/:id/events -> recent events from registry DB
+app.get('/api/devices/:id/events', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const limit = Math.max(1, Math.min(500, Number(req.query.limit || 200)));
+  const db = openDb(REGISTRY_DB);
+  if(!db){ res.json({ events: [] }); return; }
+  try{
+    const rows = db.prepare('SELECT id, device_id, topic, payload, ts FROM device_events WHERE device_id = ? ORDER BY ts DESC LIMIT ?').all(id, limit);
+    const events = rows.map((r: any) => ({ id: r.id, device_id: r.device_id, topic: r.topic, payload: bufferToMaybeJson(r.payload), ts: r.ts }));
+    res.json({ events });
+  }catch{
+    res.json({ events: [] });
+  }finally{
+    try{ db.close(); }catch{}
+  }
+});
+
+function tryParseJson(txt: any){
+  if (typeof txt !== 'string') return txt;
+  try{ return JSON.parse(txt); }catch{ return txt; }
+}
+function bufferToMaybeJson(b: any){
+  try{
+    const s = Buffer.isBuffer(b) ? b.toString('utf8') : (typeof b === 'string' ? b : String(b));
+    try{ return JSON.parse(s); }catch{ return s; }
+  }catch{ return null; }
+}
 
 // ===== Server Settings & Certificate Management =====
 // Endpoints backing the Settings page in the UI. Root CA must exist before issuing
