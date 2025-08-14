@@ -15,6 +15,9 @@ Edgeberry Fleet Hub is a self-hostable device management server for Edgeberry de
 
 ## Microservices
 
+- **Core Orchestrator (`core-service/`)**
+  - Hosts the Fleet Hub orchestrator HTTP service (default :8080) and serves the built Web UI from `ui/build` in production. Provides a health endpoint at `/healthz`. Intended as the entrypoint for users accessing the UI and, optionally, for light orchestration duties.
+
 - **API (`api/`)**
   - Public HTTP surface for the Fleet Hub. Handles authn/z, exposes REST and WebSocket endpoints, talks to internal services over D-Bus, and attributes MQTT events to devices.
 

@@ -39,13 +39,14 @@ These choices are made to maximize simplicity, performance, and long-term mainta
 
 The Fleet Hub is a set of smaller projects in a single monorepo to keep development tight and interfaces explicit:
 
-External presentation: To the outside world, Edgeberry Fleet Hub is a monolithic product — a single hostname, a single API surface, and a single dashboard UI. Internal modularity is an implementation detail and must not leak into the public surface area.
+External presentation: To the outside world, Edgeberry Fleet Hub is a monolithic product — a single hostname, a single API surface, and a single dashboard UI. Internal modularity is an implementation detail and must not leak into the public surface area. The `core-service` acts as the orchestrator and public entrypoint for the UI.
 
-Public Surface Area:
+Public Surface Area (single HTTP(S) server):
 
 - Base URL: single hostname (e.g., `https://fleethub.edgeberry.io`).
-- HTTP API prefix: `/api` (versioning via headers or path TBD).
-- UI entrypoint: `/` serves the dashboard SPA.
+- Only `core-service` binds public HTTP(S).
+- UI entrypoint: `/` serves the dashboard SPA from the `core-service` (static file server in production).
+- HTTP API prefix: `/api` (versioning via headers or path TBD) — served directly by `core-service`.
 - WebSocket endpoints are exposed only by the `api/` service.
 
 Execution model & IPC:
@@ -57,17 +58,18 @@ Execution model & IPC:
  - Release packaging (MVP): we publish per-microservice build artifacts (tar.gz) attached to GitHub Releases and install them on the host via a privileged installer. No Docker is used for release packaging.
  - Host installation (MVP): `scripts/install.sh` installs artifacts under `/opt/Edgeberry/fleethub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services.
 
-- `ui/` — Web UI (frontend framework TBD: React or Svelte). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
-- `api/` — Node.js + Express HTTP API. Surfaces REST endpoints, handles authn/z, queries SQLite, publishes/consumes MQTT as needed.
+- `ui/` — Web UI (React). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
+- `core-service/` — Orchestrator and public entrypoint. Serves the built UI in production and may provide light orchestration endpoints (e.g., `/healthz`).
+- `api/` — Previously a standalone Node.js + Express HTTP API. Responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`. Any remaining code here will be migrated or retired.
 - `provisioning-service/` — Long-running Node.js service subscribed to `$fleethub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility.
 - `twin-service/` — Dedicated service for digital twin maintenance: processes twin updates/deltas, reconciliation, and desired→reported state sync.
 - `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
 - `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
 - `scripts/` — Developer tooling and CI checks (e.g., DB migrations, seeders).
-  - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
+  - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
 - `docs/` — Extended documentation referenced from this file.
 - `config/` — `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs (dev/prod variants). MVP: flat directory (no subfolders).
-  - Example unit files (MVP): `fleethub-api.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
+  - Example unit files (MVP): `fleethub-core.service`, `fleethub-api.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
 
 Responsibilities and boundaries:
 

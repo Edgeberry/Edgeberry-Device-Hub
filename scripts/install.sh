@@ -28,6 +28,7 @@ SERVICES=(
   provisioning-service
   twin-service
   registry-service
+  core-service
 )
 
 log() { echo "[install] $*"; }
@@ -61,6 +62,7 @@ install_systemd_units() {
   log "installing systemd unit files"
   local unit
   for unit in \
+    fleethub-core.service \
     fleethub-api.service \
     fleethub-provisioning.service \
     fleethub-twin.service \
@@ -77,6 +79,7 @@ install_systemd_units() {
 
 enable_services() {
   log "enabling services"
+  systemctl enable fleethub-core.service || true
   systemctl enable fleethub-api.service || true
   systemctl enable fleethub-provisioning.service || true
   systemctl enable fleethub-twin.service || true
@@ -85,6 +88,7 @@ enable_services() {
 
 start_services() {
   log "starting services"
+  systemctl restart fleethub-core.service || true
   systemctl restart fleethub-api.service || true
   systemctl restart fleethub-provisioning.service || true
   systemctl restart fleethub-twin.service || true

@@ -1,0 +1,22 @@
+[Unit]
+Description=Edgeberry Fleet Hub - Core Orchestrator Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Edgeberry/fleethub/core-service
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/Edgeberry/fleethub/core.env
+# Optionally serve built UI from /opt/Edgeberry/fleethub/ui/build
+Environment=UI_DIST=/opt/Edgeberry/fleethub/ui/build
+ExecStart=/usr/bin/node /opt/Edgeberry/fleethub/core-service/dist/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

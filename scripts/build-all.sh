@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build artifacts for each microservice and package as tar.gz under dist-artifacts/
-# Services covered: api, provisioning-service, twin-service, registry-service, ui
+# Services covered: api, provisioning-service, twin-service, registry-service, core-service, ui
 # This script is CI-friendly and can be run locally.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -89,6 +89,7 @@ build_ui() {
 }
 
 build_node_service api
+build_node_service core-service
 build_node_service provisioning-service
 build_node_service twin-service
 build_node_service registry-service

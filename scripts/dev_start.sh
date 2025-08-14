@@ -104,6 +104,7 @@ ensure_deps() {
   fi
 }
 
+ensure_deps "$ROOT_DIR/core-service"
 ensure_deps "$ROOT_DIR/api"
 ensure_deps "$ROOT_DIR/provisioning-service"
 ensure_deps "$ROOT_DIR/twin-service"
@@ -111,6 +112,7 @@ ensure_deps "$ROOT_DIR/registry-service"
 ensure_deps "$ROOT_DIR/ui"  # optional
 
 start_mosquitto
+start_service core-service core-service
 start_service api api
 start_service provisioning-service provisioning-service
 start_service twin-service twin-service
