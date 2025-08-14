@@ -9,8 +9,31 @@ It’s designed to be lightweight, transparent, and fully under your control.
 ## Getting Started
 [ToDo]
 
+## Description
+
+Edgeberry Fleet Hub is a self-hostable device management server for Edgeberry devices. It provides a single, secure control plane to provision devices (MQTT + mTLS), observe telemetry, manage digital twins, and expose a clean HTTP API and UI. Internally, independent microservices communicate over D-Bus; devices communicate via MQTT.
+
+## Microservices
+
+- **API (`api/`)**
+  - Public HTTP surface for the Fleet Hub. Handles authn/z, exposes REST and WebSocket endpoints, talks to internal services over D-Bus, and attributes MQTT events to devices.
+
+- **Provisioning Service (`provisioning-worker/`)**
+  - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$fleethub/certificates/create-from-csr`, signs CSRs, and returns signed certs. No digital twin responsibilities.
+
+- **Device Twin Service (`twin-service/`)**
+  - Owns desired/reported twin state. Persists state, generates deltas, and publishes twin updates over `$fleethub/devices/{deviceId}/twin/#`. Provides D-Bus methods for the API to read/update twin state.
+
+- **Device Registry Service (`registry-service/`)**
+  - Authoritative inventory for devices. Stores identity anchors (device ID, cert metadata, optional manufacturer UUID hash), status, and operational context. Exposes a D-Bus interface to query/update registry data.
+
+- **Web UI (`fleet-hub-ui/`)**
+  - React SPA for dashboards, devices, events, and twin management. Consumes only public API/WebSocket endpoints.
+
+See `alignment.md` for architecture and interface details.
+
 ## License & Collaboration
-**Copyright© 2024 Sanne 'SpuQ' Santens**. The Edgeberry Fleet Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry™ brand.
+**Copyright 2024 Sanne 'SpuQ' Santens**. The Edgeberry Fleet Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
 
 ### Collaboration
 
