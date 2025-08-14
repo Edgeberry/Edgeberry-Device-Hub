@@ -69,6 +69,8 @@ Execution model & IPC:
 - `scripts/` — Developer tooling and CI checks (e.g., DB migrations, seeders).
   - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
 - `docs/` — Extended documentation referenced from this file.
+- `examples/` — Example integrations and reference nodes.
+  - `examples/nodered/` — TypeScript-based Node-RED node "edgeberry-device". Minimal example that sets status to ready, logs "hello world" on input, and passes the message through. Required settings when adding the node: `host` (Fleet Hub base URL), `uuid` (device UUID), and a credential `token` (host access token). Build with `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`. Install into Node-RED via `npm link` or `npm pack` from this folder.
 - `config/` — `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs (dev/prod variants). MVP: flat directory (no subfolders).
   - Example unit files (MVP): `fleethub-core.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
 

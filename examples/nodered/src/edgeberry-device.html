@@ -1,0 +1,49 @@
+<script type="text/javascript">
+  RED.nodes.registerType('edgeberry-device', {
+    category: 'Edgeberry',
+    color: '#3F51B5',
+    defaults: {
+      name: { value: '' },
+      host: { value: '', required: true },
+      uuid: { value: '', required: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'bridge.svg',
+    credentials: {
+      token: { type: 'password' }
+    },
+    label: function () {
+      return this.name || 'edgeberry device';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="edgeberry-device">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+  <div class="form-row">
+    <label for="node-input-host"><i class="fa fa-globe"></i> Host</label>
+    <input type="text" id="node-input-host" placeholder="https://your-fleethub.example.com">
+  </div>
+  <div class="form-row">
+    <label for="node-input-uuid"><i class="fa fa-id-badge"></i> Device UUID</label>
+    <input type="text" id="node-input-uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+  </div>
+  <div class="form-row">
+    <label for="node-input-token"><i class="fa fa-key"></i> Host Access Token</label>
+    <input type="password" id="node-input-token">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="edgeberry-device">
+  <p>Edgeberry device example node.</p>
+  <ul>
+    <li><b>Host</b>: the Fleet Hub domain (e.g. https://fleethub.local or https://fleethub.example.com)</li>
+    <li><b>Device UUID</b>: which device this node represents</li>
+    <li><b>Host Access Token</b>: token allowing access to Fleet Hub API and MQTT (stored as a credential)</li>
+  </ul>
+  <p>Behavior: logs "hello world" on input and passes the message through unchanged.</p>
+</script>
