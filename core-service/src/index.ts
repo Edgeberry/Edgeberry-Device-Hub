@@ -25,6 +25,7 @@ const DEFAULT_LOG_UNITS = [
   'fleethub-provisioning.service',
   'fleethub-twin.service',
   'fleethub-api.service',
+  'fleethub-registry.service',
 ];
 
 function buildJournalctlArgs(opts: {

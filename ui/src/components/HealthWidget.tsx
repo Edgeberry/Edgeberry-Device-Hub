@@ -12,31 +12,27 @@ const HealthWidget = ()=>{
 
   useEffect(()=>{
     (async ()=>{
+      setLoading(true);
+      setError('');
       try{
-        setLoading(true);
-        const [h,s,v,c] = await Promise.all([
-          getHealth(),
-          getStatus(),
-          getVersion(),
-          getPublicConfig()
-        ]);
+        const h = await getHealth();
         setHealth(h);
-        setStatus(s);
-        setVersion(v);
-        setConfig(c);
       }catch(e:any){
         setError(e?.message || 'Failed to load health');
-      }finally{
-        setLoading(false);
       }
+      // Best-effort: these may not exist yet on the backend
+      try{ setStatus(await getStatus()); }catch{ /* ignore */ }
+      try{ setVersion(await getVersion()); }catch{ /* ignore */ }
+      try{ setConfig(await getPublicConfig()); }catch{ /* ignore */ }
+      setLoading(false);
     })();
   },[]);
 
   const healthy = health?.health === 'ok' || health?.ok === true;
-  const uptime = status?.uptime || status?.uptimeSeconds || '-';
-  const svc = version?.service || version?.name || 'Fleet Hub';
-  const ver = version?.version || version?.git || '-';
-  const env = config?.env || config?.environment || '-';
+  const uptime = (status && (status.uptime || status.uptimeSeconds)) || '-';
+  const svc = (version && (version.service || version.name)) || 'Fleet Hub';
+  const ver = (version && (version.version || version.git)) || '-';
+  const env = (config && (config.env || config.environment)) || '-';
 
   return (
     <Card className="mb-3" data-testid="health-widget">
@@ -66,5 +62,4 @@ const HealthWidget = ()=>{
     </Card>
   );
 }
-
 export default HealthWidget;

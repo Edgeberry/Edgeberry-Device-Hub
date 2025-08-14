@@ -1,16 +1,15 @@
-import NavigationBar from "../components/Navigationbar";
-import { Outlet } from "react-router-dom";
+import React from 'react';
+import { Container } from 'react-bootstrap';
+import { Outlet } from 'react-router-dom';
+import NavigationBar from '../components/Navigationbar';
 
-const Dashboard = (props:{user:any|null}) => {
-    // Change the browser tab name to 'Dashboard'
-    document.title = 'Fleet Hub';
-
-    return (
-        <>
-            <NavigationBar user={props.user}/>
-            <Outlet />
-        </>
-    );
+export default function Dashboard(props:{user:any}){
+  return (
+    <>
+      <NavigationBar user={props.user} />
+      <Container style={{ paddingTop: 16, textAlign: 'left' }}>
+        <Outlet />
+      </Container>
+    </>
+  );
 }
-
-export default Dashboard;

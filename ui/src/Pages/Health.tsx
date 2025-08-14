@@ -24,31 +24,17 @@ const Health = ()=>{
 
   return (
     <Container style={{textAlign:'left'}}>
-      <br/>
-      <h1>Health</h1>
-      {error? <Alert variant='danger'>{error}</Alert>:null}
-      <Row className='gy-3'>
-        <Col md={6}>
-          <Card>
-            <Card.Header>Service</Card.Header>
-            <Card.Body>
-              <p>Health: {health?.ok? <Badge bg='success'>OK</Badge>:<Badge bg='danger'>DOWN</Badge>}</p>
-              <p>Status: <code>{JSON.stringify(status)}</code></p>
-              <p>Version: <code>{JSON.stringify(version)}</code></p>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={6}>
-          <Card>
-            <Card.Header>Public Config</Card.Header>
-            <Card.Body>
-              <pre style={{margin:0}}>{JSON.stringify(config,null,2)}</pre>
-            </Card.Body>
-          </Card>
-        </Col>
+      <h3>Health</h3>
+      {error? <Alert variant='danger'>{error}</Alert>: null}
+      <Row>
+        <Col md={4}><Card className='mb-3'><Card.Body><div><b>Health</b></div><div>{JSON.stringify(health)}</div></Card.Body></Card></Col>
+        <Col md={4}><Card className='mb-3'><Card.Body><div><b>Status</b></div><div>{JSON.stringify(status)}</div></Card.Body></Card></Col>
+        <Col md={4}><Card className='mb-3'><Card.Body><div><b>Version</b></div><div>{JSON.stringify(version)}</div></Card.Body></Card></Col>
+      </Row>
+      <Row>
+        <Col md={12}><Card className='mb-3'><Card.Body><div><b>Config</b></div><div><pre style={{margin:0}}>{JSON.stringify(config,null,2)}</pre></div></Card.Body></Card></Col>
       </Row>
     </Container>
   );
 }
-
 export default Health;
