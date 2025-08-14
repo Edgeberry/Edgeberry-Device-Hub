@@ -39,8 +39,17 @@ export default function Settings(_props:{user:any}){
     }catch(e:any){ setError(e?.message || 'Failed to load server settings'); }
     try{
       // Root CA meta
-      const r = await (await fetch('/api/settings/certs/root')).json();
-      setRoot(r);
+      const resp = await fetch('/api/settings/certs/root');
+      if (resp.ok){
+        const d = await resp.json();
+        setRoot({ exists: true, subject: d?.meta?.subject, validFrom: d?.meta?.validFrom, validTo: d?.meta?.validTo });
+      } else if (resp.status === 404){
+        setRoot({ exists: false });
+      } else {
+        // leave as-is but surface error next to server section
+        const d = await resp.json().catch(()=>({}));
+        setError(d?.error || 'Failed to load root CA');
+      }
     }catch{ /* ignore */ }
     try{
       // Provisioning certs list
@@ -131,6 +140,9 @@ export default function Settings(_props:{user:any}){
                     <div style={{opacity:.85, fontSize:13, marginTop:4}}>
                       <div>Subject: {root.subject}</div>
                       <div>Valid: {root.validFrom} → {root.validTo}</div>
+                      <div style={{marginTop:8}}>
+                        <a className='btn btn-outline-primary btn-sm' href='/api/settings/certs/root/download'>Download CA certificate</a>
+                      </div>
                     </div>
                   )}
                 </div>

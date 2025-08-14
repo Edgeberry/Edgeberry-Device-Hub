@@ -25,6 +25,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// GET /api/settings/certs/root/download -> download Root CA certificate (PEM)
+app.get('/api/settings/certs/root/download', async (_req: Request, res: Response) => {
+  try {
+    if (!(await caExists())) { res.status(404).json({ error: 'root CA not found' }); return; }
+    res.setHeader('Content-Type', 'application/x-pem-file');
+    res.setHeader('Content-Disposition', 'attachment; filename="ca.crt"');
+    const s = fs.createReadStream(CA_CRT);
+    s.on('error', () => res.status(500).end());
+    s.pipe(res);
+  } catch (e:any) {
+    res.status(500).json({ error: e?.message || 'failed to download root cert' });
+  }
+});
+
 // GET /api/settings/certs/provisioning/:name/download -> tar.gz bundle for device
 app.get('/api/settings/certs/provisioning/:name/download', async (req: Request, res: Response) => {
   try {
