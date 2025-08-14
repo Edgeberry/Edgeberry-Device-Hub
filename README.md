@@ -35,6 +35,90 @@ Edgeberry Fleet Hub is a self-hostable device management server for Edgeberry de
 
 See `alignment.md` for architecture and interface details.
 
+## Current Implementation (MVP)
+
+The repository contains a working MVP focused on MQTT- and SQLite-backed microservices with a minimal UI and example Node-RED node.
+
+### Features present
+
+- **Core service (`core-service/`)**
+  - Serves the built Web UI on http://localhost:8080
+  - Exposes basic endpoints used by the UI: `/api/health`, `/api/services`, `/api/logs`, `/api/version`, `/api/config/public`
+  - Dev script `npm run dev` starts core and workers with hot reload (see `scripts/dev_start.sh`)
+
+- **Provisioning service (`provisioning-service/`)**
+  - Subscribes to `$fleethub/devices/{deviceId}/provision/request`
+  - Upserts device records into SQLite table `devices` (fields: `id`, `name?`, `token?`, `meta?`, `created_at`)
+  - Publishes `$fleethub/devices/{deviceId}/provision/accepted|rejected`
+  - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `PROVISIONING_DB`
+
+- **Twin service (`twin-service/`)**
+  - Subscribes to `$fleethub/devices/{deviceId}/twin/get` and `.../twin/update`
+  - Persists desired/reported documents in SQLite tables `twin_desired` and `twin_reported`
+  - Publishes `.../twin/update/accepted` and `.../twin/update/delta`
+  - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `TWIN_DB`
+
+- **Registry service (`registry-service/`)**
+  - Subscribes to `devices/#`
+  - Persists raw events into SQLite `device_events` (`device_id`, `topic`, `payload` BLOB, `ts`)
+  - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `REGISTRY_DB`
+
+- **Web UI (`ui/`)**
+  - React SPA built to `ui/build/`, served by core-service
+  - Overview displays health, unit statuses, and sample devices/events placeholders
+
+- **Node-RED example (`examples/nodered/`)**
+  - Node `edgeberry-device` (TypeScript) with settings: `host`, `uuid`, credential `token`
+  - On input, logs "hello world" and forwards the message
+
+### MQTT topics (MVP subset)
+
+- Provisioning (dev simplification):
+  - Request: `$fleethub/devices/{deviceId}/provision/request`
+  - Responses: `.../provision/accepted`, `.../provision/rejected`
+
+- Twin:
+  - Get: `$fleethub/devices/{deviceId}/twin/get` → responds on `.../twin/update/accepted`
+  - Update: `$fleethub/devices/{deviceId}/twin/update` → `.../accepted`, optional `.../delta`
+
+- Registry ingest:
+  - Device publishes: `devices/{deviceId}/...` → persisted to `device_events`
+
+### Build, run, and artifacts
+
+- Build all artifacts:
+  ```bash
+  npm run build
+  # outputs tarballs under dist-artifacts/
+  ```
+
+- Dev run (starts core + services, assumes a broker at MQTT_URL or localhost):
+  ```bash
+  npm run dev
+  # core-service on http://localhost:8080
+  ```
+
+- Individual service run (example):
+  ```bash
+  MQTT_URL="mqtt://localhost:1883" node provisioning-service/dist/index.js
+  MQTT_URL="mqtt://localhost:1883" node twin-service/dist/index.js
+  MQTT_URL="mqtt://localhost:1883" node registry-service/dist/index.js
+  ```
+
+- Produced artifacts (tar.gz) after build:
+  - `dist-artifacts/fleethub-core-service-<version>.tar.gz`
+  - `dist-artifacts/fleethub-provisioning-service-<version>.tar.gz`
+  - `dist-artifacts/fleethub-twin-service-<version>.tar.gz`
+  - `dist-artifacts/fleethub-registry-service-<version>.tar.gz`
+  - `dist-artifacts/fleethub-ui-<version>.tar.gz`
+  - CI also builds and uploads a packaged Node-RED example from `examples/nodered/`
+
+### Notes
+
+- Services use `mqtt@4.x` (with built-in TypeScript types) and `better-sqlite3` for persistence.
+- You need a working MQTT broker (e.g., Mosquitto) reachable at `MQTT_URL`.
+- See `alignment.md` for deeper architecture, topic contracts, and security posture.
+
 ## License & Collaboration
 **Copyright 2024 Sanne 'SpuQ' Santens**. The Edgeberry Fleet Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
 

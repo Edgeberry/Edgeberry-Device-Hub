@@ -31,8 +31,12 @@ build_node_service() {
   fi
   log "build ${svc}"
   pushd "$dir" >/dev/null
-  # Install deps
-  if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
+  # Install deps (prefer ci, but fall back to install if lock is out of sync)
+  if [[ -f package-lock.json ]]; then
+    npm ci || npm install
+  else
+    npm install
+  fi
   # Build if script exists
   if npm run | grep -qE '^\s*build\s'; then
     npm run build
