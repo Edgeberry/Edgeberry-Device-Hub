@@ -34,6 +34,7 @@ import {
   MQTT_URL,
   PROVISIONING_DB,
   REGISTRY_DB,
+  ONLINE_THRESHOLD_SECONDS,
 } from './config.js';
 import { ensureDirs, caExists, generateRootCA, readCertMeta, issueProvisioningCert } from './certs.js';
 import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
@@ -187,13 +188,32 @@ function openDb(file: string){
   }
 }
 
+function getLastSeenMap(): Record<string,string> {
+  const db = openDb(REGISTRY_DB);
+  if(!db) return {};
+  try{
+    const rows = db.prepare('SELECT device_id, MAX(ts) AS last_ts FROM device_events GROUP BY device_id').all();
+    const map: Record<string,string> = {};
+    for(const r of rows){ if(r.device_id && r.last_ts) map[r.device_id] = r.last_ts; }
+    return map;
+  }catch{ return {}; }
+  finally{ try{ db.close(); }catch{} }
+}
+
 // GET /api/devices -> list known devices from provisioning DB
 app.get('/api/devices', (_req: Request, res: Response) => {
   const db = openDb(PROVISIONING_DB);
   if(!db){ res.json({ devices: [] }); return; }
   try{
     const rows = db.prepare('SELECT id, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
-    const devices = rows.map((r: any) => ({ id: r.id, name: r.name, token: r.token, meta: tryParseJson(r.meta), created_at: r.created_at }));
+    const lastSeen = getLastSeenMap();
+    const now = Date.now();
+    const devices = rows.map((r: any) => {
+      const ls = lastSeen[r.id];
+      const last_seen = ls || null;
+      const online = ls ? (now - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
+      return { id: r.id, name: r.name, token: r.token, meta: tryParseJson(r.meta), created_at: r.created_at, last_seen, online };
+    });
     res.json({ devices });
   }catch{
     res.json({ devices: [] });
@@ -210,7 +230,10 @@ app.get('/api/devices/:id', (req: Request, res: Response) => {
   try{
     const row = db.prepare('SELECT id, name, token, meta, created_at FROM devices WHERE id = ?').get(id);
     if(!row){ res.status(404).json({ error: 'not found' }); return; }
-    res.json({ id: row.id, name: row.name, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at });
+    const lastSeen = getLastSeenMap();
+    const ls = lastSeen[id];
+    const online = ls ? (Date.now() - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
+    res.json({ id: row.id, name: row.name, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at, last_seen: ls || null, online });
   }catch{
     res.status(500).json({ error: 'failed to read device' });
   }finally{

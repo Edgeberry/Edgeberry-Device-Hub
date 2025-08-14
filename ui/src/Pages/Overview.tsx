@@ -13,7 +13,7 @@
  *  - This route is protected by `RequireAuth` in `App.tsx`. `props.user` is the authenticated admin.
  */
 import React, { useEffect, useState } from 'react';
-import { Card, Table } from 'react-bootstrap';
+import { Badge, Card, Table } from 'react-bootstrap';
 import HealthWidget from '../components/HealthWidget';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
 import SystemMetricsWidget from '../components/SystemMetricsWidget';
@@ -45,6 +45,8 @@ export default function Overview(props:{user:any}){
               <tr>
                 <th>ID</th>
                 <th>Name</th>
+                <th>Status</th>
+                <th>Last seen</th>
               </tr>
             </thead>
             <tbody>
@@ -52,6 +54,14 @@ export default function Overview(props:{user:any}){
                 <tr key={d.id || d._id || d.name}>
                   <td><Link to={`/devices/${encodeURIComponent(d.id || d._id || d.name)}`}>{d.id || d._id || d.name}</Link></td>
                   <td>{d.name || '-'}</td>
+                  <td>
+                    {d.online ? (
+                      <Badge bg="success">Online</Badge>
+                    ) : (
+                      <Badge bg="secondary">Offline</Badge>
+                    )}
+                  </td>
+                  <td>{d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}</td>
                 </tr>
               ))}
             </tbody>

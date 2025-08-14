@@ -23,6 +23,8 @@ export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://localhost:1883';
 // SQLite DBs owned by worker services (MVP direct-read from core-service)
 export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || path.resolve(process.cwd(), '..', 'provisioning-service', 'provisioning.db');
 export const REGISTRY_DB: string = process.env.REGISTRY_DB || path.resolve(process.cwd(), '..', 'registry-service', 'registry.db');
+// Consider a device online if we've seen an event within this window (seconds)
+export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);
 
 export const DEFAULT_LOG_UNITS: string[] = [
   'fleethub-core.service',
