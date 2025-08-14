@@ -114,7 +114,32 @@ if [[ "${DEV_MOSQUITTO:-0}" = "1" ]]; then
 else
   log "skipping mosquitto (set DEV_MOSQUITTO=1 to enable)"
 fi
+
+# Build UI once if needed and serve it from core-service
+build_ui_if_needed() {
+  local ui_dir="$ROOT_DIR/ui"
+  if [[ ! -d "$ui_dir" ]]; then
+    log "UI project not present; skipping UI build"
+    return 0
+  fi
+  ensure_deps "$ui_dir"
+  if [[ ! -f "$ui_dir/build/index.html" ]]; then
+    log "building UI for dev serving (no HMR)"
+    pushd "$ui_dir" >/dev/null
+    npm run build
+    popd >/dev/null
+  else
+    log "UI build found; skipping rebuild"
+  fi
+}
+
+build_ui_if_needed
+
 # Core-service exposes both API and UI on port 8080 in development
+# Pass UI_DIST to point at the UI build output
+if [[ -d "$ROOT_DIR/ui/build" ]]; then
+  export UI_DIST="$ROOT_DIR/ui/build"
+fi
 start_service core-service core-service
 start_service provisioning-service provisioning-service
 start_service twin-service twin-service

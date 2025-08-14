@@ -33,6 +33,7 @@ import Logout from './Pages/Logout';
 import Register from './Pages/Register';
 import ActivateAccount from './Pages/ActivateAccount';
 import Admin from './Pages/Admin';
+import Hello from './Pages/Hello';
 
 function App() {
   const[ user, setUser ] = useState<any|null>(null);
@@ -61,7 +62,8 @@ function App() {
     <div className="App">
     <BrowserRouter basename={process.env.PUBLIC_URL}>
       <Routes>
-      <Route index element={<Navigate to="/devices" />} />
+      <Route index element={<Navigate to="/hello" />} />
+        <Route path='/hello' element={<Hello />} />
         {/* Fleet Hub: nested routes */}
         <Route path='/login' element={<Login user={user} onLogin={()=>{onLogin()}}/>} />
         <Route path='/register' element={<Register user={user} onLogin={()=>{onLogin()}}/>} />
