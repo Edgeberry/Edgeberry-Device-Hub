@@ -221,8 +221,7 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
   res.json({ authenticated: true, user: s.user });
 });
 
-// Middleware: protect APIs (except health and auth) and UI
-// If unauthenticated and requesting a page, we render a small server login form.
+// Middleware: protect APIs (except health and auth). Never render HTML; SPA handles UI.
 function authRequired(req: Request, res: Response, next: NextFunction) {
   // Public endpoints
   if (req.path === '/healthz' || req.path === '/api/health') return next();
@@ -230,60 +229,17 @@ function authRequired(req: Request, res: Response, next: NextFunction) {
   const s = getSession(req);
   if (!s) {
     if (req.path.startsWith('/api/')) {
+      // APIs require auth
       res.status(401).json({ error: 'unauthorized' });
-    } else {
-      // For GET pages, show login
-      if (req.method === 'GET') return serveLoginPage(req, res);
-      res.status(401).send('unauthorized');
+      return;
     }
-    return;
+    // Non-API requests are handled by the SPA (static files). Let them through.
+    return next();
   }
   next();
 }
 
 app.use(authRequired);
-
-function serveLoginPage(_req: Request, res: Response) {
-  res.type('html').send(`<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Fleet Hub — Login</title>
-    <style>
-      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;line-height:1.4;margin:2rem;color:#111;display:flex;align-items:center;justify-content:center;height:100vh;background:#f6f8fa}
-      .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.06);padding:24px;max-width:340px;width:100%}
-      h1{font-size:18px;margin:0 0 12px}
-      label{display:block;font-size:12px;color:#555;margin-top:8px}
-      input{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;margin-top:4px}
-      button{width:100%;margin-top:14px;padding:10px 12px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:8px;cursor:pointer}
-      .err{color:#b00020;font-size:12px;height:14px;margin-top:6px}
-      .muted{color:#666;font-size:12px;margin-top:8px}
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1>Admin login</h1>
-      <label>Username</label>
-      <input id="u" placeholder="admin" />
-      <label>Password</label>
-      <input id="p" type="password" placeholder="••••••" />
-      <div class="err" id="e"></div>
-      <button onclick="login()">Sign in</button>
-      <div class="muted">Registration is disabled.</div>
-    </div>
-    <script>
-      async function login(){
-        const username = (document.getElementById('u')).value || 'admin';
-        const password = (document.getElementById('p')).value || '';
-        const res = await fetch('/api/auth/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ username, password })});
-        if (res.ok){ location.href = '/'; } else { const d = await res.json().catch(()=>({})); document.getElementById('e').textContent = d.error || 'Login failed'; }
-      }
-      window.addEventListener('keydown', (e)=>{ if(e.key==='Enter') login(); });
-    </script>
-  </body>
-</html>`);
-}
 
 // ===== Server Settings & Certificate Management =====
 // Endpoints backing the Settings page in the UI. Root CA must exist before issuing
