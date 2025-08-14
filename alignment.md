@@ -42,6 +42,29 @@ Edgeberry Fleet Hub is a **self-hostable device management service** designed sp
 * **Decentralization** – Each server instance is sovereign but can optionally sync or interoperate with others.
 * **Bounded flexibility** – The system supports many use cases, but always within the defined scope of managing Edgeberry devices.
 
+## Readability & Documentation Standards
+
+We prioritize human readability to reduce onboarding time and prevent operational mistakes. Contributors must follow these conventions:
+
+- **Comment the why, not just the what**: Explain decisions, invariants, trade-offs, and security implications where non-obvious. Avoid restating code.
+- **Document environment and contracts**: At each service entrypoint, document env vars, expected directory layout, network ports, and external dependencies (MQTT, D-Bus, HTTP).
+- **APIs and topics**: Co-locate short endpoint/topic summaries near handlers (methods, routes, message handlers). Link to this file for the canonical contract.
+- **Security notes**: Call out auth, authn/z boundaries, and sensitive data handling (cookies, tokens, certificates) at the point of use.
+- **Operational clarity**: For background workers, document subscriptions, QoS, retry/backoff, and shutdown behavior.
+- **UI code**: Briefly annotate data sources, loading/error fallbacks, and admin gating logic in components consuming APIs.
+- **Keep comments truthful**: Update comments when behavior changes; treat stale comments as bugs.
+
+Style:
+
+- Prefer concise line comments near logic over large headers, except at file/service entrypoints where a short header is encouraged.
+- Use TypeScript types and clear naming; comments supplement, not replace, types.
+- Avoid leaking secrets in examples or logs. Include TODOs with owner/context when applicable.
+
+PR checklist additions:
+
+- If behavior or contracts changed, ensure inline comments are updated and this alignment file is amended when scope/principles are affected.
+- New endpoints/topics: add a brief comment where implemented and ensure the corresponding section in this document stays accurate.
+
 ## Technology Stack
 
 Edgeberry Fleet Hub is based on open-source technologies to ensure transparency, interoperability, and ease of contribution:

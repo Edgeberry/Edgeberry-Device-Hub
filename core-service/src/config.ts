@@ -1,0 +1,32 @@
+import path from 'path';
+
+export const SERVICE = 'core-service';
+
+export const NODE_ENV = process.env.NODE_ENV || 'development';
+export const PORT: number = Number(process.env.PORT || (NODE_ENV === 'production' ? 80 : 8080));
+
+export const ADMIN_USER: string = process.env.ADMIN_USER || 'admin';
+export const ADMIN_PASSWORD: string = process.env.ADMIN_PASSWORD || 'admin'; // change in prod
+
+export const SESSION_COOKIE = 'fh_session';
+export const JWT_SECRET: string = process.env.JWT_SECRET || 'dev-change-me';
+export const JWT_TTL_SECONDS: number = Number(process.env.JWT_TTL_SECONDS || 60 * 60 * 24);
+
+export const CERTS_DIR: string = process.env.CERTS_DIR || path.resolve(process.cwd(), 'data', 'certs');
+export const ROOT_DIR: string = path.join(CERTS_DIR, 'root');
+export const PROV_DIR: string = path.join(CERTS_DIR, 'provisioning');
+export const CA_KEY: string = path.join(ROOT_DIR, 'ca.key');
+export const CA_CRT: string = path.join(ROOT_DIR, 'ca.crt');
+
+export const UI_DIST: string = process.env.UI_DIST || '/opt/Edgeberry/fleethub/ui/build';
+export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://localhost:1883';
+
+export const DEFAULT_LOG_UNITS: string[] = [
+  'fleethub-core.service',
+  'fleethub-provisioning.service',
+  'fleethub-twin.service',
+  'fleethub-registry.service',
+  // Infra dependencies
+  'dbus.service',
+  'mosquitto.service',
+];

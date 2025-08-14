@@ -17,11 +17,29 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import {
+  PORT,
+  ADMIN_USER,
+  ADMIN_PASSWORD,
+  SESSION_COOKIE,
+  JWT_SECRET,
+  JWT_TTL_SECONDS,
+  CERTS_DIR,
+  ROOT_DIR,
+  PROV_DIR,
+  CA_KEY,
+  CA_CRT,
+  UI_DIST,
+  MQTT_URL,
+} from './config.js';
+import { ensureDirs, caExists, generateRootCA, readCertMeta, issueProvisioningCert } from './certs.js';
+import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
+import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 
 const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
 app.set('etag', false);
-const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 8080));
+// PORT now comes from src/config.ts
 // Environment variables overview (MVP):
 // - PORT: HTTP port (defaults 8080 dev, 80 prod)
 // - MQTT_URL: used for bundle config exposure
@@ -78,7 +96,7 @@ app.get('/api/settings/certs/provisioning/:name/download', async (req: Request, 
     fs.copyFileSync(crtPath, certOut);
     fs.copyFileSync(keyPath, keyOut);
 
-    const mqttUrl = process.env.MQTT_URL || 'mqtt://localhost:1883';
+    const mqttUrl = MQTT_URL;
     const cfg = { mqttUrl, caCert: 'ca.crt', cert: `${name}.crt`, key: `${name}.key` };
     fs.writeFileSync(path.join(bundleDir, 'config.json'), JSON.stringify(cfg, null, 2));
 
@@ -109,99 +127,15 @@ console.log('[core-service] hello from Fleet Hub core-service');
 
 // Unified logs: snapshot and streaming from systemd journal (journalctl)
 // Services are expected to be systemd units like fleethub-*.service
-const DEFAULT_LOG_UNITS = [
-  'fleethub-core.service',
-  'fleethub-provisioning.service',
-  'fleethub-twin.service',
-  'fleethub-registry.service',
-  // Infra dependencies we want to monitor
-  'dbus.service',
-  'mosquitto.service',
-];
+// DEFAULT_LOG_UNITS now imported from src/logs.ts
 
-function buildJournalctlArgs(opts: {
-  units?: string[];
-  lines?: number;
-  since?: string;
-  follow?: boolean;
-  output?: 'json' | 'json-pretty' | 'short';
-}) {
-  const args: string[] = [];
-  const units = opts.units && opts.units.length ? opts.units : DEFAULT_LOG_UNITS;
-  for (const u of units) {
-    args.push('-u', u);
-  }
-  if (opts.lines != null) {
-    args.push('-n', String(opts.lines));
-  }
-  if (opts.since) {
-    args.push('--since', opts.since);
-  }
-  if (opts.follow) {
-    args.push('-f');
-  }
-  args.push('-o', opts.output ?? 'json');
-  return args;
-}
+// buildJournalctlArgs moved to src/logs.ts
 
 // ===== Simple single-user admin authentication using JWT =====
 // The UI authenticates via `/api/auth/login` which sets an HttpOnly cookie (`fh_session`).
 // We do not track server-side sessions; JWT is verified on each request.
-const ADMIN_USER = process.env.ADMIN_USER || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin'; // NOTE: change in production
-const SESSION_COOKIE = 'fh_session'; // cookie name retained
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-change-me';
-const JWT_TTL_SECONDS = Number(process.env.JWT_TTL_SECONDS || 60 * 60 * 24); // 24h default
+// Auth/JWT config now imported from src/config.ts
 
-// Parse a Http Cookie header into a simple key/value map
-function parseCookies(header?: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!header) return out;
-  const parts = header.split(';');
-  for (const p of parts) {
-    const idx = p.indexOf('=');
-    if (idx === -1) continue;
-    const k = decodeURIComponent(p.slice(0, idx).trim());
-    const v = decodeURIComponent(p.slice(idx + 1).trim());
-    out[k] = v;
-  }
-  return out;
-}
-
-// Validate JWT from cookie and return minimal user info
-function getSession(req: Request): { user: string } | null {
-  const cookies = parseCookies(req.headers.cookie);
-  const token = cookies[SESSION_COOKIE];
-  if (!token) return null;
-  try{
-    const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string; iat?: number; exp?: number };
-    const user = payload.user || payload.sub;
-    if (!user) return null;
-    return { user };
-  } catch {
-    return null;
-  }
-}
-
-// Set the HttpOnly cookie containing the JWT
-function setSessionCookie(res: Response, token: string) {
-  // If TLS termination happens in this process, set Secure=true to prevent cookie over HTTP.
-  // For reverse-proxy TLS termination, this may be toggled via an env or trust-proxy setting.
-  const isHttps = false; // TODO: detect HTTPS (e.g., via X-Forwarded-Proto or config)
-  const attrs = [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-  ];
-  if (isHttps) attrs.push('Secure');
-  res.setHeader('Set-Cookie', attrs.join('; '));
-}
-
-// Clear the session cookie (stateless logout)
-function clearSessionCookie(res: Response) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
-}
 
 // Auth routes (no registration)
 // POST /api/auth/login
@@ -230,23 +164,7 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
   res.json({ authenticated: true, user: s.user });
 });
 
-// Middleware: protect APIs (except health and auth). Never render HTML; SPA handles UI.
-function authRequired(req: Request, res: Response, next: NextFunction) {
-  // Public endpoints
-  if (req.path === '/healthz' || req.path === '/api/health') return next();
-  if (req.path.startsWith('/api/auth/')) return next();
-  const s = getSession(req);
-  if (!s) {
-    if (req.path.startsWith('/api/')) {
-      // APIs require auth
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
-    // Non-API requests are handled by the SPA (static files). Let them through.
-    return next();
-  }
-  next();
-}
+// Middleware moved to src/auth.ts
 
 app.use(authRequired);
 
@@ -257,87 +175,7 @@ app.use(authRequired);
 //  ROOT: CERTS_DIR (default: ./data/certs relative to process cwd)
 //   - root/ca.key, root/ca.crt
 //   - provisioning/ (issued provisioning certs)
-const CERTS_DIR = process.env.CERTS_DIR || path.resolve(process.cwd(), 'data', 'certs');
-const ROOT_DIR = path.join(CERTS_DIR, 'root');
-const PROV_DIR = path.join(CERTS_DIR, 'provisioning');
-const CA_KEY = path.join(ROOT_DIR, 'ca.key');
-const CA_CRT = path.join(ROOT_DIR, 'ca.crt');
-
-function ensureDirs() {
-  for (const d of [CERTS_DIR, ROOT_DIR, PROV_DIR]) {
-    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-  }
-}
-
-function runCmd(cmd: string, args: string[], input?: string): Promise<{ code: number | null; out: string; err: string }>{
-  return new Promise((resolve) => {
-    const p = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    const out: string[] = [];
-    const err: string[] = [];
-    p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
-    p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
-    if (input) {
-      p.stdin.write(input);
-      p.stdin.end();
-    }
-    p.on('close', (code) => resolve({ code, out: out.join(''), err: err.join('') }));
-  });
-}
-
-async function caExists(): Promise<boolean> {
-  return fs.existsSync(CA_KEY) && fs.existsSync(CA_CRT);
-}
-
-// Generate a new Root CA (private key + self-signed certificate)
-async function generateRootCA(params?: { cn?: string; days?: number; keyBits?: number }): Promise<void> {
-  ensureDirs();
-  const cn = params?.cn || 'Edgeberry Fleet Hub Root CA';
-  const days = String(params?.days ?? 3650);
-  const keyBits = String(params?.keyBits ?? 4096);
-  // Generate private key
-  const keyRes = await runCmd('openssl', ['genrsa', '-out', CA_KEY, keyBits]);
-  if (keyRes.code !== 0) throw new Error(`openssl genrsa failed: ${keyRes.err || keyRes.out}`);
-  // Self-signed cert
-  const subj = `/CN=${cn}`;
-  const crtRes = await runCmd('openssl', ['req', '-x509', '-new', '-nodes', '-key', CA_KEY, '-sha256', '-days', days, '-subj', subj, '-out', CA_CRT]);
-  if (crtRes.code !== 0) throw new Error(`openssl req -x509 failed: ${crtRes.err || crtRes.out}`);
-}
-
-// Read some basic certificate metadata via openssl
-async function readCertMeta(pemPath: string): Promise<{ fingerprintSha256?: string; notAfter?: string; subject?: string }>{
-  if (!fs.existsSync(pemPath)) return {};
-  const fp = await runCmd('openssl', ['x509', '-noout', '-fingerprint', '-sha256', '-in', pemPath]);
-  const nd = await runCmd('openssl', ['x509', '-noout', '-enddate', '-in', pemPath]);
-  const sj = await runCmd('openssl', ['x509', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', pemPath]);
-  return {
-    fingerprintSha256: fp.out.toString().trim().split('=').pop(),
-    notAfter: nd.out.toString().trim().split('=').pop(),
-    subject: sj.out.toString().trim().replace(/^subject=/, ''),
-  };
-}
-
-// Issue a provisioning certificate signed by the Root CA
-async function issueProvisioningCert(name: string, days?: number): Promise<{ certPath: string; keyPath: string }>{
-  ensureDirs();
-  if (!(await caExists())) throw new Error('Root CA not found. Generate it first.');
-  const base = name.replace(/[^A-Za-z0-9._-]/g, '_');
-  const keyPath = path.join(PROV_DIR, `${base}.key`);
-  const csrPath = path.join(PROV_DIR, `${base}.csr`);
-  const crtPath = path.join(PROV_DIR, `${base}.crt`);
-  const daysStr = String(days ?? 825);
-  // key
-  let r = await runCmd('openssl', ['genrsa', '-out', keyPath, '2048']);
-  if (r.code !== 0) throw new Error(`openssl genrsa failed: ${r.err || r.out}`);
-  // csr
-  r = await runCmd('openssl', ['req', '-new', '-key', keyPath, '-subj', `/CN=${name}`,'-out', csrPath]);
-  if (r.code !== 0) throw new Error(`openssl req -new failed: ${r.err || r.out}`);
-  // sign with CA
-  r = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT, '-CAkey', CA_KEY, '-CAcreateserial', '-out', crtPath, '-days', daysStr, '-sha256']);
-  if (r.code !== 0) throw new Error(`openssl x509 -req failed: ${r.err || r.out}`);
-  // cleanup csr (optional)
-  try { fs.unlinkSync(csrPath); } catch {}
-  return { certPath: crtPath, keyPath };
-}
+// Cert helpers moved to src/certs.ts
 
 // GET /api/settings/server -> snapshot of server-level settings (used by UI)
 app.get('/api/settings/server', async (_req: Request, res: Response) => {
@@ -350,7 +188,7 @@ app.get('/api/settings/server', async (_req: Request, res: Response) => {
       certsDir: CERTS_DIR,
       root: { present: rootPresent, key: CA_KEY, cert: CA_CRT, meta: caMeta },
       provisioningDir: PROV_DIR,
-      settings: { MQTT_URL: mqttUrl, UI_DIST: process.env.UI_DIST || '/opt/Edgeberry/fleethub/ui/build' }
+      settings: { MQTT_URL: mqttUrl, UI_DIST }
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'failed to read settings' });
@@ -672,11 +510,7 @@ app.get('/api/logs/stream', (req: Request, res: Response) => {
   });
 });
 
-// Where to serve UI from.
-// Default to production install location of the built UI: /opt/Edgeberry/fleethub/ui/build
-// Allow override via UI_DIST for local/dev.
-const defaultUiRoot = '/opt/Edgeberry/fleethub/ui/build';
-const UI_DIST = process.env.UI_DIST || defaultUiRoot;
+// Where to serve UI from (imported UI_DIST).
 const UI_EXISTS = fs.existsSync(UI_DIST);
 const UI_INDEX = path.join(UI_DIST, 'index.html');
 const UI_READY = UI_EXISTS && fs.existsSync(UI_INDEX);
