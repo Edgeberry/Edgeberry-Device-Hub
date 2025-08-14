@@ -1,0 +1,55 @@
+# Node / TypeScript / Monorepo
+node_modules/
+*.log
+logs/
+pnpm-lock.yaml
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build artifacts
+/dist/
+/build/
+/.turbo/
+/.parcel-cache/
+/.vite/
+/.next/
+/.svelte-kit/
+coverage/
+
+# Env and local config
+.env
+.env.*
+!.env.example
+*.local
+
+# SQLite databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# TLS and keys (do not commit secrets)
+*.key
+*.pem
+*.p12
+*.pfx
+*.csr
+*.crt
+
+# Mosquitto broker runtime
+mosquitto/data/
+mosquitto/log/
+
+# Dev certs (keep out of git)
+mqtt-broker/dev-certs/
+
+# Generated docs/artifacts
+/tmp/
