@@ -8,8 +8,12 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build artifacts
-/dist/
-/build/
+# Ignore dist/build everywhere (monorepo)
+dist/
+build/
+**/dist/
+**/build/
+dist-artifacts/
 /.turbo/
 /.parcel-cache/
 /.vite/
