@@ -1,0 +1,20 @@
+[Unit]
+Description=Edgeberry Fleet Hub - Device Registry Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Edgeberry/fleethub/registry-service
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/Edgeberry/fleethub/registry.env
+ExecStart=/usr/bin/node /opt/Edgeberry/fleethub/registry-service/dist/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

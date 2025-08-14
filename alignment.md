@@ -54,6 +54,8 @@ Execution model & IPC:
 - Internal service-to-service communication uses D-Bus (method calls + signals). No internal HTTP between microservices.
 - Device communication remains via MQTT; D-Bus is only for server-internal coordination.
 - Configuration: `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs are stored at the repo root under `config/`. For the MVP, `config/` is flat (no subdirectories).
+ - Release packaging (MVP): we publish per-microservice build artifacts (tar.gz) attached to GitHub Releases and install them on the host via a privileged installer. No Docker is used for release packaging.
+ - Host installation (MVP): `scripts/install.sh` installs artifacts under `/opt/Edgeberry/fleethub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services.
 
 - `ui/` — Web UI (frontend framework TBD: React or Svelte). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
 - `api/` — Node.js + Express HTTP API. Surfaces REST endpoints, handles authn/z, queries SQLite, publishes/consumes MQTT as needed.
@@ -62,8 +64,10 @@ Execution model & IPC:
 - `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
 - `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
 - `scripts/` — Developer tooling and CI checks (e.g., DB migrations, seeders).
+  - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
 - `docs/` — Extended documentation referenced from this file.
 - `config/` — `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs (dev/prod variants). MVP: flat directory (no subfolders).
+  - Example unit files (MVP): `fleethub-api.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
 
 Responsibilities and boundaries:
 
@@ -87,6 +91,7 @@ Local development:
 - No Docker for dev; Mosquitto runs locally with dev TLS materials under `mqtt-broker/dev-certs/` and config under `mqtt-broker/dev.conf`.
 - Env via `.env` files per project; never commit secrets.
 - D-Bus: prefer the user session bus during development (fallback to a private bus if needed); systemd user units can be used to emulate production `systemd` services locally.
+ - Dev orchestrator: `scripts/dev_start.sh` starts Mosquitto and all services concurrently with hot-reload (prefers `npm run dev`/`tsx watch`). All process logs are multiplexed in a single terminal with per-service prefixes. Services run with `NODE_ENV=development`.
 
 ### D-Bus Interfaces (MVP)
 
@@ -136,6 +141,7 @@ CI and releases:
 
 - Lint, typecheck, test per project. Alignment checks run at repo root and fail if sections here drift from code.
 - Versioning per project package; releases tagged at the repo root with affected packages noted in changelog.
+- Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `fleethub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>`.
 
 ### MVP Scope (Current)
 

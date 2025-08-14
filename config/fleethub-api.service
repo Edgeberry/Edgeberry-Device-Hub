@@ -1,0 +1,21 @@
+[Unit]
+Description=Edgeberry Fleet Hub - API Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Edgeberry/fleethub/api
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/Edgeberry/fleethub/api.env
+ExecStart=/usr/bin/node /opt/Edgeberry/fleethub/api/dist/index.js
+Restart=on-failure
+RestartSec=3
+# Hardening (MVP settings; adjust as needed)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
