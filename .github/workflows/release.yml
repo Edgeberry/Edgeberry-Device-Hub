@@ -24,10 +24,20 @@ jobs:
         run: |
           bash scripts/build-all.sh
 
+      - name: Build and pack Node-RED example
+        run: |
+          mkdir -p dist-artifacts
+          pushd examples/nodered
+          npm ci || npm install
+          npm run build
+          npm pack --pack-destination ../../dist-artifacts
+          popd
+
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist-artifacts/*.tar.gz
+            dist-artifacts/*.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
