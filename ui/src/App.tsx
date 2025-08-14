@@ -20,7 +20,7 @@ function App(){
         const res = await fetch('/api/auth/me');
         if (!cancelled && res.ok){
           const data = await res.json();
-          if (data?.authenticated){ setUser({ name: data.user || 'admin' }); }
+          if (data?.authenticated){ setUser({ name: data.user || 'admin', roles: ['admin'] }); }
         }
       }catch{}
       if(!cancelled) setLoading(false);
@@ -31,7 +31,7 @@ function App(){
   async function refreshUser(){
     try{
       const r = await fetch('/api/auth/me');
-      if (r.ok){ const d = await r.json(); if (d?.authenticated){ setUser({ name: d.user || 'admin' }); return; } }
+      if (r.ok){ const d = await r.json(); if (d?.authenticated){ setUser({ name: d.user || 'admin', roles: ['admin'] }); return; } }
     }catch{}
     setUser(null);
   }

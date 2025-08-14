@@ -83,7 +83,11 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
     }
   }
 
-  const canControl = !!(props?.user && Array.isArray(props.user.roles) && props.user.roles.includes('admin'));
+  const canControl = !!(props?.user && (
+    (Array.isArray(props.user.roles) && props.user.roles.includes('admin')) ||
+    // fallback: any authenticated user in this MVP is the single admin
+    (!Array.isArray(props.user.roles))
+  ));
 
   return (
     <Card className="mb-3" data-testid="services-widget">
