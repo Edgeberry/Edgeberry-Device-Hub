@@ -12,6 +12,25 @@ export async function getPublicConfig(){ return jsonOrMessage(await fetch(base()
 
 // Core-service unified services status
 export async function getServices(){ return jsonOrMessage(await fetch(base()+"/services", { credentials:'include' })); }
+export async function getServiceLogs(unit: string, lines: number = 200){
+  const url = base()+`/logs?unit=${encodeURIComponent(unit)}&lines=${encodeURIComponent(lines)}`;
+  return jsonOrMessage(await fetch(url, { credentials:'include' }));
+}
+export async function startService(unit: string){
+  const url = base()+`/services/${encodeURIComponent(unit)}/start`;
+  const res = await fetch(url, { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}
+export async function stopService(unit: string){
+  const url = base()+`/services/${encodeURIComponent(unit)}/stop`;
+  const res = await fetch(url, { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}
+export async function restartService(unit: string){
+  const url = base()+`/services/${encodeURIComponent(unit)}/restart`;
+  const res = await fetch(url, { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}
 
 // Devices registry
 export async function getDevices(){ return jsonOrMessage(await fetch(base()+"/devices", { credentials:'include' })); }

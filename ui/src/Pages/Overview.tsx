@@ -19,7 +19,7 @@ export default function Overview(props:{user:any}){
   return (
     <div>
       <HealthWidget />
-      <ServiceStatusWidget />
+      <ServiceStatusWidget user={props.user} />
 
       <Card>
         <Card.Header>Devices</Card.Header>

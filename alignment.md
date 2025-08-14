@@ -47,7 +47,8 @@ Public Surface Area (single HTTP(S) server):
 - Only `core-service` binds public HTTP(S).
 - UI entrypoint: `/` serves the dashboard SPA from the `core-service` (static file server in production).
 - HTTP API prefix: `/api` (versioning via headers or path TBD) — served directly by `core-service`.
-- WebSocket endpoints are exposed only by the `api/` service.
+ - Observability endpoints are provided by `core-service`, including logs snapshot and SSE stream (`/api/logs`, `/api/logs/stream`).
+  - No dedicated WebSocket server at present; live logs use SSE via `core-service`.
 
 Execution model & IPC:
 
@@ -60,7 +61,7 @@ Execution model & IPC:
 
 - `ui/` — Web UI (React). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
 - `core-service/` — Orchestrator and public entrypoint. Serves the built UI in production and may provide light orchestration endpoints (e.g., `/healthz`).
-- `api/` — Previously a standalone Node.js + Express HTTP API. Responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`. Any remaining code here will be migrated or retired.
+- `api/` — Previously a standalone Node.js + Express HTTP API. Its responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`. Any remaining code here will be migrated or retired.
 - `provisioning-service/` — Long-running Node.js service subscribed to `$fleethub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility.
 - `twin-service/` — Dedicated service for digital twin maintenance: processes twin updates/deltas, reconciliation, and desired→reported state sync.
 - `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
@@ -69,7 +70,7 @@ Execution model & IPC:
   - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
 - `docs/` — Extended documentation referenced from this file.
 - `config/` — `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs (dev/prod variants). MVP: flat directory (no subfolders).
-  - Example unit files (MVP): `fleethub-core.service`, `fleethub-api.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
+  - Example unit files (MVP): `fleethub-core.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
 
 Responsibilities and boundaries:
 
@@ -82,7 +83,7 @@ Responsibilities and boundaries:
 
 Interfaces (high level):
 
-- UI → API: REST endpoints like `/devices`, `/devices/:id/events`, `/config/public`, `/status`.
+- UI → API (served by `core-service`): REST endpoints like `/devices`, `/devices/:id/events`, `/config/public`, `/status`, plus operational endpoints `/api/services`, `/api/logs`, and service control under `/api/services/:unit/{start|stop|restart}`.
 - API ↔ DB: SQLite via a thin data access layer in `shared/` (e.g., `shared/db` with query builders and schema migrations).
 - API ↔ Workers over D-Bus: API invokes worker methods and subscribes to worker signals using well-defined D-Bus interfaces.
 - API/Services (provisioning-service, twin-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
@@ -170,13 +171,15 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `/health` — detailed health view
 - `/devices/:assetId` — device detail placeholder
 - `/settings` — placeholder
-- Additional placeholders: `/login`, `/register`, `/logout`, `/admin`
+- Additional placeholders: `/login`, `/register`, `/logout`
 
 ### Core Components
 
 - `Navigationbar` (`ui/src/components/Navigationbar.tsx`) — top navigation; Overview is the root menu item
 - `HealthWidget` (`ui/src/components/HealthWidget.tsx`) — shows system health; tolerant to missing optional endpoints
 - `ServiceStatusWidget` (`ui/src/components/ServiceStatusWidget.tsx`) — shows microservice statuses from unified endpoint
+  - Service tiles open a modal with recent logs and Start/Restart/Stop controls. Actions are visible to everyone but disabled unless the user has the `admin` role.
+  - Display names hide the `fleethub-` prefix and `.service` suffix. The legacy `api` tile is removed (merged into core).
 - `Overview` page (`ui/src/Pages/Overview.tsx`) — contains `HealthWidget`, `ServiceStatusWidget`, and a simple devices table
 
 ### API Contracts (UI dependencies)
@@ -184,12 +187,18 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - Required:
   - `GET /api/health` — returns `{ healthy: boolean, ... }`
   - `GET /api/services` — returns array or object of systemd unit statuses (includes `fleethub-registry.service`)
+  - Default monitored units include Fleet Hub services and key dependencies: `fleethub-core.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`, `dbus.service`, `mosquitto.service`.
+  - `GET /api/logs` — recent logs snapshot. Accepts `units` (comma-separated) or `unit` (single) and `lines`.
 - Optional (UI handles absence gracefully; fields display as "-"):
   - `GET /api/status`
   - `GET /api/version`
   - `GET /api/config/public`
 - Devices (optional placeholder in MVP):
   - `GET /api/devices` — may return `[]` or `{ devices: [] }`; UI tolerates other shapes by falling back to an empty list
+ - Service controls (best-effort; may require host privileges):
+   - `POST /api/services/:unit/start`
+   - `POST /api/services/:unit/stop`
+   - `POST /api/services/:unit/restart`
 
 ### Error Handling & Resilience
 
@@ -201,6 +210,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - UI built with Vite to `ui/build/` (`ui/vite.config.ts`).
 - `core-service` serves static assets from `ui/build` and exposes `/api/*` endpoints on the same origin.
 - Dev: `npm run dev` at repo root runs core-service and serves the UI build; set `DEV_MOSQUITTO=1` to include the broker.
+ - `core-service` also exposes logs SSE at `/api/logs/stream` for live tailing.
 
 ### Device Registry & Provisioning (MVP)
 

@@ -8,7 +8,6 @@ import Settings from './Pages/Settings';
 import Login from './Pages/Login';
 import Register from './Pages/Register';
 import Logout from './Pages/Logout';
-import Admin from './Pages/Admin';
 import NotFound from './Pages/NotFound';
 
 function App(){
@@ -24,7 +23,6 @@ function App(){
           <Route path='/register' element={<Register user={user} onLogin={()=>{onLogin()}}/>} />
           <Route path='/' element={<Dashboard user={user}/> }>
             <Route index element={<Overview user={user} />} />
-            <Route path='/admin' element={<Admin user={user} />} />
             <Route path='/logout' element={<Logout user={user} onLogout={()=>{onLogin()}}/>} />
             <Route path='/overview' element={<Overview user={user} />} />
             <Route path='/devices/:assetId' element={<DeviceDetail user={user} />} />

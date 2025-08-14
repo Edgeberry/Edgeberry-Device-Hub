@@ -1,6 +1,6 @@
 import { Button, Container, ListGroup, Nav, Navbar, Offcanvas } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faBars, faCogs, faGear, faMicrochip, faSignOutAlt, faUnlockKeyhole } from "@fortawesome/free-solid-svg-icons";
+import { faBars, faCogs, faGear, faMicrochip, faSignOutAlt } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -35,12 +35,7 @@ const NavigationBar = (props:{user:any|null})=>{
                             <ListGroup.Item as={Link} to='/logout' onClick={()=>{setShow(false)}}>
                                 <FontAwesomeIcon icon={faSignOutAlt} /> Log out
                             </ListGroup.Item>
-                            {props?.user?.roles?.indexOf("admin") > -1?<>
-                                <hr/>
-                                <ListGroup.Item as={Link} to='/admin' onClick={()=>{setShow(false)}}>
-                                    <FontAwesomeIcon icon={faUnlockKeyhole} /> Admin
-                                </ListGroup.Item>
-                            </>:<></>}
+                            {/* Admin features are integrated; no dedicated page/link */}
                         </> : <>
                             <ListGroup.Item as={Link} to='/login' onClick={()=>{setShow(false)}}>
                                 Login

@@ -24,8 +24,10 @@ const DEFAULT_LOG_UNITS = [
   'fleethub-core.service',
   'fleethub-provisioning.service',
   'fleethub-twin.service',
-  'fleethub-api.service',
   'fleethub-registry.service',
+  // Infra dependencies we want to monitor
+  'dbus.service',
+  'mosquitto.service',
 ];
 
 function buildJournalctlArgs(opts: {
@@ -77,9 +79,13 @@ app.get('/api/services', async (_req: Request, res: Response) => {
 // GET /api/logs -> recent logs snapshot
 // Query: units=comma,separated (optional), lines=number (default 200), since=systemd-time (optional)
 app.get('/api/logs', (req: Request, res: Response) => {
-  const units = typeof req.query.units === 'string' && req.query.units
-    ? String(req.query.units).split(',').map(s => s.trim()).filter(Boolean)
-    : undefined;
+  // Support either `units` (comma-separated) or a single `unit` alias
+  let units: string[] | undefined = undefined;
+  if (typeof req.query.units === 'string' && req.query.units) {
+    units = String(req.query.units).split(',').map(s => s.trim()).filter(Boolean);
+  } else if (typeof req.query.unit === 'string' && req.query.unit) {
+    units = [String(req.query.unit).trim()];
+  }
   const lines = req.query.lines ? Number(req.query.lines) : 200;
   const since = typeof req.query.since === 'string' ? req.query.since : undefined;
 
@@ -103,6 +109,45 @@ app.get('/api/logs', (req: Request, res: Response) => {
     res.json({ entries });
   });
 });
+
+// POST /api/services/:unit/start|stop|restart -> systemctl control (best-effort; may require privileges)
+async function systemctlAction(unit: string, action: 'start'|'stop'|'restart') {
+  return await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+    const p = spawn('systemctl', [action, unit], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const out: string[] = [];
+    const err: string[] = [];
+    p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
+    p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
+    p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim(), err: err.join('') }));
+  });
+}
+
+function actionHandler(action: 'start'|'stop'|'restart') {
+  return async (req: Request, res: Response) => {
+    const unit = String(req.params.unit);
+    try {
+      const result = await systemctlAction(unit, action);
+      if (result.code !== 0) {
+        res.status(500).json({ ok: false, action, unit, error: result.err || `systemctl ${action} exited with ${result.code}` });
+        return;
+      }
+      // Return new status snapshot for this unit
+      const check = await new Promise<{ code: number | null; out: string }>((resolve) => {
+        const p = spawn('systemctl', ['is-active', unit], { stdio: ['ignore', 'pipe', 'ignore'] });
+        const out: string[] = [];
+        p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
+        p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim() }));
+      });
+      res.json({ ok: true, action, unit, status: check.out || 'unknown' });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, action, unit, error: e?.message || 'unknown error' });
+    }
+  };
+}
+
+app.post('/api/services/:unit/start', actionHandler('start'));
+app.post('/api/services/:unit/stop', actionHandler('stop'));
+app.post('/api/services/:unit/restart', actionHandler('restart'));
 
 // GET /api/logs/stream -> SSE stream of logs
 // Query: units=comma,separated (optional), since=systemd-time (optional)
