@@ -75,6 +75,11 @@ build_ui() {
       if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
       if npm run | grep -qE '^\s*build\s'; then
         npm run build
+        # Ensure build output exists
+        if [[ ! -f "build/index.html" ]]; then
+          echo "[build-all] ERROR: UI build output missing at ui/build/index.html" >&2
+          exit 1
+        fi
       fi
       npm prune --omit=dev || true
     fi
@@ -92,11 +97,13 @@ build_ui() {
   fi
 }
 
+# Build UI first so other services (e.g., core-service) can rely on its presence
+build_ui
+
 build_node_service api
 build_node_service core-service
 build_node_service provisioning-service
 build_node_service twin-service
 build_node_service registry-service
-build_ui
 
 log "done"

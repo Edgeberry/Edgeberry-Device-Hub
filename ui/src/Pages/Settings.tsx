@@ -1,1 +1,179 @@
-export default function Settings(props:{user:any}){ return <div>Settings</div>; }
+import React, { useEffect, useState } from 'react';
+import { Alert, Button, Card, Col, Form, Row, Spinner } from 'react-bootstrap';
+
+type ServerSettings = {
+  mqttUrl?: string;
+  settings?: { MQTT_URL?: string; UI_DIST?: string };
+  [k: string]: any;
+};
+
+type RootMeta = {
+  exists: boolean;
+  subject?: string;
+  validFrom?: string;
+  validTo?: string;
+};
+
+type ProvCert = { name: string; createdAt?: string; expiresAt?: string };
+
+export default function Settings(_props:{user:any}){
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string|undefined>();
+  const [server, setServer] = useState<ServerSettings|undefined>();
+  const [root, setRoot] = useState<RootMeta|undefined>();
+  const [provList, setProvList] = useState<ProvCert[]>([]);
+
+  const [issuing, setIssuing] = useState(false);
+  const [genning, setGenning] = useState(false);
+  const [provName, setProvName] = useState('provisioning');
+  const [provDays, setProvDays] = useState<number|''>('');
+  const [genCN, setGenCN] = useState('Edgeberry Fleet Hub Root CA');
+  const [genDays, setGenDays] = useState<number|''>('');
+
+  async function loadAll(){
+    setLoading(true); setError(undefined);
+    try{
+      // Server settings snapshot
+      const srv = await (await fetch('/api/settings/server')).json();
+      setServer(srv);
+    }catch(e:any){ setError(e?.message || 'Failed to load server settings'); }
+    try{
+      // Root CA meta
+      const r = await (await fetch('/api/settings/certs/root')).json();
+      setRoot(r);
+    }catch{ /* ignore */ }
+    try{
+      // Provisioning certs list
+      const l = await (await fetch('/api/settings/certs/provisioning')).json();
+      setProvList(Array.isArray(l?.certs) ? l.certs : (Array.isArray(l)? l : []));
+    }catch{ /* ignore */ }
+    setLoading(false);
+  }
+
+  useEffect(()=>{ loadAll(); },[]);
+
+  async function generateRoot(){
+    try{
+      setGenning(true);
+      const body:any = {};
+      if (genCN) body.cn = genCN; if (genDays) body.days = Number(genDays);
+      const res = await fetch('/api/settings/certs/root', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+      const d = await res.json();
+      if (res.ok){ await loadAll(); }
+      else { setError(d?.error || 'Failed to generate root CA'); }
+    } finally { setGenning(false); }
+  }
+
+  async function issueProvisioning(){
+    try{
+      setIssuing(true);
+      const body:any = { name: provName || 'provisioning' };
+      if (provDays) body.days = Number(provDays);
+      const res = await fetch('/api/settings/certs/provisioning', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+      const d = await res.json();
+      if (res.ok){ await loadAll(); }
+      else { setError(d?.error || 'Failed to issue provisioning cert'); }
+    } finally { setIssuing(false); }
+  }
+
+  return (
+    <div style={{textAlign:'left'}}>
+      <h3>Settings</h3>
+      {error && <Alert variant='danger'>{error}</Alert>}
+
+      <Row className='g-3'>
+        <Col md={6}>
+          <Card className='mb-3'>
+            <Card.Header>Server</Card.Header>
+            <Card.Body>
+              {loading && !server ? <Spinner animation='border' size='sm'/> : (
+                <div>
+                  <div><b>MQTT URL:</b> {server?.settings?.MQTT_URL || server?.mqttUrl || '-'}</div>
+                  <div><b>UI_DIST:</b> {server?.settings?.UI_DIST || '-'}</div>
+                  <pre style={{marginTop:12, background:'#0f0f0f', color:'#d0d0d0', borderRadius:6, padding:10, maxHeight:240, overflow:'auto'}}>{JSON.stringify(server, null, 2)}</pre>
+                </div>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+
+        <Col md={6}>
+          <Card className='mb-3'>
+            <Card.Header>Root CA</Card.Header>
+            <Card.Body>
+              {root ? (
+                <div>
+                  <div><b>Status:</b> {root.exists ? 'Present' : 'Not generated'}</div>
+                  {root.exists && (
+                    <div style={{opacity:.85, fontSize:13, marginTop:4}}>
+                      <div>Subject: {root.subject}</div>
+                      <div>Valid: {root.validFrom} → {root.validTo}</div>
+                    </div>
+                  )}
+                </div>
+              ) : loading ? <Spinner animation='border' size='sm'/> : <div>Unknown</div>}
+
+              <Form className='mt-3' onSubmit={(e)=>{e.preventDefault(); generateRoot();}}>
+                <Row className='g-2'>
+                  <Col xs={12}><Form.Label>Common Name (CN)</Form.Label>
+                    <Form.Control value={genCN} onChange={e=>setGenCN(e.target.value)} placeholder='Root CA CN' /></Col>
+                  <Col xs={6}><Form.Label>Days (optional)</Form.Label>
+                    <Form.Control value={genDays} onChange={e=>setGenDays(e.target.value?Number(e.target.value):'')} placeholder='e.g. 3650' /></Col>
+                </Row>
+                <Button className='mt-2' disabled={genning} onClick={generateRoot} variant='primary'>
+                  {genning? <Spinner animation='border' size='sm'/> : 'Generate Root CA'}
+                </Button>
+              </Form>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
+      <Card className='mb-3'>
+        <Card.Header>Provisioning Certificates</Card.Header>
+        <Card.Body>
+          <Form onSubmit={(e)=>{e.preventDefault(); issueProvisioning();}}>
+            <Row className='g-2'>
+              <Col md={5}><Form.Label>Name</Form.Label>
+                <Form.Control value={provName} onChange={e=>setProvName(e.target.value)} placeholder='provisioning' /></Col>
+              <Col md={3}><Form.Label>Days (optional)</Form.Label>
+                <Form.Control value={provDays} onChange={e=>setProvDays(e.target.value?Number(e.target.value):'')} placeholder='e.g. 365' /></Col>
+              <Col md={4} style={{display:'flex', alignItems:'end'}}>
+                <Button disabled={issuing} onClick={issueProvisioning} variant='success'>
+                  {issuing? <Spinner animation='border' size='sm'/> : 'Issue certificate'}
+                </Button>
+              </Col>
+            </Row>
+          </Form>
+
+          <div style={{marginTop:12}}>
+            {loading && provList.length===0 ? <Spinner animation='border' size='sm'/> : (
+              <div style={{overflowX:'auto'}}>
+                <table className='table table-sm'>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Created</th>
+                      <th>Expires</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {provList.length===0 ? (
+                      <tr><td colSpan={3} style={{color:'#666'}}>No provisioning certificates found.</td></tr>
+                    ) : provList.map((c,idx)=> (
+                      <tr key={idx}>
+                        <td>{c.name}</td>
+                        <td>{c.createdAt || '-'}</td>
+                        <td>{c.expiresAt || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Card.Body>
+      </Card>
+    </div>
+  );
+}

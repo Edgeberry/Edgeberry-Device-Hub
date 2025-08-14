@@ -11,7 +11,12 @@ const NavigationBar = (props:{user:any|null})=>{
             <Navbar sticky="top" bg={'dark'} data-bs-theme={'dark'}>
                 <Container className="container-fluid" style={{paddingRight:'10px', paddingLeft:'10px'}}>
                     <Navbar.Brand as={Link} to='/'>Edgeberry Fleet Hub</Navbar.Brand>
-                    <Nav>
+                    <Nav className="d-flex align-items-center" style={{gap:'12px'}}>
+                        {props.user ? (
+                            <span style={{ color:'#cfe3ff', fontSize:'0.9rem' }}>
+                                Signed in as <b>{props.user?.name || 'admin'}</b>
+                            </span>
+                        ) : null}
                         <Button variant={'transparent'} className="btn-outline-light" onClick={()=>{setShow(true)}}><FontAwesomeIcon icon={faBars}/></Button>
                     </Nav>
                 </Container>
@@ -39,9 +44,6 @@ const NavigationBar = (props:{user:any|null})=>{
                         </> : <>
                             <ListGroup.Item as={Link} to='/login' onClick={()=>{setShow(false)}}>
                                 Login
-                            </ListGroup.Item>
-                            <ListGroup.Item as={Link} to='/register' onClick={()=>{setShow(false)}}>
-                                Register
                             </ListGroup.Item>
                         </>}
                     </ListGroup>

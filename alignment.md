@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Fleet Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
  
- Last updated: 2025-08-14
+ Last updated: 2025-08-14 (evening)
  
  ## Alignment Maintenance
  - This document is the single source of truth for project vision and high-level specs.
@@ -173,7 +173,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `/overview` — alias to Overview
 - `/health` — detailed health view
 - `/devices/:assetId` — device detail placeholder
-- `/settings` — placeholder
+ - `/settings` — admin-only settings page: shows server snapshot, Root CA status and generator, and provisioning certificates list with issuance form
 - Auth routes: `/login`, `/logout` (registration disabled for MVP; UI hides any register links)
 
 ### Core Components
@@ -212,6 +212,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 
 - UI built with Vite to `ui/build/` (`ui/vite.config.ts`).
 - `core-service` serves static assets from `ui/build` and exposes `/api/*` endpoints on the same origin.
+- Caching controls: ETag disabled and strict no-cache headers applied for `/api/*` to avoid stale auth state (304) issues in the SPA.
 - Dev: `npm run dev` at repo root runs core-service and serves the UI build; set `DEV_MOSQUITTO=1` to include the broker.
  - `core-service` also exposes logs SSE at `/api/logs/stream` for live tailing.
 
@@ -259,23 +260,27 @@ Registry includes certificate metadata to anchor identity:
 
 ### Admin Authentication (MVP)
 
-For the dashboard and HTTP APIs, the MVP uses a simple single-user admin login enforced by `core-service`:
+For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT-based stateless auth implemented in `core-service`:
 
 - Login required for all UI pages and `/api/*` endpoints, except health (`/healthz`, `/api/health`) and auth endpoints.
-- No registration endpoint exists in the MVP; registration links are hidden in the UI.
+- No registration endpoint exists in the MVP; UI hides any register links.
 - Endpoints:
-  - `POST /api/auth/login` with `{ username, password }`.
-  - `POST /api/auth/logout` clears the session.
-  - `GET /api/auth/me` returns `{ authenticated, user? }`.
-- Session:
-  - HttpOnly cookie `fh_session`; in-memory session store (sufficient for MVP, single-instance).
-  - SameSite=Lax; set `Secure` when behind HTTPS in production.
+  - `POST /api/auth/login` with `{ username, password }` → issues a signed JWT and sets it in an HttpOnly cookie `fh_session`.
+  - `POST /api/auth/logout` → clears the cookie.
+  - `GET /api/auth/me` → verifies JWT and returns `{ authenticated: boolean, user?: string }`.
+- Token:
+  - Stored in cookie `fh_session` (HttpOnly, SameSite=Lax; set `Secure` when served over HTTPS).
+  - Signed with `JWT_SECRET` using HS256.
+  - Expiration `JWT_TTL_SECONDS` (default 86400 = 24h).
 - Configuration:
   - `ADMIN_USER` (default `admin`)
-  - `ADMIN_PASSWORD` (default `admin`; MUST be overridden in production)
+  - `ADMIN_PASSWORD` (MUST be set in production)
+  - `JWT_SECRET` (MUST be strong in production; default dev value only for local use)
+  - `JWT_TTL_SECONDS` (optional)
 - UI behavior:
-  - When the SPA is present, `core-service` injects a minimal auth bar showing the current admin and a Logout button, and hides common registration affordances.
-  - When the SPA is absent (fallback HTML), the page includes a login form and a header that reflects the signed-in admin.
+  - The SPA reads auth state from `GET /api/auth/me` and conditionally renders admin UI.
+  - Navbar shows “Signed in as <admin>”; Logout is available in the menu.
+  - Server no longer injects a separate auth bar into `index.html`; duplication was removed. Registration affordances may still be hidden best-effort via a small injected script.
 
 ### Fleet Provisioning Model (Current)
 

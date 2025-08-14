@@ -6,11 +6,24 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
 const app = express();
+// Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
+app.set('etag', false);
 const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 8080));
 
 app.use(morgan('dev'));
+// Ensure API responses are not cached (avoid 304 for JSON endpoints)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+  }
+  next();
+});
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' }));
@@ -58,12 +71,12 @@ function buildJournalctlArgs(opts: {
   return args;
 }
 
-// ===== Simple single-user admin authentication =====
+// ===== Simple single-user admin authentication using JWT =====
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin'; // NOTE: change in production
-const SESSION_COOKIE = 'fh_session';
-type Session = { user: string; createdAt: number };
-const sessions = new Map<string, Session>();
+const SESSION_COOKIE = 'fh_session'; // cookie name retained
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-change-me';
+const JWT_TTL_SECONDS = Number(process.env.JWT_TTL_SECONDS || 60 * 60 * 24); // 24h default
 
 function parseCookies(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -79,12 +92,18 @@ function parseCookies(header?: string): Record<string, string> {
   return out;
 }
 
-function getSession(req: Request): Session | null {
+function getSession(req: Request): { user: string } | null {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies[SESSION_COOKIE];
   if (!token) return null;
-  const s = sessions.get(token);
-  return s || null;
+  try{
+    const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string; iat?: number; exp?: number };
+    const user = payload.user || payload.sub;
+    if (!user) return null;
+    return { user };
+  } catch {
+    return null;
+  }
 }
 
 function setSessionCookie(res: Response, token: string) {
@@ -107,8 +126,7 @@ function clearSessionCookie(res: Response) {
 app.post('/api/auth/login', (req: Request, res: Response) => {
   const { username, password } = req.body || {};
   if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
-    const token = crypto.randomBytes(24).toString('hex');
-    sessions.set(token, { user: ADMIN_USER, createdAt: Date.now() });
+    const token = jwt.sign({ user: ADMIN_USER }, JWT_SECRET, { algorithm: 'HS256', expiresIn: JWT_TTL_SECONDS, subject: ADMIN_USER });
     setSessionCookie(res, token);
     res.json({ ok: true, user: ADMIN_USER });
   } else {
@@ -116,10 +134,8 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/auth/logout', (req: Request, res: Response) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const token = cookies[SESSION_COOKIE];
-  if (token) sessions.delete(token);
+app.post('/api/auth/logout', (_req: Request, res: Response) => {
+  // With JWT, we clear the cookie; server does not need to track state
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -725,8 +741,8 @@ if (UI_READY) {
   function renderInjectedIndex(_req: Request, res: Response) {
     try {
       let html = fs.readFileSync(UI_INDEX, 'utf8');
-      const injectHead = `\n<style>\n  .fh-authbar{position:sticky;top:0;z-index:1000;background:#0b1020;color:#e6edf3;padding:8px 12px;display:flex;justify-content:flex-end;gap:8px;font:14px system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}\n  .fh-authbar a{color:#8ab4f8}\n</style>\n`;
-      const injectBodyEnd = `\n<script>\n(async function(){\n  try{\n    const r = await fetch('/api/auth/me');\n    if(!r.ok) throw new Error();\n    const d = await r.json();\n    // Add auth bar\n    const bar = document.createElement('div');\n    bar.className='fh-authbar';\n    bar.innerHTML = 'Signed in as <b>' + (d.user||'admin') + '</b> · <a href="#" id="fh-logout">Logout</a>';\n    document.body.prepend(bar);\n    document.getElementById('fh-logout').addEventListener('click', async function(e){ e.preventDefault(); await fetch('/api/auth/logout',{method:'POST'}); location.reload(); });\n    // Hide registration affordances (best-effort)\n    const hideSelectors = [\n      'a[href*="register"]', 'a[href*="signup"]', 'a[href*="sign-up"]',\n      '#register', '#signup', '.register', '.signup'\n    ];\n    for (const sel of hideSelectors){ document.querySelectorAll(sel).forEach(el => { (el).style.display = 'none'; }); }\n    // Hide by text content (case-insensitive contains)\n    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);\n    while (walker.nextNode()){\n      const el = walker.currentNode;\n      if (el && el.textContent && /register|sign\s*up/i.test(el.textContent)){ try{ el.style.display='none'; }catch{} }\n    }\n  }catch(e){ /* not logged in: let auth middleware show login */ }\n})();\n</script>\n`;
+      const injectHead = ``;
+      const injectBodyEnd = `\n<script>\n(async function(){\n  try{\n    const r = await fetch('/api/auth/me');\n    if(!r.ok) throw new Error();\n    const d = await r.json();\n     // Hide registration affordances (best-effort)\n     const hideSelectors = [\n       'a[href*="register"]', 'a[href*="signup"]', 'a[href*="sign-up"]',\n       '#register', '#signup', '.register', '.signup'\n     ];\n     for (const sel of hideSelectors){ document.querySelectorAll(sel).forEach(el => { (el).style.display = 'none'; }); }\n     // Hide by text content (case-insensitive contains)\n     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);\n     while (walker.nextNode()){\n       const el = walker.currentNode;\n       if (el && el.textContent && /register|sign\\s*up/i.test(el.textContent)){ try{ el.style.display='none'; }catch{} }\n     }\n   }catch(e){ /* not logged in: let auth middleware show login */ }\n})();\n</script>\n`;
       html = html.replace('</head>', injectHead + '</head>');
       html = html.replace('</body>', injectBodyEnd + '</body>');
       res.type('html').send(html);
