@@ -105,14 +105,14 @@ ensure_deps() {
 }
 
 ensure_deps "$ROOT_DIR/api"
-ensure_deps "$ROOT_DIR/provisioning-worker"
+ensure_deps "$ROOT_DIR/provisioning-service"
 ensure_deps "$ROOT_DIR/twin-service"
 ensure_deps "$ROOT_DIR/registry-service"
 ensure_deps "$ROOT_DIR/fleet-hub-ui"  # optional
 
 start_mosquitto
 start_service api api
-start_service provisioning-worker provisioning-worker
+start_service provisioning-service provisioning-service
 start_service twin-service twin-service
 start_service registry-service registry-service
 # UI is optional; start if present

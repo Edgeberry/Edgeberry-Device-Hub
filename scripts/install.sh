@@ -25,7 +25,7 @@ ETC_DIR="/etc/Edgeberry/fleethub"
 
 SERVICES=(
   api
-  provisioning-worker
+  provisioning-service
   twin-service
   registry-service
 )

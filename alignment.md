@@ -59,7 +59,7 @@ Execution model & IPC:
 
 - `ui/` — Web UI (frontend framework TBD: React or Svelte). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
 - `api/` — Node.js + Express HTTP API. Surfaces REST endpoints, handles authn/z, queries SQLite, publishes/consumes MQTT as needed.
-- `provisioning-worker/` — Long-running Node.js worker subscribed to `$fleethub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility.
+- `provisioning-service/` — Long-running Node.js service subscribed to `$fleethub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility.
 - `twin-service/` — Dedicated service for digital twin maintenance: processes twin updates/deltas, reconciliation, and desired→reported state sync.
 - `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
 - `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
@@ -73,7 +73,7 @@ Responsibilities and boundaries:
 
 - `ui/` calls `api/` only. It should never talk to MQTT directly.
 - `api/` is the single writer to the database and the HTTP surface area for external clients. It must enforce the permission model.
-- `provisioning-worker/` owns MQTT bootstrap and certificate lifecycle. It may update DB via internal repositories shared with `api/` (from `shared/`). Exposes a D-Bus API for operations and emits signals for status.
+- `provisioning-service/` owns MQTT bootstrap and certificate lifecycle. It may update DB via internal repositories shared with `api/` (from `shared/`). Exposes a D-Bus API for operations and emits signals for status.
 - `twin-service/` maintains digital twins (desired/reported state, deltas, reconciliation). Subscribes/publishes to twin topics and updates the DB via shared repositories.
 - `mqtt-broker/` config enforces mTLS, maps cert subject → device identity, and defines ACLs per topic family.
 - All microservices expose stable D-Bus interfaces under a common namespace (e.g., `io.edgeberry.fleethub.*`).
@@ -83,7 +83,7 @@ Interfaces (high level):
 - UI → API: REST endpoints like `/devices`, `/devices/:id/events`, `/config/public`, `/status`.
 - API ↔ DB: SQLite via a thin data access layer in `shared/` (e.g., `shared/db` with query builders and schema migrations).
 - API ↔ Workers over D-Bus: API invokes worker methods and subscribes to worker signals using well-defined D-Bus interfaces.
-- API/Workers (provisioning-worker, twin-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
+- API/Services (provisioning-service, twin-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
 
 Local development:
 

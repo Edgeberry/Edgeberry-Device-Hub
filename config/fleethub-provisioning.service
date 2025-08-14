@@ -1,14 +1,14 @@
 [Unit]
-Description=Edgeberry Fleet Hub - Provisioning Worker
+Description=Edgeberry Fleet Hub - Provisioning Service
 After=network-online.target mosquitto.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/Edgeberry/fleethub/provisioning-worker
+WorkingDirectory=/opt/Edgeberry/fleethub/provisioning-service
 Environment=NODE_ENV=production
 EnvironmentFile=-/etc/Edgeberry/fleethub/provisioning.env
-ExecStart=/usr/bin/node /opt/Edgeberry/fleethub/provisioning-worker/dist/index.js
+ExecStart=/usr/bin/node /opt/Edgeberry/fleethub/provisioning-service/dist/index.js
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

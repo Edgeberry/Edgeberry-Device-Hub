@@ -10,7 +10,7 @@ SERVICE="${SERVICE:-}"
 usage() {
   cat <<EOF
 $LOG_PREFIX SERVICE env variable is required to select a single service to run.
-Set SERVICE to one of: mosquitto, api, provisioning-worker, twin-service, registry-service
+Set SERVICE to one of: mosquitto, api, provisioning-service, twin-service, registry-service
 Example:
   docker run --rm -e SERVICE=mosquitto -p 1883:1883 -p 8883:8883 ghcr.io/edgeberry/edgeberry-fleet-hub:TAG
   docker run --rm -e SERVICE=api -p 3000:3000 ghcr.io/edgeberry/edgeberry-fleet-hub:TAG
@@ -49,8 +49,8 @@ case "$SERVICE" in
   api)
     start_node_service "${APP_DIR}/api" "api"
     ;;
-  provisioning-worker)
-    start_node_service "${APP_DIR}/provisioning-worker" "provisioning-worker"
+  provisioning-service)
+    start_node_service "${APP_DIR}/provisioning-service" "provisioning-service"
     ;;
   twin-service)
     start_node_service "${APP_DIR}/twin-service" "twin-service"

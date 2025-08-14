@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build artifacts for each microservice and package as tar.gz under dist-artifacts/
-# Services covered: api, provisioning-worker, twin-service, registry-service, fleet-hub-ui (or ui)
+# Services covered: api, provisioning-service, twin-service, registry-service, fleet-hub-ui (or ui)
 # This script is CI-friendly and can be run locally.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,7 +48,7 @@ build_node_service() {
   rsync -a --exclude ".git" --exclude "node_modules/.cache" \
     "${dir}/" "$stage/${svc}/"
   # Include root config when useful
-  if [[ -f "${ROOT_DIR}/config/mosquitto.conf" && "$svc" == "provisioning-worker" ]]; then
+  if [[ -f "${ROOT_DIR}/config/mosquitto.conf" && "$svc" == "provisioning-service" ]]; then
     mkdir -p "$stage/config"
     cp "${ROOT_DIR}/config/mosquitto.conf" "$stage/config/" || true
   fi
@@ -110,7 +110,7 @@ build_ui() {
 }
 
 build_node_service api
-build_node_service provisioning-worker
+build_node_service provisioning-service
 build_node_service twin-service
 build_node_service registry-service
 build_ui

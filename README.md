@@ -18,7 +18,7 @@ Edgeberry Fleet Hub is a self-hostable device management server for Edgeberry de
 - **API (`api/`)**
   - Public HTTP surface for the Fleet Hub. Handles authn/z, exposes REST and WebSocket endpoints, talks to internal services over D-Bus, and attributes MQTT events to devices.
 
-- **Provisioning Service (`provisioning-worker/`)**
+- **Provisioning Service (`provisioning-service/`)**
   - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$fleethub/certificates/create-from-csr`, signs CSRs, and returns signed certs. No digital twin responsibilities.
 
 - **Device Twin Service (`twin-service/`)**
