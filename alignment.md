@@ -159,6 +159,49 @@ The current MVP focuses on a lean, self-hostable `microservice`-based IoT device
 
 Notes on privacy/transparency for MVP: Logged event payloads may include raw device data; Observer-level anonymization is enforced at the UI/API response layer and will be expanded as roles are implemented.
 
+## UI Functionality (MVP)
+
+The Web UI is a single-page app served by `core-service` and uses React + TypeScript.
+
+### Routes
+
+- `/` — Overview (primary landing)
+- `/overview` — alias to Overview
+- `/health` — detailed health view
+- `/devices/:assetId` — device detail placeholder
+- `/settings` — placeholder
+- Additional placeholders: `/login`, `/register`, `/logout`, `/admin`
+
+### Core Components
+
+- `Navigationbar` (`ui/src/components/Navigationbar.tsx`) — top navigation; Overview is the root menu item
+- `HealthWidget` (`ui/src/components/HealthWidget.tsx`) — shows system health; tolerant to missing optional endpoints
+- `ServiceStatusWidget` (`ui/src/components/ServiceStatusWidget.tsx`) — shows microservice statuses from unified endpoint
+- `Overview` page (`ui/src/Pages/Overview.tsx`) — contains `HealthWidget`, `ServiceStatusWidget`, and a simple devices table
+
+### API Contracts (UI dependencies)
+
+- Required:
+  - `GET /api/health` — returns `{ healthy: boolean, ... }`
+  - `GET /api/services` — returns array or object of systemd unit statuses (includes `fleethub-registry.service`)
+- Optional (UI handles absence gracefully; fields display as "-"):
+  - `GET /api/status`
+  - `GET /api/version`
+  - `GET /api/config/public`
+- Devices (optional placeholder in MVP):
+  - `GET /api/devices` — may return `[]` or `{ devices: [] }`; UI tolerates other shapes by falling back to an empty list
+
+### Error Handling & Resilience
+
+- Overview and Health widgets never crash on missing/invalid responses; errors are contained and UI renders with placeholders.
+- Network errors do not block rendering the rest of the dashboard.
+
+### Build & Serve
+
+- UI built with Vite to `ui/build/` (`ui/vite.config.ts`).
+- `core-service` serves static assets from `ui/build` and exposes `/api/*` endpoints on the same origin.
+- Dev: `npm run dev` at repo root runs core-service and serves the UI build; set `DEV_MOSQUITTO=1` to include the broker.
+
 ### Device Registry & Provisioning (MVP)
 
 Registry fields on `devices`:
