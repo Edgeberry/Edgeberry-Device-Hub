@@ -119,7 +119,7 @@ async function main() {
   };
   const client: MqttClient = connect(MQTT_URL, options);
 
-  // When connected, subscribe to twin get/update topics
+  // When connected, subscribe to twin get/update topics (QoS 1: at-least-once)
   client.on('connect', () => {
     console.log(`[${SERVICE}] connected to MQTT`);
     client.subscribe('$fleethub/devices/+/twin/get', { qos: 1 }, (err: Error | null) => {
@@ -159,6 +159,8 @@ async function main() {
 
         const { desired, reported } = getTwin(db, deviceId);
         const acceptedTopic = `$fleethub/devices/${deviceId}/twin/update/accepted`;
+        // Publish the latest view of twin after applying the update; devices can
+        // use this to confirm their desired/reported versions.
         client.publish(
           acceptedTopic,
           JSON.stringify({ deviceId, desired, reported, updated: { desired: desiredUpdated, reported: reportedUpdated } }),
@@ -170,6 +172,7 @@ async function main() {
         const delta = shallowDelta(desired.doc, reported.doc);
         if (Object.keys(delta).length > 0) {
           const deltaTopic = `$fleethub/devices/${deviceId}/twin/update/delta`;
+          // Devices reconcile differences by applying `delta` to reach desired state.
           client.publish(deltaTopic, JSON.stringify({ deviceId, delta, desiredVersion: desired.version, reportedVersion: reported.version }), { qos: 1 });
         }
         return;
@@ -179,6 +182,7 @@ async function main() {
       const deviceId = topic.includes('/devices/') ? topic.split('/')[2] : undefined;
       if (deviceId) {
         const rej = `$fleethub/devices/${deviceId}/twin/update/rejected`;
+        // Send a generic error to caller; avoid leaking internals.
         client.publish(rej, JSON.stringify({ error: 'bad_request', message: (e as Error).message }), { qos: 1 });
       }
     }

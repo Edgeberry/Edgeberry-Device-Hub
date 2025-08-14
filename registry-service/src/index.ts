@@ -50,6 +50,7 @@ async function main() {
     'INSERT INTO device_events (device_id, topic, payload, ts) VALUES (@device_id, @topic, @payload, @ts)'
   );
 
+  // Broker credentials are optional for dev; reconnect automatically.
   const options: IClientOptions = {
     username: MQTT_USERNAME,
     password: MQTT_PASSWORD,
@@ -71,6 +72,7 @@ async function main() {
     if (!deviceId) return;
     try {
       const now = new Date().toISOString();
+      // Store raw payload for operational visibility; interpretation is deferred to readers.
       insert.run({ device_id: deviceId, topic, payload, ts: now });
     } catch (e) {
       console.error(`[${SERVICE}] failed to persist event`, e);

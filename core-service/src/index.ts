@@ -22,6 +22,13 @@ const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
 app.set('etag', false);
 const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 8080));
+// Environment variables overview (MVP):
+// - PORT: HTTP port (defaults 8080 dev, 80 prod)
+// - MQTT_URL: used for bundle config exposure
+// - CERTS_DIR: where to store Root CA and provisioning certs (default: ./data/certs)
+// - UI_DIST: path to built SPA (default: /opt/Edgeberry/fleethub/ui/build)
+// - ADMIN_USER / ADMIN_PASSWORD: single-user admin credentials (dev defaults; MUST change in prod)
+// - JWT_SECRET / JWT_TTL_SECONDS: cookie token signing and expiration
 
 app.use(morgan('dev'));
 // Ensure API responses are not cached (avoid 304 for JSON endpoints)
@@ -178,7 +185,9 @@ function getSession(req: Request): { user: string } | null {
 
 // Set the HttpOnly cookie containing the JWT
 function setSessionCookie(res: Response, token: string) {
-  const isHttps = false; // adjust if terminating TLS here
+  // If TLS termination happens in this process, set Secure=true to prevent cookie over HTTP.
+  // For reverse-proxy TLS termination, this may be toggled via an env or trust-proxy setting.
+  const isHttps = false; // TODO: detect HTTPS (e.g., via X-Forwarded-Proto or config)
   const attrs = [
     `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
     'Path=/',

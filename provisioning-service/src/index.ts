@@ -64,6 +64,7 @@ async function main() {
   console.log(`[${SERVICE}] starting...`);
   const db = initDb(DB_PATH);
 
+  // MQTT client options — broker creds are optional for local dev
   const options: IClientOptions = {
     username: MQTT_USERNAME,
     password: MQTT_PASSWORD,
@@ -90,12 +91,15 @@ async function main() {
       const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
       const meta = typeof body.meta === 'object' && body.meta ? (body.meta as Json) : undefined;
+      // Upsert keeps idempotency: repeated requests do not duplicate rows
       upsertDevice(db, deviceId, name, token, meta);
       const respTopic = `$fleethub/devices/${deviceId}/provision/accepted`;
+      // QoS 1 to ensure delivery even with transient disconnects
       client.publish(respTopic, JSON.stringify({ deviceId, status: 'ok' }), { qos: 1 });
     } catch (e) {
       console.error(`[${SERVICE}] error handling provision request`, e);
       const rej = `$fleethub/devices/${deviceId}/provision/rejected`;
+      // Avoid leaking internal error details; send a generic code + message
       client.publish(rej, JSON.stringify({ error: 'bad_request', message: (e as Error).message }), { qos: 1 });
     }
   });

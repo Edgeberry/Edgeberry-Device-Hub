@@ -8,9 +8,13 @@
  * - Each function returns JSON (or an `{ message }` object) for easy rendering.
  * - Endpoints are grouped by feature area (health, services, devices).
  */
+// Parse JSON response; if parsing fails, return a simple message object.
+// This keeps UI rendering paths simple without throwing on non-JSON bodies.
 async function jsonOrMessage(res: Response){
   try{ return await res.json(); }catch(err:any){ return { message: err?.toString?.() || 'Invalid JSON' }; }
 }
+// Compute API base relative to current origin. Core-service mounts APIs at `/api/*`.
+// All requests below use `credentials: 'include'` so the HttpOnly JWT cookie is sent.
 const base = () => window.location.origin + '/api';
 
 // --- Health/config/version/status ---
@@ -39,6 +43,7 @@ export async function getServices(){ return jsonOrMessage(await fetch(base()+"/s
 /**
  * Get metrics (if available)
  */
+// Metrics endpoint may not be implemented in all builds; return empty object if unreachable.
 export async function getMetrics(){
   try{
     return await jsonOrMessage(await fetch(base()+"/metrics", { credentials:'include' }));
@@ -51,6 +56,7 @@ export async function getMetrics(){
  * @param unit systemd unit name
  * @param lines number of lines to fetch (default 200)
  */
+// Fetch last N log lines for a systemd unit. The backend validates `unit`.
 export async function getServiceLogs(unit: string, lines: number = 200){
   const url = base()+`/logs?unit=${encodeURIComponent(unit)}&lines=${encodeURIComponent(lines)}`;
   return jsonOrMessage(await fetch(url, { credentials:'include' }));
@@ -102,6 +108,7 @@ export async function getDeviceEvents(id: string){ return jsonOrMessage(await fe
  * Create a device (future)
  * @param body device data
  */
+// Create a device record (placeholder for future expansion)
 export async function createDevice(body: any){
   const res = await fetch(base()+"/devices", { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify(body||{}) });
   return jsonOrMessage(res);
@@ -111,6 +118,8 @@ export async function createDevice(body: any){
  * @param id device id
  * @param hours token lifetime (optional)
  */
+// Ask backend to mint a short-lived provision token for device bootstrap.
+// If `hours` is omitted, backend chooses a default TTL.
 export async function createProvisionToken(id: string, hours?: number){
   const res = await fetch(base()+`/devices/${encodeURIComponent(id)}/provision-token`+ (hours?`?hours=${encodeURIComponent(hours)}`:''), { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include' });
   return jsonOrMessage(res);
