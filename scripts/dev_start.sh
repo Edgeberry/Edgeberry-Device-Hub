@@ -108,7 +108,7 @@ ensure_deps "$ROOT_DIR/api"
 ensure_deps "$ROOT_DIR/provisioning-service"
 ensure_deps "$ROOT_DIR/twin-service"
 ensure_deps "$ROOT_DIR/registry-service"
-ensure_deps "$ROOT_DIR/fleet-hub-ui"  # optional
+ensure_deps "$ROOT_DIR/ui"  # optional
 
 start_mosquitto
 start_service api api
@@ -116,7 +116,7 @@ start_service provisioning-service provisioning-service
 start_service twin-service twin-service
 start_service registry-service registry-service
 # UI is optional; start if present
-start_service fleet-hub-ui fleet-hub-ui || true
+start_service ui ui || true
 
 log "all dev processes started (PIDs: ${PIDS[*]-}). Press Ctrl-C to stop."
 

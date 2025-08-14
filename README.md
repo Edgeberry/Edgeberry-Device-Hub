@@ -27,7 +27,7 @@ Edgeberry Fleet Hub is a self-hostable device management server for Edgeberry de
 - **Device Registry Service (`registry-service/`)**
   - Authoritative inventory for devices. Stores identity anchors (device ID, cert metadata, optional manufacturer UUID hash), status, and operational context. Exposes a D-Bus interface to query/update registry data.
 
-- **Web UI (`fleet-hub-ui/`)**
+- **Web UI (`ui/`)**
   - React SPA for dashboards, devices, events, and twin management. Consumes only public API/WebSocket endpoints.
 
 See `alignment.md` for architecture and interface details.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build artifacts for each microservice and package as tar.gz under dist-artifacts/
-# Services covered: api, provisioning-service, twin-service, registry-service, fleet-hub-ui (or ui)
+# Services covered: api, provisioning-service, twin-service, registry-service, ui
 # This script is CI-friendly and can be run locally.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,28 +62,7 @@ build_node_service() {
 
 build_ui() {
   local dir
-  if [[ -d "${ROOT_DIR}/fleet-hub-ui" ]]; then
-    dir="${ROOT_DIR}/fleet-hub-ui"
-    local name="fleet-hub-ui"
-    log "build ${name}"
-    pushd "$dir" >/dev/null
-    if [[ -f package.json ]]; then
-      if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
-      if npm run | grep -qE '^\s*build\s'; then
-        npm run build
-      fi
-      npm prune --omit=dev || true
-    fi
-    popd >/dev/null
-    local stage="$(mktemp -d)"
-    mkdir -p "$stage/${name}"
-    rsync -a --exclude ".git" --exclude "node_modules/.cache" \
-      "${dir}/" "$stage/${name}/"
-    local tarname="fleethub-${name}-${VERSION}.tar.gz"
-    tar -C "$stage" -czf "${ART_DIR}/${tarname}" .
-    rm -rf "$stage"
-    log "artifact: ${ART_DIR}/${tarname}"
-  elif [[ -d "${ROOT_DIR}/ui" ]]; then
+  if [[ -d "${ROOT_DIR}/ui" ]]; then
     dir="${ROOT_DIR}/ui"
     local name="ui"
     log "build ${name}"
