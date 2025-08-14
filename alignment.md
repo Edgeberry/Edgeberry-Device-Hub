@@ -62,7 +62,7 @@ Execution model & IPC:
 - `ui/` — Web UI (React). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
 - `core-service/` — Orchestrator and public entrypoint. Serves the built UI in production and may provide light orchestration endpoints (e.g., `/healthz`).
 - `api/` — Previously a standalone Node.js + Express HTTP API. Its responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`. Any remaining code here will be migrated or retired.
-- `provisioning-service/` — Long-running Node.js service subscribed to `$fleethub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility.
+ - `provisioning-service/` — Long-running Node.js service subscribed to `$fleethub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility. MVP adds a simplified provisioning request/ack flow on `$fleethub/devices/{deviceId}/provision/request` for development.
 - `twin-service/` — Dedicated service for digital twin maintenance: processes twin updates/deltas, reconciliation, and desired→reported state sync.
 - `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
 - `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
@@ -70,7 +70,7 @@ Execution model & IPC:
   - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
 - `docs/` — Extended documentation referenced from this file.
 - `examples/` — Example integrations and reference nodes.
-  - `examples/nodered/` — TypeScript-based Node-RED node "edgeberry-device". Minimal example that sets status to ready, logs "hello world" on input, and passes the message through. Required settings when adding the node: `host` (Fleet Hub base URL), `uuid` (device UUID), and a credential `token` (host access token). Build with `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`. Install into Node-RED via `npm link` or `npm pack` from this folder.
+  - `examples/nodered/` — TypeScript-based Node-RED node "edgeberry-device". Minimal example that sets status to ready, logs "hello world" on input, and passes the message through. Required settings when adding the node: `host` (Fleet Hub base URL), `uuid` (device UUID), and a credential `token` (host access token). Build with `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`. Install into Node-RED via `npm link` or `npm pack` from this folder. CI will build and upload this asset for easy install/testing.
 - `config/` — `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs (dev/prod variants). MVP: flat directory (no subfolders).
   - Example unit files (MVP): `fleethub-core.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
 
@@ -147,6 +147,7 @@ CI and releases:
 - Lint, typecheck, test per project. Alignment checks run at repo root and fail if sections here drift from code.
 - Versioning per project package; releases tagged at the repo root with affected packages noted in changelog.
 - Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `fleethub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>`.
+ - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
 
 ### MVP Scope (Current)
 
@@ -346,18 +347,25 @@ Provisioning (bootstrap) — All payloads are JSON:
   - Payload: `{ reqId, uuid, deviceId, daysValid? }`
   - Responses:
     - `$fleethub/certificates/create/accepted`
-    - `$fleethub/certificates/create/rejected`
+     - `$fleethub/certificates/create/rejected`
 - Provisioning template bind: `$fleethub/provisioning-templates/{templateName}/provision`
   - Payload: `{ reqId, uuid, deviceId, parameters? }`
   - Responses:
     - `$fleethub/provisioning-templates/{templateName}/provision/accepted`
-    - `$fleethub/provisioning-templates/{templateName}/provision/rejected`
+     - `$fleethub/provisioning-templates/{templateName}/provision/rejected`
+
+Provisioning (MVP simplified for development):
+
+- Request: `$fleethub/devices/{deviceId}/provision/request`
+  - Payload: `{ name?: string, token?: string, meta?: object }`
+  - Responses:
+    - `$fleethub/devices/{deviceId}/provision/accepted`
+    - `$fleethub/devices/{deviceId}/provision/rejected`
 
 Digital Twin (subset):
 
 - Update: `$fleethub/devices/{deviceId}/twin/update`
   - Responses: `/accepted`, `/rejected`
-  - Delta notifications (server → device): `$fleethub/devices/{deviceId}/twin/update/delta`
 - Get: `$fleethub/devices/{deviceId}/twin/get`
   - Responses: `/accepted`, `/rejected`
 
@@ -385,6 +393,42 @@ Non-goals (MVP):
 
 - Conflict resolution across multiple writers (kept simple: API is single writer for desired state).
 - Cross-device orchestration and bulk updates (can be added later).
+
+## Provisioning Service (MVP)
+
+The `provisioning-service` provides a development-friendly provisioning path in addition to the full certificate bootstrap model. It listens for per-device requests and persists basic metadata.
+
+Responsibilities:
+
+- Subscribe to `$fleethub/devices/{deviceId}/provision/request`.
+- Upsert device into SQLite `devices` table with fields: `id`, `name?`, `token?`, `meta?`, timestamps.
+- Publish `$fleethub/devices/{deviceId}/provision/accepted|rejected`.
+
+Storage (MVP):
+
+- SQLite table `devices` with JSON `meta` column.
+
+Non-goals (MVP):
+
+- Certificate issuance/validation (covered by bootstrap model above).
+- Complex templates or workflows.
+
+## Registry Service (MVP)
+
+The `registry-service` ingests runtime device events for operational visibility.
+
+Responsibilities:
+
+- Subscribe to `devices/#` to capture all device-published topics.
+- Persist events into SQLite `device_events` with fields: `device_id`, `topic`, `payload` (BLOB), `ts`.
+
+Storage (MVP):
+
+- SQLite table `device_events`.
+
+Non-goals (MVP):
+
+- Semantic parsing of payloads or aggregations (can be added later).
 
 ## Device Registry
 

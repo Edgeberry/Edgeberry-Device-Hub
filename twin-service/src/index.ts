@@ -1,14 +1,30 @@
+/**
+ * Twin Service (MVP)
+ * ---------------------------------------------
+ * Responsibilities:
+ * - Maintain desired and reported device state ("twin") in SQLite
+ * - Handle MQTT topics for twin get/update
+ * - Publish accepted responses and deltas (desired - reported)
+ *
+ * Topic contract (per device):
+ * - Request current twin: `$fleethub/devices/{deviceId}/twin/get`
+ *   -> Respond: `$fleethub/devices/{deviceId}/twin/update/accepted`
+ * - Update desired/reported: `$fleethub/devices/{deviceId}/twin/update`
+ *   -> Respond: `.../accepted` and optionally `.../delta`
+ */
 import Database from 'better-sqlite3';
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 
 type Json = Record<string, unknown>;
 
+// Service id used for logs
 const SERVICE = 'twin-service';
 const MQTT_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME || undefined;
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD || undefined;
 const DB_PATH = process.env.TWIN_DB || 'twin.db';
 
+/** Initialize SQLite and ensure tables exist. */
 function initDb(path: string) {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
@@ -29,6 +45,7 @@ function initDb(path: string) {
   return db;
 }
 
+/** Load desired and reported docs for a device (defaults to empty). */
 function getTwin(db: Database, deviceId: string) {
   const getDesired = db.prepare('SELECT version, doc FROM twin_desired WHERE device_id = ?');
   const getReported = db.prepare('SELECT version, doc FROM twin_reported WHERE device_id = ?');
@@ -40,6 +57,10 @@ function getTwin(db: Database, deviceId: string) {
   };
 }
 
+/**
+ * Compute a shallow delta between desired and reported.
+ * If values differ (by JSON string comparison) we include desired's value.
+ */
 function shallowDelta(desired: Json, reported: Json): Json {
   const delta: Json = {};
   const keys = new Set([...Object.keys(desired), ...Object.keys(reported)]);
@@ -53,6 +74,9 @@ function shallowDelta(desired: Json, reported: Json): Json {
   return delta;
 }
 
+/**
+ * Merge a partial patch into either desired or reported doc, bump version, upsert.
+ */
 function setDoc(
   db: Database,
   table: 'twin_desired' | 'twin_reported',
@@ -73,6 +97,7 @@ function setDoc(
   return { version: nextVersion, doc: next };
 }
 
+/** Extract the deviceId from a topic ensuring it matches the expected suffix. */
 function parseTopicDeviceId(topic: string, suffix: string): string | null {
   // $fleethub/devices/{deviceId}/twin/{suffix}
   const parts = topic.split('/');
@@ -94,17 +119,19 @@ async function main() {
   };
   const client: MqttClient = connect(MQTT_URL, options);
 
+  // When connected, subscribe to twin get/update topics
   client.on('connect', () => {
     console.log(`[${SERVICE}] connected to MQTT`);
-    client.subscribe('$fleethub/devices/+/twin/get', { qos: 1 }, (err) => {
+    client.subscribe('$fleethub/devices/+/twin/get', { qos: 1 }, (err: Error | null) => {
       if (err) console.error(`[${SERVICE}] subscribe get error`, err);
     });
-    client.subscribe('$fleethub/devices/+/twin/update', { qos: 1 }, (err) => {
+    client.subscribe('$fleethub/devices/+/twin/update', { qos: 1 }, (err: Error | null) => {
       if (err) console.error(`[${SERVICE}] subscribe update error`, err);
     });
   });
 
-  client.on('message', (topic, payload) => {
+  // Core message handler for twin topics
+  client.on('message', (topic: string, payload: Buffer) => {
     try {
       if (topic.startsWith('$fleethub/devices/') && topic.endsWith('/twin/get')) {
         const deviceId = parseTopicDeviceId(topic, '/twin/get');
@@ -118,6 +145,7 @@ async function main() {
       if (topic.startsWith('$fleethub/devices/') && topic.endsWith('/twin/update')) {
         const deviceId = parseTopicDeviceId(topic, '/twin/update');
         if (!deviceId) return;
+        // Supported update payload shape: { desired?: {...}, reported?: {...} }
         const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
         let desiredUpdated: { version: number; doc: Json } | null = null;
         let reportedUpdated: { version: number; doc: Json } | null = null;
@@ -138,6 +166,7 @@ async function main() {
         );
 
         // Compute and publish delta (desired vs reported)
+        // Compute delta so device can reconcile desired vs its reported state
         const delta = shallowDelta(desired.doc, reported.doc);
         if (Object.keys(delta).length > 0) {
           const deltaTopic = `$fleethub/devices/${deviceId}/twin/update/delta`;

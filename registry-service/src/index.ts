@@ -1,12 +1,24 @@
+/**
+ * Registry Service (MVP)
+ * ---------------------------------------------
+ * Responsibilities:
+ * - Ingest device runtime events from MQTT topics `devices/#`
+ * - Persist raw events into SQLite for operational visibility
+ *
+ * Notes:
+ * - Payloads are stored as raw BLOBs for simplicity in MVP.
+ */
 import Database from 'better-sqlite3';
 import { connect, IClientOptions, MqttClient, ISubscriptionGrant } from 'mqtt';
 
+// Service id used for logs
 const SERVICE = 'registry-service';
 const MQTT_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME || undefined;
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD || undefined;
 const DB_PATH = process.env.REGISTRY_DB || 'registry.db';
 
+/** Initialize SQLite and ensure `device_events` table exists. */
 function initDb(path: string) {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
@@ -22,6 +34,7 @@ function initDb(path: string) {
   return db;
 }
 
+/** Extract device id from topics formatted as `devices/{deviceId}/...`. */
 function extractDeviceId(topic: string): string | null {
   // devices/{deviceId}/...
   const parts = topic.split('/');
@@ -44,6 +57,7 @@ async function main() {
   };
   const client: MqttClient = connect(MQTT_URL, options);
 
+  // Subscribe to all device events on connect
   client.on('connect', () => {
     console.log(`[${SERVICE}] connected to MQTT`);
     client.subscribe('devices/#', { qos: 1 }, (err: Error | null, _grants?: ISubscriptionGrant[]) => {
@@ -51,6 +65,7 @@ async function main() {
     });
   });
 
+  // Persist every device event message
   client.on('message', (topic: string, payload: Buffer) => {
     const deviceId = extractDeviceId(topic);
     if (!deviceId) return;

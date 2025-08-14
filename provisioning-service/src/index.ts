@@ -1,14 +1,29 @@
+/**
+ * Provisioning Service (MVP)
+ * ---------------------------------------------
+ * Responsibilities:
+ * - Accept provisioning requests from devices over MQTT
+ * - Upsert device metadata into SQLite (id, name, token, meta)
+ * - Acknowledge success or failure via MQTT topics
+ *
+ * Topics (per device):
+ * - Request: `$fleethub/devices/{deviceId}/provision/request`
+ * - Success: `$fleethub/devices/{deviceId}/provision/accepted`
+ * - Failure: `$fleethub/devices/{deviceId}/provision/rejected`
+ */
 import Database from 'better-sqlite3';
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 
 type Json = Record<string, unknown>;
 
+// Service id used for logs
 const SERVICE = 'provisioning-service';
 const MQTT_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME || undefined;
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD || undefined;
 const DB_PATH = process.env.PROVISIONING_DB || 'provisioning.db';
 
+/** Initialize SQLite and ensure device table exists. */
 function initDb(path: string) {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
@@ -24,6 +39,7 @@ function initDb(path: string) {
   return db;
 }
 
+/** Insert or update a device record by id. */
 function upsertDevice(db: Database, deviceId: string, name?: string, token?: string, meta?: Json) {
   const now = new Date().toISOString();
   const ins = db.prepare(
@@ -33,6 +49,7 @@ function upsertDevice(db: Database, deviceId: string, name?: string, token?: str
   ins.run({ id: deviceId, name: name || null, token: token || null, meta: meta ? JSON.stringify(meta) : null, created_at: now });
 }
 
+/** Extract the deviceId from a provisioning topic. */
 function parseDeviceId(topic: string, suffix: string): string | null {
   // $fleethub/devices/{deviceId}/provision/{suffix}
   const parts = topic.split('/');
@@ -54,6 +71,7 @@ async function main() {
   };
   const client: MqttClient = connect(MQTT_URL, options);
 
+  // Subscribe to provisioning requests when connected
   client.on('connect', () => {
     console.log(`[${SERVICE}] connected to MQTT`);
     client.subscribe('$fleethub/devices/+/provision/request', { qos: 1 }, (err: Error | null) => {
@@ -61,11 +79,13 @@ async function main() {
     });
   });
 
+  // Handle provisioning requests
   client.on('message', (topic: string, payload: Buffer) => {
     if (!(topic.startsWith('$fleethub/devices/') && topic.endsWith('/provision/request'))) return;
     const deviceId = parseDeviceId(topic, '/provision/request');
     if (!deviceId) return;
     try {
+      // Expected payload: { name?: string, token?: string, meta?: object }
       const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
       const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
