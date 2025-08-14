@@ -1,8 +1,28 @@
+### Certificate Management
+
+Root CA and provisioning certificates are managed under `/api/settings/certs/*` and surfaced in the SPA Settings page.
+
+- Root CA
+  - `GET /api/settings/certs/root` → returns `{ pem, meta }` if present; `404` if absent
+  - `POST /api/settings/certs/root` with `{ cn?, days?, keyBits? }` → generate Root CA if absent
+  - `GET /api/settings/certs/root/download` → downloads `ca.crt` (PEM)
+
+- Provisioning certificates
+  - `GET /api/settings/certs/provisioning` → `{ certs: [{ name, cert, key, meta }] }`
+  - `POST /api/settings/certs/provisioning` with `{ name, days? }` → issues a new cert/key signed by Root CA
+  - `GET /api/settings/certs/provisioning/:name` → `{ name, pem, meta }`
+  - `DELETE /api/settings/certs/provisioning/:name` → deletes `:name.crt` and `:name.key`
+  - `GET /api/settings/certs/provisioning/:name/download` → downloads a `.tgz` bundle containing:
+    - `ca.crt` (Root CA), `:name.crt`, `:name.key`, and `config.json` with `{ mqttUrl, caCert, cert, key }`
+
+UI behavior on `/settings`:
+- Root CA card shows presence, subject, validity, with actions: Generate (if absent), Download CA (if present).
+- Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
 # Alignment Document – Edgeberry Fleet Hub
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Fleet Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
  
- Last updated: 2025-08-14 (evening)
+ Last updated: 2025-08-14 (night)
  
  ## Alignment Maintenance
  - This document is the single source of truth for project vision and high-level specs.
@@ -173,7 +193,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `/overview` — alias to Overview
 - `/health` — detailed health view
 - `/devices/:assetId` — device detail placeholder
- - `/settings` — admin-only settings page: shows server snapshot, Root CA status and generator, and provisioning certificates list with issuance form
+ - `/settings` — admin-only settings page: shows server snapshot, Root CA status/generator/download, and provisioning certificates list with issuance/inspect/delete/download
 - Auth routes: `/login`, `/logout` (registration disabled for MVP; UI hides any register links)
 
 ### Core Components
