@@ -457,91 +457,119 @@ app.get('/api/services', async (_req: Request, res: Response) => {
 });
 
 // GET /api/metrics -> system metrics snapshot
-app.get('/api/metrics', async (_req: Request, res: Response) => {
-  try {
-    // CPU
-    const load = os.loadavg();
-    const cores = os.cpus()?.length || 1;
-    const cpu = {
-      load1: load[0],
-      load5: load[1],
-      load15: load[2],
-      cores,
-      // Approximate usage: 1-min load divided by cores, as percentage (capped 100)
-      approxUsagePercent: Math.min(100, Math.max(0, (load[0] / cores) * 100)),
-    };
+type MetricsSnapshot = {
+  cpu: { load1: number; load5: number; load15: number; cores: number; approxUsagePercent: number };
+  memory: { total: number; free: number; used: number; usedPercent: number };
+  disk: { mounts: Array<{ target: string; usedBytes: number; sizeBytes: number; usedPercent: number }> };
+  network: { total: { rxBytes: number; txBytes: number }; interfaces: Record<string, { rxBytes: number; txBytes: number }> };
+  uptimeSec: number;
+  timestamp: number;
+};
 
-    // Memory
-    const total = os.totalmem();
-    const free = os.freemem();
-    const used = total - free;
-    const mem = {
-      total,
-      free,
-      used,
-      usedPercent: total > 0 ? (used / total) * 100 : 0,
-    };
-
-    // Disk (use df)
-    const disk = await new Promise<{ mounts: Array<{ target: string; usedBytes: number; sizeBytes: number; usedPercent: number }> }>((resolve) => {
-      const p = spawn('df', ['-k', '--output=target,size,used', '-x', 'tmpfs', '-x', 'devtmpfs']);
-      const out: string[] = [];
-      p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
-      p.on('close', () => {
-        const lines = out.join('').trim().split('\n');
-        // header: Mounted on Size Used
-        const mounts: Array<{ target: string; usedBytes: number; sizeBytes: number; usedPercent: number }> = [];
-        for (let i = 1; i < lines.length; i++) {
-          const parts = lines[i].trim().split(/\s+/);
-          if (parts.length < 3) continue;
-          const target = parts[0];
-          const sizeKB = Number(parts[1]);
-          const usedKB = Number(parts[2]);
-          const sizeBytes = sizeKB * 1024;
-          const usedBytes = usedKB * 1024;
-          const usedPercent = sizeBytes > 0 ? (usedBytes / sizeBytes) * 100 : 0;
-          mounts.push({ target, usedBytes, sizeBytes, usedPercent });
-        }
-        resolve({ mounts });
-      });
-    });
-
-    // Network (/proc/net/dev)
-    function readNetDev(){
-      try{
-        const txt = fs.readFileSync('/proc/net/dev', 'utf8');
-        const lines = txt.split('\n').slice(2); // skip headers
-        const ifaces: Record<string, { rxBytes: number; txBytes: number }> = {};
-        for(const line of lines){
-          const m = line.trim().match(/([^:]+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)/);
-          if(!m) continue;
-          const name = m[1].trim();
-          const rxBytes = Number(m[2]);
-          const txBytes = Number(m[3]);
-          if (name === 'lo') continue; // skip loopback
-          ifaces[name] = { rxBytes, txBytes };
-        }
-        return ifaces;
-      }catch{
-        return {} as Record<string, { rxBytes: number; txBytes: number }>;
-      }
+function readNetDev(){
+  try{
+    const txt = fs.readFileSync('/proc/net/dev', 'utf8');
+    const lines = txt.split('\n').slice(2); // skip headers
+    const ifaces: Record<string, { rxBytes: number; txBytes: number }> = {};
+    for(const line of lines){
+      const m = line.trim().match(/([^:]+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)/);
+      if(!m) continue;
+      const name = m[1].trim();
+      const rxBytes = Number(m[2]);
+      const txBytes = Number(m[3]);
+      if (name === 'lo') continue; // skip loopback
+      ifaces[name] = { rxBytes, txBytes };
     }
-    const netIfaces = readNetDev();
-    const netSummary = Object.values(netIfaces).reduce((acc, v) => {
-      acc.rxBytes += v.rxBytes; acc.txBytes += v.txBytes; return acc;
-    }, { rxBytes: 0, txBytes: 0 });
+    return ifaces;
+  }catch{
+    return {} as Record<string, { rxBytes: number; txBytes: number }>;
+  }
+}
 
-    res.json({
-      cpu,
-      memory: mem,
-      disk,
-      network: { total: netSummary, interfaces: netIfaces },
-      uptimeSec: os.uptime(),
-      timestamp: Date.now()
+async function readMetricsSnapshot(): Promise<MetricsSnapshot>{
+  // CPU
+  const load = os.loadavg();
+  const cores = os.cpus()?.length || 1;
+  const cpu = {
+    load1: load[0],
+    load5: load[1],
+    load15: load[2],
+    cores,
+    approxUsagePercent: Math.min(100, Math.max(0, (load[0] / cores) * 100)),
+  };
+
+  // Memory
+  const total = os.totalmem();
+  const free = os.freemem();
+  const used = total - free;
+  const mem = { total, free, used, usedPercent: total > 0 ? (used / total) * 100 : 0 };
+
+  // Disk via df
+  const disk = await new Promise<{ mounts: Array<{ target: string; usedBytes: number; sizeBytes: number; usedPercent: number }> }>((resolve) => {
+    const p = spawn('df', ['-k', '--output=target,size,used', '-x', 'tmpfs', '-x', 'devtmpfs']);
+    const out: string[] = [];
+    p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
+    p.on('close', () => {
+      const lines = out.join('').trim().split('\n');
+      const mounts: Array<{ target: string; usedBytes: number; sizeBytes: number; usedPercent: number }> = [];
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].trim().split(/\s+/);
+        if (parts.length < 3) continue;
+        const target = parts[0];
+        const sizeKB = Number(parts[1]);
+        const usedKB = Number(parts[2]);
+        const sizeBytes = sizeKB * 1024;
+        const usedBytes = usedKB * 1024;
+        const usedPercent = sizeBytes > 0 ? (usedBytes / sizeBytes) * 100 : 0;
+        mounts.push({ target, usedBytes, sizeBytes, usedPercent });
+      }
+      resolve({ mounts });
     });
-  } catch (e: any) {
+  });
+
+  const netIfaces = readNetDev();
+  const netSummary = Object.values(netIfaces).reduce((acc, v) => { acc.rxBytes += v.rxBytes; acc.txBytes += v.txBytes; return acc; }, { rxBytes: 0, txBytes: 0 });
+
+  return { cpu, memory: mem, disk, network: { total: netSummary, interfaces: netIfaces }, uptimeSec: os.uptime(), timestamp: Date.now() };
+}
+
+// In-memory metrics history sampler (10s interval, keep 24h)
+const METRICS_INTERVAL_MS = 10_000;
+const METRICS_HISTORY_HOURS = 24;
+const METRICS_MAX_SAMPLES = Math.ceil((METRICS_HISTORY_HOURS * 3600 * 1000) / METRICS_INTERVAL_MS) + 60; // small buffer
+const METRICS_HISTORY: MetricsSnapshot[] = [];
+
+async function sampleMetrics(){
+  try{
+    const snap = await readMetricsSnapshot();
+    METRICS_HISTORY.push(snap);
+    // trim by size
+    if(METRICS_HISTORY.length > METRICS_MAX_SAMPLES){ METRICS_HISTORY.splice(0, METRICS_HISTORY.length - METRICS_MAX_SAMPLES); }
+    // trim by time
+    const cutoff = Date.now() - METRICS_HISTORY_HOURS * 3600 * 1000;
+    while(METRICS_HISTORY.length && METRICS_HISTORY[0].timestamp < cutoff){ METRICS_HISTORY.shift(); }
+  }catch{}
+}
+// kick off sampler
+setInterval(sampleMetrics, METRICS_INTERVAL_MS);
+// seed first sample soon after start
+setTimeout(sampleMetrics, 1000);
+
+app.get('/api/metrics', async (_req: Request, res: Response) => {
+  try{
+    const snap = await readMetricsSnapshot();
+    res.json(snap);
+  }catch(e:any){
     res.status(500).json({ error: e?.message || 'failed to read metrics' });
   }
+});
+
+// GET /api/metrics/history?hours=24 -> array of snapshots (oldest -> newest)
+app.get('/api/metrics/history', (req: Request, res: Response) => {
+  const hours = Math.min(48, Math.max(1, Number(req.query.hours || 24)));
+  const cutoff = Date.now() - hours * 3600 * 1000;
+  const data = METRICS_HISTORY.filter(s => s.timestamp >= cutoff);
+  res.json({ hours, samples: data });
 });
 // GET /api/logs -> recent logs snapshot
 // Query: units=comma,separated (optional), lines=number (default 200), since=systemd-time (optional)

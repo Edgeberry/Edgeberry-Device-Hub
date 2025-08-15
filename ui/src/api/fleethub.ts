@@ -52,6 +52,17 @@ export async function getMetrics(){
   }
 }
 /**
+ * Get metrics history samples for the past `hours` (default 24)
+ */
+export async function getMetricsHistory(hours: number = 24){
+  try{
+    const url = base()+`/metrics/history?hours=${encodeURIComponent(hours)}`;
+    return await jsonOrMessage(await fetch(url, { credentials:'include' }));
+  }catch{
+    return { hours, samples: [] } as any;
+  }
+}
+/**
  * Get recent service logs
  * @param unit systemd unit name
  * @param lines number of lines to fetch (default 200)
