@@ -18,7 +18,7 @@ export const PROV_DIR: string = path.join(CERTS_DIR, 'provisioning');
 export const CA_KEY: string = path.join(ROOT_DIR, 'ca.key');
 export const CA_CRT: string = path.join(ROOT_DIR, 'ca.crt');
 
-export const UI_DIST: string = process.env.UI_DIST || '/opt/Edgeberry/fleethub/ui/build';
+export const UI_DIST: string = process.env.UI_DIST || '/opt/Edgeberry/devicehub/ui/build';
 export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://localhost:1883';
 // SQLite DBs owned by worker services (MVP direct-read from core-service)
 export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || path.resolve(process.cwd(), '..', 'provisioning-service', 'provisioning.db');
@@ -27,10 +27,10 @@ export const REGISTRY_DB: string = process.env.REGISTRY_DB || path.resolve(proce
 export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);
 
 export const DEFAULT_LOG_UNITS: string[] = [
-  'fleethub-core.service',
-  'fleethub-provisioning.service',
-  'fleethub-twin.service',
-  'fleethub-registry.service',
+  'devicehub-core.service',
+  'devicehub-provisioning.service',
+  'devicehub-twin.service',
+  'devicehub-registry.service',
   // Infra dependencies
   'dbus.service',
   'mosquitto.service',

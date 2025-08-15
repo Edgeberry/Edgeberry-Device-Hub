@@ -1,17 +1,16 @@
 [Unit]
-Description=Edgeberry Fleet Hub - API Service
+Description=Edgeberry Device Hub - Device Registry Service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/Edgeberry/fleethub/api
+WorkingDirectory=/opt/Edgeberry/devicehub/registry-service
 Environment=NODE_ENV=production
-EnvironmentFile=-/etc/Edgeberry/fleethub/api.env
-ExecStart=/usr/bin/node /opt/Edgeberry/fleethub/api/dist/index.js
+EnvironmentFile=-/etc/Edgeberry/devicehub/registry.env
+ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/registry-service/dist/index.js
 Restart=on-failure
 RestartSec=3
-# Hardening (MVP settings; adjust as needed)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

@@ -2,7 +2,7 @@
 
 **A self-hostable device management service for Edgeberry devices.**
 
-**Edgeberry Fleet Hub** acts as the central coordination layer in the Edgeberry ecosystem. It provides a structured way to onboard, monitor, and interact with your fleet of Edgeberry devices - serving as the interface between physical devices and their digital presence.
+**Edgeberry Device Hub** acts as the central coordination layer in the Edgeberry ecosystem. It provides a structured way to onboard, monitor, and interact with your fleet of Edgeberry devices - serving as the interface between physical devices and their digital presence.
 
 It’s designed to be lightweight, transparent, and fully under your control.
 
@@ -11,21 +11,21 @@ It’s designed to be lightweight, transparent, and fully under your control.
 
 ## Description
 
-Edgeberry Fleet Hub is a self-hostable device management server for Edgeberry devices. It provides a single, secure control plane to provision devices (MQTT + mTLS), observe telemetry, manage digital twins, and expose a clean HTTP API and UI. Internally, independent microservices communicate over D-Bus; devices communicate via MQTT.
+Edgeberry Device Hub is a self-hostable device management server for Edgeberry devices. It provides a single, secure control plane to provision devices (MQTT + mTLS), observe telemetry, manage digital twins, and expose a clean HTTP API and UI. Internally, independent microservices communicate over D-Bus; devices communicate via MQTT.
 
 ## Microservices
 
 - **Core Orchestrator (`core-service/`)**
-  - Hosts the Fleet Hub orchestrator HTTP service (default :8080) and serves the built Web UI from `ui/build` in production. Provides a health endpoint at `/healthz`. Intended as the entrypoint for users accessing the UI and, optionally, for light orchestration duties.
+  - Hosts the Device Hub orchestrator HTTP service (default :8080) and serves the built Web UI from `ui/build` in production. Provides a health endpoint at `/healthz`. Intended as the entrypoint for users accessing the UI and, optionally, for light orchestration duties.
 
 - **API (`api/`)**
-  - Public HTTP surface for the Fleet Hub. Handles authn/z, exposes REST and WebSocket endpoints, talks to internal services over D-Bus, and attributes MQTT events to devices.
+  - Public HTTP surface for the Device Hub. Handles authn/z, exposes REST and WebSocket endpoints, talks to internal services over D-Bus, and attributes MQTT events to devices.
 
 - **Provisioning Service (`provisioning-service/`)**
-  - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$fleethub/certificates/create-from-csr`, signs CSRs, and returns signed certs. No digital twin responsibilities.
+  - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$devicehub/certificates/create-from-csr`, signs CSRs, and returns signed certs. No digital twin responsibilities.
 
 - **Device Twin Service (`twin-service/`)**
-  - Owns desired/reported twin state. Persists state, generates deltas, and publishes twin updates over `$fleethub/devices/{deviceId}/twin/#`. Provides D-Bus methods for the API to read/update twin state.
+  - Owns desired/reported twin state. Persists state, generates deltas, and publishes twin updates over `$devicehub/devices/{deviceId}/twin/#`. Provides D-Bus methods for the API to read/update twin state.
 
 - **Device Registry Service (`registry-service/`)**
   - Authoritative inventory for devices. Stores identity anchors (device ID, cert metadata, optional manufacturer UUID hash), status, and operational context. Exposes a D-Bus interface to query/update registry data.
@@ -38,7 +38,7 @@ See `alignment.md` for architecture and interface details.
 ## Architecture (MVP)
 
 - __Core-service (`core-service/`)__ serves the SPA and exposes JSON under `/api/*`.
-- __Auth model__: single-user admin, JWT stored in HttpOnly cookie `fh_session`.
+- __Auth model__: single-user admin, JWT stored in HttpOnly cookie `dh_session`.
   - Endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
   - UI gates routes via `RequireAuth` in `ui/src/App.tsx`.
 - __Caching policy__: ETag disabled and strict no-cache headers on `/api/*` to avoid stale auth/UI state.
@@ -81,13 +81,13 @@ The repository contains a working MVP focused on MQTT- and SQLite-backed microse
   - Dev script `npm run dev` starts core and workers with hot reload (see `scripts/dev_start.sh`)
 
 - **Provisioning service (`provisioning-service/`)**
-  - Subscribes to `$fleethub/devices/{deviceId}/provision/request`
+  - Subscribes to `$devicehub/devices/{deviceId}/provision/request`
   - Upserts device records into SQLite table `devices` (fields: `id`, `name?`, `token?`, `meta?`, `created_at`)
-  - Publishes `$fleethub/devices/{deviceId}/provision/accepted|rejected`
+  - Publishes `$devicehub/devices/{deviceId}/provision/accepted|rejected`
   - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `PROVISIONING_DB`
 
 - **Twin service (`twin-service/`)**
-  - Subscribes to `$fleethub/devices/{deviceId}/twin/get` and `.../twin/update`
+  - Subscribes to `$devicehub/devices/{deviceId}/twin/get` and `.../twin/update`
   - Persists desired/reported documents in SQLite tables `twin_desired` and `twin_reported`
   - Publishes `.../twin/update/accepted` and `.../twin/update/delta`
   - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `TWIN_DB`
@@ -108,12 +108,12 @@ The repository contains a working MVP focused on MQTT- and SQLite-backed microse
 ### MQTT topics (MVP subset)
 
 - Provisioning (dev simplification):
-  - Request: `$fleethub/devices/{deviceId}/provision/request`
+  - Request: `$devicehub/devices/{deviceId}/provision/request`
   - Responses: `.../provision/accepted`, `.../provision/rejected`
 
 - Twin:
-  - Get: `$fleethub/devices/{deviceId}/twin/get` → responds on `.../twin/update/accepted`
-  - Update: `$fleethub/devices/{deviceId}/twin/update` → `.../accepted`, optional `.../delta`
+  - Get: `$devicehub/devices/{deviceId}/twin/get` → responds on `.../twin/update/accepted`
+  - Update: `$devicehub/devices/{deviceId}/twin/update` → `.../accepted`, optional `.../delta`
 
 - Registry ingest:
   - Device publishes: `devices/{deviceId}/...` → persisted to `device_events`
@@ -140,11 +140,11 @@ The repository contains a working MVP focused on MQTT- and SQLite-backed microse
   ```
 
 - Produced artifacts (tar.gz) after build:
-  - `dist-artifacts/fleethub-core-service-<version>.tar.gz`
-  - `dist-artifacts/fleethub-provisioning-service-<version>.tar.gz`
-  - `dist-artifacts/fleethub-twin-service-<version>.tar.gz`
-  - `dist-artifacts/fleethub-registry-service-<version>.tar.gz`
-  - `dist-artifacts/fleethub-ui-<version>.tar.gz`
+  - `dist-artifacts/devicehub-core-service-<version>.tar.gz`
+  - `dist-artifacts/devicehub-provisioning-service-<version>.tar.gz`
+  - `dist-artifacts/devicehub-twin-service-<version>.tar.gz`
+  - `dist-artifacts/devicehub-registry-service-<version>.tar.gz`
+  - `dist-artifacts/devicehub-ui-<version>.tar.gz`
   - CI also builds and uploads a packaged Node-RED example from `examples/nodered/`
 
 ### Notes
@@ -154,7 +154,7 @@ The repository contains a working MVP focused on MQTT- and SQLite-backed microse
 - See `alignment.md` for deeper architecture, topic contracts, and security posture.
 
 ## License & Collaboration
-**Copyright 2024 Sanne 'SpuQ' Santens**. The Edgeberry Fleet Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
+**Copyright 2024 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
 
 ### Collaboration
 

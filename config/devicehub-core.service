@@ -1,0 +1,23 @@
+[Unit]
+Description=Edgeberry Device Hub - Core Orchestrator Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Edgeberry/devicehub/core-service
+Environment=NODE_ENV=production
+Environment=PORT=80
+EnvironmentFile=-/etc/Edgeberry/devicehub/core.env
+# Optionally serve built UI from /opt/Edgeberry/devicehub/ui/build
+Environment=UI_DIST=/opt/Edgeberry/devicehub/ui/build
+ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/core-service/dist/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

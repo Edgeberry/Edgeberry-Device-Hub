@@ -6,7 +6,7 @@
  *  - Shows a small devices table linking to `DeviceDetail`.
  *
  * Data:
- *  - Devices: fetched via `getDevices()` from `ui/src/api/fleethub.ts`.
+ *  - Devices: fetched via `getDevices()` from `ui/src/api/devicehub.ts`.
  *  - Widgets fetch their own data from the backend (`/api/health`, `/api/services`, `/api/metrics`).
  *
  * Auth:
@@ -17,7 +17,7 @@ import { Badge, Card, Table } from 'react-bootstrap';
 import HealthWidget from '../components/HealthWidget';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
 import SystemMetricsWidget from '../components/SystemMetricsWidget';
-import { getDevices } from '../api/fleethub';
+import { getDevices } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
 

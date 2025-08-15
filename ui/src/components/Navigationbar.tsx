@@ -18,7 +18,7 @@ const NavigationBar = (props:{user:any|null})=>{
             <Navbar sticky="top" bg={'dark'} data-bs-theme={'dark'}>
                 <Container className="container-fluid" style={{paddingRight:'10px', paddingLeft:'10px'}}>
                     <Navbar.Brand as={Link} to='/'>
-                        <img src={logo} alt="Edgeberry Fleet Hub" height={'32px'}/>
+                        <img src={logo} alt="Edgeberry Device Hub" height={'32px'}/>
                     </Navbar.Brand>
                     <Nav className="d-flex align-items-center" style={{gap:'12px'}}>
                         {props.user ? (
@@ -58,7 +58,7 @@ const NavigationBar = (props:{user:any|null})=>{
                     </ListGroup>
                     <Container className="container-bottom" style={{fontSize:'12px'}}>
                         <hr/>
-                        <p>Edgeberry Fleet Hub is open-source software.</p>
+                        <p>Edgeberry Device Hub is open-source software.</p>
                     </Container>
                 </Offcanvas.Body>
             </Offcanvas>
@@ -66,3 +66,4 @@ const NavigationBar = (props:{user:any|null})=>{
     );
 }
 export default NavigationBar;
+

@@ -1,14 +1,14 @@
 [Unit]
-Description=Edgeberry Fleet Hub - Provisioning Service
+Description=Edgeberry Device Hub - Twin Service
 After=network-online.target mosquitto.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/Edgeberry/fleethub/provisioning-service
+WorkingDirectory=/opt/Edgeberry/devicehub/twin-service
 Environment=NODE_ENV=production
-EnvironmentFile=-/etc/Edgeberry/fleethub/provisioning.env
-ExecStart=/usr/bin/node /opt/Edgeberry/fleethub/provisioning-service/dist/index.js
+EnvironmentFile=-/etc/Edgeberry/devicehub/twin.env
+ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/twin-service/dist/index.js
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy Edgeberry Fleet Hub to a local testing server
+# Deploy Edgeberry Device Hub to a local testing server
 # - Builds the UI with Vite into ui/build
 # - Builds the core-service (Express) into core-service/dist
 # - Starts the core-service in production mode, serving UI from ui/build

@@ -6,7 +6,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Card, Col, Modal, Row, Spinner } from 'react-bootstrap';
-import { getMetrics, getMetricsHistory } from '../api/fleethub';
+import { getMetrics, getMetricsHistory } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
 type Metrics = {

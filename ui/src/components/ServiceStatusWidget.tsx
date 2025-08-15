@@ -7,7 +7,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, Badge, Spinner, Button, Row, Col, Modal } from 'react-bootstrap';
-import { getServices, getServiceLogs, startService, stopService, restartService } from '../api/fleethub';
+import { getServices, getServiceLogs, startService, stopService, restartService } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
 type ServiceItem = { unit: string; status: string };
@@ -202,7 +202,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
   }
 
   function prettyUnitName(unit: string){
-    return unit.replace(/^fleethub-/, '').replace(/\.service$/, '');
+    return unit.replace(/^devicehub-/, '').replace(/\.service$/, '');
   }
 
   async function doAction(kind: 'start'|'stop'|'restart', unit: string){
@@ -250,7 +250,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                 <Row className="g-3">
                   {services
                     // hide legacy/merged API tile
-                    .filter(s => s.unit !== 'fleethub-api.service' && prettyUnitName(s.unit).toLowerCase() !== 'api')
+                    .filter(s => s.unit !== 'devicehub-api.service' && prettyUnitName(s.unit).toLowerCase() !== 'api')
                     .map((s) => {
                     const variant = s.status === 'active' ? 'success' : (s.status === 'inactive' ? 'secondary' : 'warning');
                     return (

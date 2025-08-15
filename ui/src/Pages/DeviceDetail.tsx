@@ -4,7 +4,7 @@
  * Purpose: Show raw details for a single device identified by `assetId` (URL param).
  *
  * Data:
- *  - Fetched via `getDevice(assetId)` from `ui/src/api/fleethub.ts`.
+ *  - Fetched via `getDevice(assetId)` from `ui/src/api/devicehub.ts`.
  *  - Rendered as JSON for simplicity (MVP).
  *
  * Auth:
@@ -13,7 +13,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card } from 'react-bootstrap';
-import { getDevice } from '../api/fleethub';
+import { getDevice } from '../api/devicehub';
 
 export default function DeviceDetail(props:{user:any}){
   const { assetId } = useParams();

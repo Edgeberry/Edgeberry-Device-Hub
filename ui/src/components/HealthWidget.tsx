@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Card, Col, Row, Badge, Spinner } from 'react-bootstrap';
-import { getHealth, getStatus, getVersion, getPublicConfig } from '../api/fleethub';
+import { getHealth, getStatus, getVersion, getPublicConfig } from '../api/devicehub';
 
 const HealthWidget = ()=>{
   const [loading, setLoading] = useState<boolean>(true);
@@ -37,7 +37,7 @@ const HealthWidget = ()=>{
 
   const healthy = health?.health === 'ok' || health?.ok === true;
   const uptime = (status && (status.uptime || status.uptimeSeconds)) || '-';
-  const svc = (version && (version.service || version.name)) || 'Fleet Hub';
+  const svc = (version && (version.service || version.name)) || 'Device Hub';
   const ver = (version && (version.version || version.git)) || '-';
   const env = (config && (config.env || config.environment)) || '-';
 
@@ -70,3 +70,4 @@ const HealthWidget = ()=>{
   );
 }
 export default HealthWidget;
+

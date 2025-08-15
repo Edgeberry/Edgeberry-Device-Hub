@@ -5,16 +5,16 @@ import type { Json } from './types.js';
 
 // Topic helpers
 const TOPICS = {
-  provisionRequest: '$fleethub/devices/+/provision/request',
-  accepted: (deviceId: string) => `$fleethub/devices/${deviceId}/provision/accepted`,
-  rejected: (deviceId: string) => `$fleethub/devices/${deviceId}/provision/rejected`,
+  provisionRequest: '$devicehub/devices/+/provision/request',
+  accepted: (deviceId: string) => `$devicehub/devices/${deviceId}/provision/accepted`,
+  rejected: (deviceId: string) => `$devicehub/devices/${deviceId}/provision/rejected`,
 };
 
 function parseDeviceId(topic: string, suffix: string): string | null {
-  // $fleethub/devices/{deviceId}/provision/{suffix}
+  // $devicehub/devices/{deviceId}/provision/{suffix}
   const parts = topic.split('/');
   if (parts.length < 5) return null;
-  if (parts[0] !== '$fleethub' || parts[1] !== 'devices') return null;
+  if (parts[0] !== '$devicehub' || parts[1] !== 'devices') return null;
   if (parts[3] !== 'provision') return null;
   if (!topic.endsWith(suffix)) return null;
   return parts[2];
@@ -36,7 +36,7 @@ export function startMqtt(db: any): MqttClient {
   client.on('error', (err) => console.error(`[${SERVICE}] mqtt error`, err));
 
   client.on('message', (topic: string, payload: Buffer) => {
-    if (!(topic.startsWith('$fleethub/devices/') && topic.endsWith('/provision/request'))) return;
+    if (!(topic.startsWith('$devicehub/devices/') && topic.endsWith('/provision/request'))) return;
     const deviceId = parseDeviceId(topic, '/provision/request');
     if (!deviceId) return;
     try {

@@ -7,9 +7,9 @@
  * - Acknowledge success or failure via MQTT topics
  *
  * Topics (per device):
- * - Request: `$fleethub/devices/{deviceId}/provision/request`
- * - Success: `$fleethub/devices/{deviceId}/provision/accepted`
- * - Failure: `$fleethub/devices/{deviceId}/provision/rejected`
+ * - Request: `$devicehub/devices/{deviceId}/provision/request`
+ * - Success: `$devicehub/devices/{deviceId}/provision/accepted`
+ * - Failure: `$devicehub/devices/{deviceId}/provision/rejected`
  */
 import { SERVICE, DB_PATH } from './config.js';
 import { initDb } from './db.js';

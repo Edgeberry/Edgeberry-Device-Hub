@@ -1,5 +1,5 @@
 /**
- * Edgeberry Fleet Hub core-service
+ * Edgeberry Device Hub core-service
  *
  * Responsibilities:
  * - Serve the SPA and expose JSON APIs under `/api/*`.
@@ -50,7 +50,7 @@ app.set('etag', false);
 // - PORT: HTTP port (defaults 8080 dev, 80 prod)
 // - MQTT_URL: used for bundle config exposure
 // - CERTS_DIR: where to store Root CA and provisioning certs (default: ./data/certs)
-// - UI_DIST: path to built SPA (default: /opt/Edgeberry/fleethub/ui/build)
+// - UI_DIST: path to built SPA (default: /opt/Edgeberry/devicehub/ui/build)
 // - ADMIN_USER / ADMIN_PASSWORD: single-user admin credentials (dev defaults; MUST change in prod)
 // - JWT_SECRET / JWT_TTL_SECONDS: cookie token signing and expiration
 
@@ -90,7 +90,7 @@ app.get('/api/settings/certs/provisioning/:name/download', async (req: Request, 
     const keyPath = path.join(PROV_DIR, `${name}.key`);
     if (!fs.existsSync(crtPath) || !fs.existsSync(keyPath)) { res.status(404).json({ error: 'certificate not found' }); return; }
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleethub-bundle-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'devicehub-bundle-'));
     const bundleDir = path.join(tmpDir, `provisioning-${name}`);
     fs.mkdirSync(bundleDir);
 
@@ -129,10 +129,10 @@ app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' })
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
 // Log a startup hello from core-service
-console.log('[core-service] hello from Fleet Hub core-service');
+console.log('[core-service] hello from Device Hub core-service');
 
 // Unified logs: snapshot and streaming from systemd journal (journalctl)
-// Services are expected to be systemd units like fleethub-*.service
+// Services are expected to be systemd units like devicehub-*.service
 // DEFAULT_LOG_UNITS now imported from src/logs.ts
 
 // buildJournalctlArgs moved to src/logs.ts
@@ -718,7 +718,7 @@ if (!UI_READY) {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Edgeberry Fleet Hub — Hello World</title>
+    <title>Edgeberry Device Hub — Hello World</title>
     <style>
       body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;line-height:1.4;margin:2rem;color:#111}
       h1{margin:0 0 0.5rem}
@@ -737,7 +737,7 @@ if (!UI_READY) {
   <body>
     <header style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
-        <h1 style="margin:0">Edgeberry Fleet Hub</h1>
+        <h1 style="margin:0">Edgeberry Device Hub</h1>
         <div class="muted">Hello World demo — core-service serves UI and API</div>
       </div>
       <div id="nav-user" class="muted">Loading user…</div>

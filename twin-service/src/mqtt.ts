@@ -5,17 +5,17 @@ import { getTwin, setDoc } from './db.js';
 
 // Topic helpers and constants
 const TOPICS = {
-  get: '$fleethub/devices/+/twin/get',
-  update: '$fleethub/devices/+/twin/update',
-  accepted: (deviceId: string) => `$fleethub/devices/${deviceId}/twin/update/accepted`,
-  delta: (deviceId: string) => `$fleethub/devices/${deviceId}/twin/update/delta`,
-  rejected: (deviceId: string) => `$fleethub/devices/${deviceId}/twin/update/rejected`,
+  get: '$devicehub/devices/+/twin/get',
+  update: '$devicehub/devices/+/twin/update',
+  accepted: (deviceId: string) => `$devicehub/devices/${deviceId}/twin/update/accepted`,
+  delta: (deviceId: string) => `$devicehub/devices/${deviceId}/twin/update/delta`,
+  rejected: (deviceId: string) => `$devicehub/devices/${deviceId}/twin/update/rejected`,
 };
 
 function parseTopicDeviceId(topic: string, suffix: string): string | null {
   const parts = topic.split('/');
   if (parts.length < 5) return null;
-  if (parts[0] !== '$fleethub' || parts[1] !== 'devices') return null;
+  if (parts[0] !== '$devicehub' || parts[1] !== 'devices') return null;
   if (parts[3] !== 'twin') return null;
   if (!topic.endsWith(suffix)) return null;
   return parts[2];
@@ -52,14 +52,14 @@ export function startMqtt(db: any): MqttClient {
 
   client.on('message', (topic: string, payload: Buffer) => {
     try {
-      if (topic.startsWith('$fleethub/devices/') && topic.endsWith('/twin/get')) {
+      if (topic.startsWith('$devicehub/devices/') && topic.endsWith('/twin/get')) {
         const deviceId = parseTopicDeviceId(topic, '/twin/get');
         if (!deviceId) return;
         const twin = getTwin(db, deviceId);
         client.publish(TOPICS.accepted(deviceId), JSON.stringify({ deviceId, desired: twin.desired, reported: twin.reported }), { qos: 1 });
         return;
       }
-      if (topic.startsWith('$fleethub/devices/') && topic.endsWith('/twin/update')) {
+      if (topic.startsWith('$devicehub/devices/') && topic.endsWith('/twin/update')) {
         const deviceId = parseTopicDeviceId(topic, '/twin/update');
         if (!deviceId) return;
         const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};

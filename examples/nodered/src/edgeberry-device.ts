@@ -2,7 +2,7 @@
  * Edgeberry Device (Node-RED example)
  * ---------------------------------------------
  * Minimal node that:
- * - Requires configuration: host (Fleet Hub URL), uuid (device id), and a credential token
+ * - Requires configuration: host (Device Hub URL), uuid (device id), and a credential token
  * - Shows status 'ready' when configured; otherwise 'missing settings'
  * - Logs "hello world" on each input and forwards the message unchanged
  */

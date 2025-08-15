@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Edgeberry Fleet Hub dev orchestrator
+# Edgeberry Device Hub dev orchestrator
 # Starts Mosquitto (dev config) and all TypeScript microservices concurrently for local development.
 # Stops everything cleanly on Ctrl-C.
 

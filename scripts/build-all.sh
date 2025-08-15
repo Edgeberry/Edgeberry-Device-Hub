@@ -58,7 +58,7 @@ build_node_service() {
   fi
   # Create tar.gz
   local tarname
-  tarname="fleethub-${svc}-${VERSION}.tar.gz"
+  tarname="devicehub-${svc}-${VERSION}.tar.gz"
   tar -C "$stage" -czf "${ART_DIR}/${tarname}" .
   rm -rf "$stage"
   log "artifact: ${ART_DIR}/${tarname}"
@@ -88,7 +88,7 @@ build_ui() {
     mkdir -p "$stage/${name}"
     rsync -a --exclude ".git" --exclude "node_modules/.cache" \
       "${dir}/" "$stage/${name}/"
-    local tarname="fleethub-${name}-${VERSION}.tar.gz"
+    local tarname="devicehub-${name}-${VERSION}.tar.gz"
     tar -C "$stage" -czf "${ART_DIR}/${tarname}" .
     rm -rf "$stage"
     log "artifact: ${ART_DIR}/${tarname}"

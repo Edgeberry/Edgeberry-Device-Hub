@@ -2,7 +2,7 @@ import { connect, IClientOptions, MqttClient } from 'mqtt';
 
 // Simple virtual device that:
 // 1) Connects to MQTT broker
-// 2) Sends provisioning request to $fleethub/devices/{deviceId}/provision/request
+// 2) Sends provisioning request to $devicehub/devices/{deviceId}/provision/request
 // 3) On accepted, publishes periodic telemetry to devices/{deviceId}/telemetry
 
 const MQTT_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
@@ -24,9 +24,9 @@ function start() {
   let provisioned = false;
   let telemetryTimer: NodeJS.Timeout | null = null;
 
-  const provReqTopic = `$fleethub/devices/${DEVICE_ID}/provision/request`;
-  const provAccTopic = `$fleethub/devices/${DEVICE_ID}/provision/accepted`;
-  const provRejTopic = `$fleethub/devices/${DEVICE_ID}/provision/rejected`;
+  const provReqTopic = `$devicehub/devices/${DEVICE_ID}/provision/request`;
+  const provAccTopic = `$devicehub/devices/${DEVICE_ID}/provision/accepted`;
+  const provRejTopic = `$devicehub/devices/${DEVICE_ID}/provision/rejected`;
 
   client.on('connect', () => {
     console.log(`[virtual-device] connected → ${MQTT_URL} as ${DEVICE_ID}`);

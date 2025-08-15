@@ -17,7 +17,7 @@ Root CA and provisioning certificates are managed under `/api/settings/certs/*` 
 
 UI behavior on `/settings`:
 - Root CA card shows presence, subject, validity, with actions: Generate (if absent), Download CA (if present).
-- Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
+ - Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
 
 Whitelist & lifecycle (MVP additions):
 - Settings page includes a Provisioning Whitelist section:
@@ -26,25 +26,25 @@ Whitelist & lifecycle (MVP additions):
   - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
 - Settings page includes a Device Lifecycle Status section:
   - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
-# Alignment Document – Edgeberry Fleet Hub
+# Alignment Document – Edgeberry Device Hub
 
-This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Fleet Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
+This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
  
  Last updated: 2025-08-15 (morning)
  
  ## Alignment Maintenance
- - This document is the single source of truth for project vision and high-level specs.
- - Update it in the same pull request as any change that materially affects: technology stack, roles/permissions, public observability, device lifecycle, or system boundaries.
- - Required sections to keep accurate: All
- - Prefer clarity over completeness: link to detailed docs when necessary, but ensure intent and scope live here.
+  - This document is the single source of truth for project vision and high-level specs.
+  - Update it in the same pull request as any change that materially affects: technology stack, roles/permissions, public observability, device lifecycle, or system boundaries.
+  - Required sections to keep accurate: All
+  - Prefer clarity over completeness: link to detailed docs when necessary, but ensure intent and scope live here.
 
 ## Purpose
 
-Edgeberry Fleet Hub is a **self-hostable device management service** designed specifically for Edgeberry devices. It provides a transparent, flexible, and open alternative without vendor lock-in.
+Edgeberry Device Hub is a **self-hostable device management service** designed specifically for Edgeberry devices. It provides a transparent, flexible, and open alternative without vendor lock-in.
 
 ## Core Principles
 
-* **Self-hosted by design** – Each Fleet Hub is an independent server, giving full ownership and control to the user.
+* **Self-hosted by design** – Each Device Hub is an independent server, giving full ownership and control to the user.
 * **Radical transparency without vulnerability** – The system is observable by default, but always anonymizes sensitive data.
 * **Composable and modular** – The architecture is intentionally simple, broken into meaningful parts rather than built as a monolith.
 * **Decentralization** – Each server instance is sovereign but can optionally sync or interoperate with others.
@@ -75,7 +75,7 @@ PR checklist additions:
 
 ## Technology Stack
 
-Edgeberry Fleet Hub is based on open-source technologies to ensure transparency, interoperability, and ease of contribution:
+Edgeberry Device Hub is based on open-source technologies to ensure transparency, interoperability, and ease of contribution:
 
 * **TypeScript** – For backend and frontend logic, providing type safety and maintainability.
 * **Mosquitto (MQTT broker)** – For lightweight, publish-subscribe communication with Edgeberry devices.
@@ -88,7 +88,7 @@ These choices are made to maximize simplicity, performance, and long-term mainta
 
 ## Project Structure
 
-The Fleet Hub is a set of smaller projects in a single monorepo to keep development tight and interfaces explicit:
+The Device Hub is a set of smaller projects in a single monorepo to keep development tight and interfaces explicit:
 
 ### Code Organization (Generalized)
 
@@ -100,11 +100,11 @@ The Fleet Hub is a set of smaller projects in a single monorepo to keep developm
 - **Environment-driven**: Behavior is configured via environment variables (ports, paths, secrets, endpoints) and remains explicit.
 - **Graceful teardown**: Each service provides a clear shutdown path to close external resources safely.
 
-External presentation: To the outside world, Edgeberry Fleet Hub is a monolithic product — a single hostname, a single API surface, and a single dashboard UI. Internal modularity is an implementation detail and must not leak into the public surface area. The `core-service` acts as the orchestrator and public entrypoint for the UI.
+External presentation: To the outside world, Edgeberry Device Hub is a monolithic product — a single hostname, a single API surface, and a single dashboard UI. Internal modularity is an implementation detail and must not leak into the public surface area. The `core-service` acts as the orchestrator and public entrypoint for the UI.
 
 Public Surface Area (single HTTP(S) server):
 
-- Base URL: single hostname (e.g., `https://fleethub.edgeberry.io`).
+- Base URL: single hostname (e.g., `https://devicehub.edgeberry.io`).
 - Only `core-service` binds public HTTP(S).
 - UI entrypoint: `/` serves the dashboard SPA from the `core-service` (static file server in production).
 - HTTP API prefix: `/api` (versioning via headers or path TBD) — served directly by `core-service`.
@@ -118,22 +118,22 @@ Execution model & IPC:
 - Device communication remains via MQTT; D-Bus is only for server-internal coordination.
 - Configuration: `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs are stored at the repo root under `config/`. For the MVP, `config/` is flat (no subdirectories).
  - Release packaging (MVP): we publish per-microservice build artifacts (tar.gz) attached to GitHub Releases and install them on the host via a privileged installer. No Docker is used for release packaging.
- - Host installation (MVP): `scripts/install.sh` installs artifacts under `/opt/Edgeberry/fleethub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services.
+ - Host installation (MVP): `scripts/install.sh` installs artifacts under `/opt/Edgeberry/devicehub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services.
 
 - `ui/` — Web UI (React). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
 - `core-service/` — Orchestrator and public entrypoint. Serves the built UI in production and may provide light orchestration endpoints (e.g., `/healthz`).
 - `api/` — Previously a standalone Node.js + Express HTTP API. Its responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`. Any remaining code here will be migrated or retired.
- - `provisioning-service/` — Long-running Node.js service subscribed to `$fleethub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility. MVP adds a simplified provisioning request/ack flow on `$fleethub/devices/{deviceId}/provision/request` for development.
+ - `provisioning-service/` — Long-running Node.js service subscribed to `$devicehub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility. MVP adds a simplified provisioning request/ack flow on `$devicehub/devices/{deviceId}/provision/request` for development.
 - `twin-service/` — Dedicated service for digital twin maintenance: processes twin updates/deltas, reconciliation, and desired→reported state sync.
 - `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
-- `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
-- `scripts/` — Developer tooling and CI checks (e.g., DB migrations, seeders).
+ - `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
+ - `scripts/` — Developer tooling and CI checks (e.g., DB migrations, seeders).
   - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
 - `docs/` — Extended documentation referenced from this file.
 - `examples/` — Example integrations and reference nodes.
-  - `examples/nodered/` — TypeScript-based Node-RED node "edgeberry-device". Minimal example that sets status to ready, logs "hello world" on input, and passes the message through. Required settings when adding the node: `host` (Fleet Hub base URL), `uuid` (device UUID), and a credential `token` (host access token). Build with `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`. Install into Node-RED via `npm link` or `npm pack` from this folder. CI will build and upload this asset for easy install/testing.
+  - `examples/nodered/` — TypeScript-based Node-RED node "edgeberry-device". Minimal example that sets status to ready, logs "hello world" on input, and passes the message through. Required settings when adding the node: `host` (Device Hub base URL), `uuid` (device UUID), and a credential `token` (host access token). Build with `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`. Install into Node-RED via `npm link` or `npm pack` from this folder. CI will build and upload this asset for easy install/testing.
 - `config/` — `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs (dev/prod variants). MVP: flat directory (no subfolders).
-  - Example unit files (MVP): `fleethub-core.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`.
+  - Example unit files (MVP): `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`.
 
 Responsibilities and boundaries:
 
@@ -142,7 +142,7 @@ Responsibilities and boundaries:
 - `provisioning-service/` owns MQTT bootstrap and certificate lifecycle. It may update DB via internal repositories shared with `api/` (from `shared/`). Exposes a D-Bus API for operations and emits signals for status.
 - `twin-service/` maintains digital twins (desired/reported state, deltas, reconciliation). Subscribes/publishes to twin topics and updates the DB via shared repositories.
 - `mqtt-broker/` config enforces mTLS, maps cert subject → device identity, and defines ACLs per topic family.
-- All microservices expose stable D-Bus interfaces under a common namespace (e.g., `io.edgeberry.fleethub.*`).
+- All microservices expose stable D-Bus interfaces under a common namespace (e.g., `io.edgeberry.devicehub.*`).
 
 Interfaces (high level):
 
@@ -178,12 +178,12 @@ Change policy:
 ### D-Bus Interfaces (MVP)
 
 Bus: system bus in production.
-Common namespace: `io.edgeberry.fleethub.*`
+Common namespace: `io.edgeberry.devicehub.*`
 
 #### Provisioning Service
 
-- Object path: `/io/edgeberry/fleethub/ProvisioningService`
-- Interface: `io.edgeberry.fleethub.ProvisioningService`
+- Object path: `/io/edgeberry/devicehub/ProvisioningService`
+- Interface: `io.edgeberry.devicehub.ProvisioningService`
 - Methods:
   - `RequestCertificate(s reqId, s csrPem, s deviceId) → (b accepted, s certPem, s caChainPem, s error)`
   - `GetStatus() → (s status)`
@@ -193,8 +193,8 @@ Common namespace: `io.edgeberry.fleethub.*`
 
 #### Device Twin Service
 
-- Object path: `/io/edgeberry/fleethub/TwinService`
-- Interface: `io.edgeberry.fleethub.TwinService`
+- Object path: `/io/edgeberry/devicehub/TwinService`
+- Interface: `io.edgeberry.devicehub.TwinService`
 - Methods:
   - `GetDesired(s deviceId) → (u version, s docJson)`
   - `GetReported(s deviceId) → (u version, s docJson)`
@@ -206,8 +206,8 @@ Common namespace: `io.edgeberry.fleethub.*`
 
 #### Device Registry Service
 
-- Object path: `/io/edgeberry/fleethub/DeviceRegistryService`
-- Interface: `io.edgeberry.fleethub.DeviceRegistryService`
+- Object path: `/io/edgeberry/devicehub/DeviceRegistryService`
+- Interface: `io.edgeberry.devicehub.DeviceRegistryService`
 - Methods:
   - `GetDevice(s deviceId) → (s deviceJson)`
   - `ListDevices(s filterJson) → (s devicesJson)`
@@ -223,7 +223,7 @@ CI and releases:
 
 - Lint, typecheck, test per project. Alignment checks run at repo root and fail if sections here drift from code.
 - Versioning per project package; releases tagged at the repo root with affected packages noted in changelog.
-- Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `fleethub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>`.
+- Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
 
 ### WebSocket Topics (Current)
@@ -271,15 +271,15 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `HealthWidget` (`ui/src/components/HealthWidget.tsx`) — shows system health; tolerant to missing optional endpoints
 - `ServiceStatusWidget` (`ui/src/components/ServiceStatusWidget.tsx`) — shows microservice statuses from unified endpoint
   - Service tiles open a modal with recent logs and Start/Restart/Stop controls. Actions are visible to everyone but disabled unless the user has the `admin` role.
-  - Display names hide the `fleethub-` prefix and `.service` suffix. The legacy `api` tile is removed (merged into core).
+  - Display names hide the `devicehub-` prefix and `.service` suffix. The legacy `api` tile is removed (merged into core).
 - `Overview` page (`ui/src/Pages/Overview.tsx`) — contains `HealthWidget`, `ServiceStatusWidget`, and a simple devices table
 
 ### API Contracts (UI dependencies)
 
 - Required:
   - `GET /api/health` — returns `{ healthy: boolean, ... }`
-  - `GET /api/services` — returns array or object of systemd unit statuses (includes `fleethub-registry.service`)
-  - Default monitored units include Fleet Hub services and key dependencies: `fleethub-core.service`, `fleethub-provisioning.service`, `fleethub-twin.service`, `fleethub-registry.service`, `dbus.service`, `mosquitto.service`.
+  - `GET /api/services` — returns array or object of systemd unit statuses (includes `devicehub-registry.service`)
+  - Default monitored units include Device Hub services and key dependencies: `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`, `dbus.service`, `mosquitto.service`.
   - `GET /api/logs` — recent logs snapshot. Accepts `units` (comma-separated) or `unit` (single) and `lines`.
 - Optional (UI handles absence gracefully; fields display as "-"):
   - `GET /api/status`
@@ -320,8 +320,8 @@ Provisioning flow (MQTT-only):
 
 1. Device generates a keypair and CSR (CN = `deviceId`).
 2. Device connects to the broker using the claim/provisioning certificate (mTLS).
-3. Device publishes CSR to `$fleethub/certificates/create-from-csr` with `{ reqId, csrPem, deviceId }`.
-4. Provisioning worker validates CSR and issues a signed device certificate; replies on `$fleethub/certificates/create-from-csr/accepted` with `{ reqId, certPem, caChainPem }` (or `/rejected`).
+3. Device publishes CSR to `$devicehub/certificates/create-from-csr` with `{ reqId, csrPem, deviceId }`.
+4. Provisioning worker validates CSR and issues a signed device certificate; replies on `$devicehub/certificates/create-from-csr/accepted` with `{ reqId, certPem, caChainPem }` (or `/rejected`).
 5. Device saves cert, reconnects using its own certificate.
 6. Server marks the device `active`, sets `enrolled_at`, and subsequent MQTT runtime updates `last_seen`/`updated_at`.
 
@@ -375,7 +375,7 @@ For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT
 
 We use a single, admin-managed provisioning client certificate for initial device bootstrap and a secret manufacturer UUID per device:
 
-- **Provisioning client certificate (admin-only):** A single certificate authorizes bootstrap requests. It is embedded in the installer and validated by the Fleet Hub via fingerprint pinning or by an mTLS reverse proxy.
+- **Provisioning client certificate (admin-only):** A single certificate authorizes bootstrap requests. It is embedded in the installer and validated by the Device Hub via fingerprint pinning or by an mTLS reverse proxy.
 - **Secret manufacturer UUID:** Each device has a secret UUID known only to the device owner and server admin. The UUID is never stored in plaintext; the server stores a salted SHA-256 hash.
 
 Data model additions (on `devices`):
@@ -394,16 +394,16 @@ Bootstrap (device installer) — MQTT-only:
 
 Production model:
 1. Device connects to the broker using the fleet provisioning client certificate (mTLS at the broker).
-2. Device publishes a provisioning request to `$fleethub/certificates/create-from-csr` (CSR-based) including `reqId`, `uuid`, `deviceId`.
+2. Device publishes a provisioning request to `$devicehub/certificates/create-from-csr` (CSR-based) including `reqId`, `uuid`, `deviceId`.
 3. Server validates the provisioning client and UUID whitelist (hash-based), issues a signed device certificate, and replies on `/accepted` or `/rejected`.
 4. Device installs the returned cert/key and reconnects using its per-device client certificate.
 
 MVP/dev model (implemented):
-1. Device connects to the broker and publishes to `$fleethub/devices/{deviceId}/provision/request` with JSON `{ name?, token?, meta?, uuid? }`.
+1. Device connects to the broker and publishes to `$devicehub/devices/{deviceId}/provision/request` with JSON `{ name?, token?, meta?, uuid? }`.
 2. Provisioning service validates the whitelist when `ENFORCE_WHITELIST=true`:
    - Looks up `uuid` in `uuid_whitelist` and requires `device_id` match and `used_at` null.
    - On success, marks `used_at` and upserts the device row in `provisioning.db`.
-3. Service replies on `$fleethub/devices/{deviceId}/provision/accepted|rejected`.
+3. Service replies on `$devicehub/devices/{deviceId}/provision/accepted|rejected`.
 
 Security posture:
 
@@ -426,13 +426,13 @@ Goal: Devices start with a generic claim certificate, request a per-device certi
 
 - Generate a new private key and CSR (CN = deviceId/serial).
 - Connect to broker using the claim cert (mTLS).
-- Publish CSR to `$fleethub/certificates/create-from-csr` with payload `{ reqId, csrPem, deviceId }`.
+- Publish CSR to `$devicehub/certificates/create-from-csr` with payload `{ reqId, csrPem, deviceId }`.
 
 3) Provisioning service (worker)
 
-- Subscribes to `$fleethub/certificates/create-from-csr`.
+- Subscribes to `$devicehub/certificates/create-from-csr`.
 - Validates CSR (structure, expected CN shape).
-- Signs CSR with the Intermediate CA and publishes reply to `$fleethub/certificates/create-from-csr/accepted` with `{ reqId, certPem, caChainPem }` (or `/rejected` with `{ reqId, error }`).
+- Signs CSR with the Intermediate CA and publishes reply to `$devicehub/certificates/create-from-csr/accepted` with `{ reqId, certPem, caChainPem }` (or `/rejected` with `{ reqId, error }`).
 - Correlation is via `reqId` in payload; the claim client filters by `reqId`.
 
 4) Device after provisioning
@@ -445,8 +445,8 @@ Goal: Devices start with a generic claim certificate, request a per-device certi
 
 - `require_certificate true`, `use_subject_as_username true`.
 - ACL examples:
-  - Claim CN = `claim`: allow publish to `$fleethub/certificates/create-from-csr` and subscribe to `$fleethub/certificates/create-from-csr/+` (accepted/rejected).
-  - Device CN = `<deviceId>`: allow publish to `devices/<deviceId>/#`, subscribe to `devices/<deviceId>/commands/#`, and twin topics `$fleethub/devices/<deviceId>/twin/#`.
+  - Claim CN = `claim`: allow publish to `$devicehub/certificates/create-from-csr` and subscribe to `$devicehub/certificates/create-from-csr/+` (accepted/rejected).
+  - Device CN = `<deviceId>`: allow publish to `devices/<deviceId>/#`, subscribe to `devices/<deviceId>/commands/#`, and twin topics `$devicehub/devices/<deviceId>/twin/#`.
 
 6) MVP rules (dev path)
 
@@ -457,39 +457,39 @@ Goal: Devices start with a generic claim certificate, request a per-device certi
 
 ### MQTT Topic Architecture
 
-Prefix: `$fleethub`
+Prefix: `$devicehub`
 
 Provisioning (bootstrap) — All payloads are JSON:
 
-- Request (CSR): `$fleethub/certificates/create-from-csr`
+- Request (CSR): `$devicehub/certificates/create-from-csr`
   - Payload: `{ reqId, csrPem, uuid, deviceId, daysValid? }`
   - Responses:
-    - `$fleethub/certificates/create-from-csr/accepted`
-    - `$fleethub/certificates/create-from-csr/rejected`
-- Request (server keygen): `$fleethub/certificates/create`
+    - `$devicehub/certificates/create-from-csr/accepted`
+    - `$devicehub/certificates/create-from-csr/rejected`
+- Request (server keygen): `$devicehub/certificates/create`
   - Payload: `{ reqId, uuid, deviceId, daysValid? }`
   - Responses:
-    - `$fleethub/certificates/create/accepted`
-     - `$fleethub/certificates/create/rejected`
-- Provisioning template bind: `$fleethub/provisioning-templates/{templateName}/provision`
+    - `$devicehub/certificates/create/accepted`
+     - `$devicehub/certificates/create/rejected`
+- Provisioning template bind: `$devicehub/provisioning-templates/{templateName}/provision`
   - Payload: `{ reqId, uuid, deviceId, parameters? }`
   - Responses:
-    - `$fleethub/provisioning-templates/{templateName}/provision/accepted`
-     - `$fleethub/provisioning-templates/{templateName}/provision/rejected`
+    - `$devicehub/provisioning-templates/{templateName}/provision/accepted`
+     - `$devicehub/provisioning-templates/{templateName}/provision/rejected`
 
 Provisioning (MVP simplified for development):
 
-- Request: `$fleethub/devices/{deviceId}/provision/request`
+- Request: `$devicehub/devices/{deviceId}/provision/request`
   - Payload: `{ name?: string, token?: string, meta?: object }`
   - Responses:
-    - `$fleethub/devices/{deviceId}/provision/accepted`
-    - `$fleethub/devices/{deviceId}/provision/rejected`
+    - `$devicehub/devices/{deviceId}/provision/accepted`
+    - `$devicehub/devices/{deviceId}/provision/rejected`
 
 Digital Twin (subset):
 
-- Update: `$fleethub/devices/{deviceId}/twin/update`
+- Update: `$devicehub/devices/{deviceId}/twin/update`
   - Responses: `/accepted`, `/rejected`
-- Get: `$fleethub/devices/{deviceId}/twin/get`
+- Get: `$devicehub/devices/{deviceId}/twin/get`
   - Responses: `/accepted`, `/rejected`
 
 Runtime telemetry/events:
@@ -503,8 +503,8 @@ The `twin-service` owns the device digital twin lifecycle. It maintains desired/
 
 Responsibilities:
 
-- Subscribe to `$fleethub/devices/{deviceId}/twin/get` and `$fleethub/devices/{deviceId}/twin/update`.
-- Publish `$fleethub/devices/{deviceId}/twin/update/accepted|rejected` and `.../delta`.
+- Subscribe to `$devicehub/devices/{deviceId}/twin/get` and `$devicehub/devices/{deviceId}/twin/update`.
+- Publish `$devicehub/devices/{deviceId}/twin/update/accepted|rejected` and `.../delta`.
 - Persist desired/reported state and versions; reconcile incoming reported state; generate deltas for devices.
 - Expose D-Bus methods for the API to read/update twin state.
 
@@ -523,9 +523,9 @@ The `provisioning-service` provides a development-friendly provisioning path in 
 
 Responsibilities:
 
-- Subscribe to `$fleethub/devices/{deviceId}/provision/request`.
+- Subscribe to `$devicehub/devices/{deviceId}/provision/request`.
 - Upsert device into SQLite `devices` table with fields: `id`, `name?`, `token?`, `meta?`, timestamps.
-- Publish `$fleethub/devices/{deviceId}/provision/accepted|rejected`.
+- Publish `$devicehub/devices/{deviceId}/provision/accepted|rejected`.
 
 Storage (MVP):
 
@@ -555,7 +555,7 @@ Non-goals (MVP):
 
 ## Device Registry
 
-The Device Registry is the authoritative inventory of all Edgeberry devices known to a Fleet Hub instance. It anchors identity, status, and metadata, and links provisioning, digital twin state, and historical events.
+The Device Registry is the authoritative inventory of all Edgeberry devices known to a Device Hub instance. It anchors identity, status, and metadata, and links provisioning, digital twin state, and historical events.
 
 Purpose:
 
@@ -619,7 +619,7 @@ Access is modeled as **bundles of permissions** (keys) assigned to users per ser
 
 ## Public Observability
 
-Fleet Hubs can optionally expose a public dashboard. When enabled, anonymous users accessing the server are automatically assigned the Observer role. This supports education, transparency, and system replication without compromising security.
+Device Hubs can optionally expose a public dashboard. When enabled, anonymous users accessing the server are automatically assigned the Observer role. This supports education, transparency, and system replication without compromising security.
 
 ## Identity and Lineage
 
@@ -637,4 +637,4 @@ This project will remain open-source and GPL-licensed. It will always assume Edg
 
 ---
 
-This file is meant to be read and followed by both people and artificial intelligence systems involved in the development of Edgeberry Fleet Hub. Any new features or decisions should be measured against the values described here.
+This file is meant to be read and followed by both people and artificial intelligence systems involved in the development of Edgeberry Device Hub. Any new features or decisions should be measured against the values described here.

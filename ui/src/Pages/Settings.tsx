@@ -36,7 +36,7 @@ export default function Settings(_props:{user:any}){
   const [genning, setGenning] = useState(false);
   const [provName, setProvName] = useState('provisioning');
   const [provDays, setProvDays] = useState<number|''>('');
-  const [genCN, setGenCN] = useState('Edgeberry Fleet Hub Root CA');
+  const [genCN, setGenCN] = useState('Edgeberry Device Hub Root CA');
   const [genDays, setGenDays] = useState<number|''>('');
 
   async function loadAll(){

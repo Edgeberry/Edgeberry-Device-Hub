@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Edgeberry Fleet Hub installer (MVP)
-# - Installs built artifacts for each microservice to /opt/Edgeberry/fleethub/<service>
+# Edgeberry Device Hub installer (MVP)
+# - Installs built artifacts for each microservice to /opt/Edgeberry/devicehub/<service>
 # - Installs systemd unit files from config/ (MVP: flat config dir)
 # - Reloads and enables services
 #
@@ -19,9 +19,9 @@ require_root() {
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ART_DIR="${1:-${ROOT_DIR}/dist-artifacts}"
-INSTALL_ROOT="/opt/Edgeberry/fleethub"
+INSTALL_ROOT="/opt/Edgeberry/devicehub"
 SYSTEMD_DIR="/etc/systemd/system"
-ETC_DIR="/etc/Edgeberry/fleethub"
+ETC_DIR="/etc/Edgeberry/devicehub"
 
 SERVICES=(
   api
@@ -37,7 +37,7 @@ extract_artifacts() {
   mkdir -p "$INSTALL_ROOT"
   shopt -s nullglob
   local tar
-  for tar in "$ART_DIR"/fleethub-*-.tar.gz "$ART_DIR"/fleethub-*.tar.gz; do
+  for tar in "$ART_DIR"/devicehub-*-.tar.gz "$ART_DIR"/devicehub-*.tar.gz; do
     [[ -e "$tar" ]] || continue
     log "extract $tar"
     # Create a temporary staging directory and extract
@@ -49,7 +49,7 @@ extract_artifacts() {
     top="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -n1)"
     local name
     name="$(basename "$top")"
-    # Install to /opt/Edgeberry/fleethub/<name>
+    # Install to /opt/Edgeberry/devicehub/<name>
     rm -rf "${INSTALL_ROOT}/${name}"
     mkdir -p "${INSTALL_ROOT}/${name}"
     rsync -a "$top/" "${INSTALL_ROOT}/${name}/"
@@ -62,11 +62,11 @@ install_systemd_units() {
   log "installing systemd unit files"
   local unit
   for unit in \
-    fleethub-core.service \
-    fleethub-api.service \
-    fleethub-provisioning.service \
-    fleethub-twin.service \
-    fleethub-registry.service; do
+    devicehub-core.service \
+    devicehub-api.service \
+    devicehub-provisioning.service \
+    devicehub-twin.service \
+    devicehub-registry.service; do
     if [[ -f "${ROOT_DIR}/config/${unit}" ]]; then
       install -m 0644 "${ROOT_DIR}/config/${unit}" "${SYSTEMD_DIR}/${unit}"
       log "installed ${SYSTEMD_DIR}/${unit}"
@@ -79,20 +79,20 @@ install_systemd_units() {
 
 enable_services() {
   log "enabling services"
-  systemctl enable fleethub-core.service || true
-  systemctl enable fleethub-api.service || true
-  systemctl enable fleethub-provisioning.service || true
-  systemctl enable fleethub-twin.service || true
-  systemctl enable fleethub-registry.service || true
+  systemctl enable devicehub-core.service || true
+  systemctl enable devicehub-api.service || true
+  systemctl enable devicehub-provisioning.service || true
+  systemctl enable devicehub-twin.service || true
+  systemctl enable devicehub-registry.service || true
 }
 
 start_services() {
   log "starting services"
-  systemctl restart fleethub-core.service || true
-  systemctl restart fleethub-api.service || true
-  systemctl restart fleethub-provisioning.service || true
-  systemctl restart fleethub-twin.service || true
-  systemctl restart fleethub-registry.service || true
+  systemctl restart devicehub-core.service || true
+  systemctl restart devicehub-api.service || true
+  systemctl restart devicehub-provisioning.service || true
+  systemctl restart devicehub-twin.service || true
+  systemctl restart devicehub-registry.service || true
 }
 
 configure_mosquitto() {
@@ -100,7 +100,7 @@ configure_mosquitto() {
     log "configuring Mosquitto"
     mkdir -p /etc/mosquitto/conf.d
     if [[ -f "${ROOT_DIR}/config/mosquitto.conf" ]]; then
-      install -m 0644 "${ROOT_DIR}/config/mosquitto.conf" /etc/mosquitto/conf.d/fleethub.conf
+      install -m 0644 "${ROOT_DIR}/config/mosquitto.conf" /etc/mosquitto/conf.d/devicehub.conf
       systemctl restart mosquitto || true
     else
       log "WARN: config/mosquitto.conf not found; skipping"

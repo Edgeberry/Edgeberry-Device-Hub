@@ -1,8 +1,8 @@
 {
-  "name": "edgeberry-fleet-hub",
+  "name": "edgeberry-device-hub",
   "private": true,
   "version": "0.0.1",
-  "description": "Edgeberry Fleet Hub monorepo root",
+  "description": "Edgeberry Device Hub monorepo root",
   "license": "GPL-3.0-or-later",
   "scripts": {
     "predev": "bash scripts/build-all.sh",

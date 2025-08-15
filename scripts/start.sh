@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_DIR="/app"
 MOSQ_CONF="${APP_DIR}/config/mosquitto.conf"
-LOG_PREFIX="[fleethub]"
+LOG_PREFIX="[devicehub]"
 
 SERVICE="${SERVICE:-}"
 
@@ -12,8 +12,8 @@ usage() {
 $LOG_PREFIX SERVICE env variable is required to select a single service to run.
 Set SERVICE to one of: mosquitto, core-service, api, provisioning-service, twin-service, registry-service
 Example:
-  docker run --rm -e SERVICE=mosquitto -p 1883:1883 -p 8883:8883 ghcr.io/edgeberry/edgeberry-fleet-hub:TAG
-  docker run --rm -e SERVICE=api -p 3000:3000 ghcr.io/edgeberry/edgeberry-fleet-hub:TAG
+  docker run --rm -e SERVICE=mosquitto -p 1883:1883 -p 8883:8883 ghcr.io/edgeberry/edgeberry-device-hub:TAG
+  docker run --rm -e SERVICE=api -p 3000:3000 ghcr.io/edgeberry/edgeberry-device-hub:TAG
 Note: In production, each service runs as its own systemd unit on the host, per alignment.md.
 EOF
 }

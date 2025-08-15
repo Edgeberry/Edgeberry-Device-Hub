@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Card, Col, Container, Row } from 'react-bootstrap';
-import { getHealth, getPublicConfig, getStatus, getVersion } from '../api/fleethub';
+import { getHealth, getPublicConfig, getStatus, getVersion } from '../api/devicehub';
 
 const Health = ()=>{
   const [health, setHealth] = useState<any>(null);

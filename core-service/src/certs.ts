@@ -30,7 +30,7 @@ export async function caExists(): Promise<boolean> {
 
 export async function generateRootCA(params?: { cn?: string; days?: number; keyBits?: number }): Promise<void> {
   ensureDirs();
-  const cn = params?.cn || 'Edgeberry Fleet Hub Root CA';
+  const cn = params?.cn || 'Edgeberry Device Hub Root CA';
   const days = String(params?.days ?? 3650);
   const keyBits = String(params?.keyBits ?? 4096);
   const keyRes = await runCmd('openssl', ['genrsa', '-out', CA_KEY, keyBits]);
@@ -69,3 +69,4 @@ export async function issueProvisioningCert(name: string, days?: number): Promis
   try { fs.unlinkSync(csrPath); } catch {}
   return { certPath: crtPath, keyPath };
 }
+

@@ -7,9 +7,9 @@
  * - Publish accepted responses and deltas (desired - reported)
  *
  * Topic contract (per device):
- * - Request current twin: `$fleethub/devices/{deviceId}/twin/get`
- *   -> Respond: `$fleethub/devices/{deviceId}/twin/update/accepted`
- * - Update desired/reported: `$fleethub/devices/{deviceId}/twin/update`
+ * - Request current twin: `$devicehub/devices/{deviceId}/twin/get`
+ *   -> Respond: `$devicehub/devices/{deviceId}/twin/update/accepted`
+ * - Update desired/reported: `$devicehub/devices/{deviceId}/twin/update`
  *   -> Respond: `.../accepted` and optionally `.../delta`
  */
 import { SERVICE, DB_PATH } from './config.js';
