@@ -1,31 +1,3 @@
-### Certificate Management
-
-Root CA and provisioning certificates are managed under `/api/settings/certs/*` and surfaced in the SPA Settings page.
-
-- Root CA
-  - `GET /api/settings/certs/root` → returns `{ pem, meta }` if present; `404` if absent
-  - `POST /api/settings/certs/root` with `{ cn?, days?, keyBits? }` → generate Root CA if absent
-  - `GET /api/settings/certs/root/download` → downloads `ca.crt` (PEM)
-
-- Provisioning certificates
-  - `GET /api/settings/certs/provisioning` → `{ certs: [{ name, cert, key, meta }] }`
-  - `POST /api/settings/certs/provisioning` with `{ name, days? }` → issues a new cert/key signed by Root CA
-  - `GET /api/settings/certs/provisioning/:name` → `{ name, pem, meta }`
-  - `DELETE /api/settings/certs/provisioning/:name` → deletes `:name.crt` and `:name.key`
-  - `GET /api/settings/certs/provisioning/:name/download` → downloads a `.tgz` bundle containing:
-    - `ca.crt` (Root CA), `:name.crt`, `:name.key`, and `config.json` with `{ mqttUrl, caCert, cert, key }`
-
-UI behavior on `/settings`:
-- Root CA card shows presence, subject, validity, with actions: Generate (if absent), Download CA (if present).
- - Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
-
-Whitelist & lifecycle (MVP additions):
-- Settings page includes a Provisioning Whitelist section:
-  - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, device_id, name, note, created_at, used_at }`.
-  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated).
-  - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
-- Settings page includes a Device Lifecycle Status section:
-  - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
 # Alignment Document – Edgeberry Device Hub
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
@@ -49,6 +21,31 @@ Edgeberry Device Hub is a **self-hostable device management service** designed s
 * **Composable and modular** – The architecture is intentionally simple, broken into meaningful parts rather than built as a monolith.
 * **Decentralization** – Each server instance is sovereign but can optionally sync or interoperate with others.
 * **Bounded flexibility** – The system supports many use cases, but always within the defined scope of managing Edgeberry devices.
+
+## Maintainability & DX (Junior‑Friendly)
+
+Simple rules so you can contribute confidently:
+
+- **Tools you need**: TypeScript, Node.js/Express, React, SQLite, Mosquitto (MQTT), D‑Bus. No extra frameworks.
+
+- **Run locally**:
+  - `bash scripts/dev_start.sh` (hot reload, broker + services). 
+  - Copy `.env.example` → `.env` per project if needed.
+
+- **Add something new**:
+  - API endpoint: add a handler, register route, add a short comment with request/response, add a tiny test.
+  - MQTT topic: use `shared/mqtt` helpers, document request/response topic names here, add a fixture test.
+  - UI widget: create a small component with loading/error states and a typed fetch hook.
+
+- **Coding rules**:
+  - TypeScript strict, ESLint + Prettier pass before commit.
+  - Use types from `shared/` for DTOs/schemas; don’t duplicate shapes.
+  - Never log secrets. Make errors actionable (what failed and what to try).
+
+- **Before opening a PR**:
+  - Run lint/typecheck/build locally.
+  - If you changed an API/topic/contract, update this file and the nearest README or code comment.
+  - Keep PRs small and focused.
 
 ## Readability & Documentation Standards
 
@@ -370,6 +367,35 @@ For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT
   - The SPA reads auth state from `GET /api/auth/me` and conditionally renders admin UI.
   - Navbar shows “Signed in as <admin>”; Logout is available in the menu.
   - Server no longer injects a separate auth bar into `index.html`; duplication was removed. Registration affordances may still be hidden best-effort via a small injected script.
+
+### Settings & Certificate Management
+
+Root CA and provisioning certificates are managed under `/api/settings/certs/*` and surfaced in the SPA Settings page (`/settings`).
+
+- Root CA
+  - `GET /api/settings/certs/root` → returns `{ pem, meta }` if present; `404` if absent
+  - `POST /api/settings/certs/root` with `{ cn?, days?, keyBits? }` → generate Root CA if absent
+  - `GET /api/settings/certs/root/download` → downloads `ca.crt` (PEM)
+
+- Provisioning certificates
+  - `GET /api/settings/certs/provisioning` → `{ certs: [{ name, cert, key, meta }] }`
+  - `POST /api/settings/certs/provisioning` with `{ name, days? }` → issues a new cert/key signed by Root CA
+  - `GET /api/settings/certs/provisioning/:name` → `{ name, pem, meta }`
+  - `DELETE /api/settings/certs/provisioning/:name` → deletes `:name.crt` and `:name.key`
+  - `GET /api/settings/certs/provisioning/:name/download` → downloads a `.tgz` bundle containing:
+    - `ca.crt` (Root CA), `:name.crt`, `:name.key`, and `config.json` with `{ mqttUrl, caCert, cert, key }`
+
+UI behavior on `/settings`:
+- Root CA card shows presence, subject, validity, with actions: Generate (if absent), Download CA (if present).
+- Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
+
+Whitelist & lifecycle (MVP additions):
+- Settings page includes a Provisioning Whitelist section:
+  - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, device_id, name, note, created_at, used_at }`.
+  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated).
+  - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
+- Settings page includes a Device Lifecycle Status section:
+  - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
 
 ### Fleet Provisioning Model (Current)
 

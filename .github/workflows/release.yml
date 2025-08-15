@@ -33,11 +33,17 @@ jobs:
           npm pack --pack-destination ../../dist-artifacts
           popd
 
-      - name: Upload artifacts to release
+      - name: Create single combined tarball
+        run: |
+          # Create a single tarball that contains everything under dist-artifacts/
+          mkdir -p dist-artifacts
+          TAR_NAME="devicehub-${{ github.ref_name }}.tar.gz"
+          tar -C dist-artifacts -czf "dist-artifacts/${TAR_NAME}" .
+
+      - name: Upload artifact to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist-artifacts/*.tar.gz
-            dist-artifacts/*.tgz
+            dist-artifacts/devicehub-${{ github.ref_name }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

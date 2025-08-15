@@ -106,4 +106,16 @@ build_node_service provisioning-service
 build_node_service twin-service
 build_node_service registry-service
 
+# Create a single combined tarball that contains all artifacts
+if [[ -d "$ART_DIR" ]]; then
+  COMBINED_TAR="devicehub-${VERSION}.tar.gz"
+  # Create outside of ART_DIR to avoid "file changed as we read it" while tar is being written
+  TMP_OUT="${ROOT_DIR}/${COMBINED_TAR}"
+  tar -C "$ART_DIR" -czf "$TMP_OUT" .
+  mv "$TMP_OUT" "${ART_DIR}/${COMBINED_TAR}"
+  log "combined artifact: ${ART_DIR}/${COMBINED_TAR}"
+  # Remove individual tarballs so only one tarball remains
+  find "$ART_DIR" -maxdepth 1 -type f -name 'devicehub-*.tar.gz' ! -name "$COMBINED_TAR" -print -delete || true
+fi
+
 log "done"
