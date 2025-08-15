@@ -8,6 +8,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, Badge, Spinner, Button, Row, Col, Modal } from 'react-bootstrap';
 import { getServices, getServiceLogs, startService, stopService, restartService } from '../api/fleethub';
+import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
 type ServiceItem = { unit: string; status: string };
 
@@ -20,6 +21,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
   const [selected, setSelected] = useState<ServiceItem | null>(null);
   const [logs, setLogs] = useState<string>('');
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
+  const [streamEnded, setStreamEnded] = useState<string>('');
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string>('');
   const logsRef = useRef<HTMLDivElement|null>(null);
@@ -39,7 +41,21 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
   }
 
   useEffect(() => {
-    load();
+    // prefer websocket updates if available; fallback to one-off HTTP
+    let mounted = true;
+    const onServices = (data: any) => {
+      if(!mounted) return;
+      try{
+        const list = Array.isArray(data?.services) ? data.services : [];
+        setServices(list);
+        setLoading(false);
+        setError('');
+      }catch{}
+    };
+    wsSubscribe('services.status', onServices);
+    // initial HTTP if WS not connected yet
+    (async()=>{ if(!wsIsConnected()) await load(); })();
+    return ()=>{ mounted = false; wsUnsubscribe('services.status', onServices); };
   }, []);
 
   // Load logs whenever a selection opens the modal
@@ -131,6 +147,44 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
     })();
   }, [selected]);
 
+  // Stream live logs over WebSocket while modal is open
+  useEffect(() => {
+    if(!selected) return;
+    let mounted = true;
+    const unit = selected.unit;
+    const topicStream = `logs.stream:${unit}`;
+    const onLine = (payload: any) => {
+      if(!mounted) return;
+      try{
+        const d = payload;
+        if(!d || d.unit !== unit) return;
+        const e = d.entry;
+        const ts = e?.SYSLOG_TIMESTAMP || e?.__REALTIME_TIMESTAMP || e?._SOURCE_REALTIME_TIMESTAMP || '';
+        const ident = e?.SYSLOG_IDENTIFIER || e?._COMM || e?._SYSTEMD_UNIT || '';
+        const pid = e?._PID ? `[${e._PID}]` : '';
+        const msg = e?.MESSAGE ?? (typeof e === 'string' ? e : JSON.stringify(e));
+        const line = `${ts} ${ident}${pid} ${msg}`.trim();
+        setLogs(prev => {
+          const next = (prev ? `${prev}\n${line}` : line);
+          // keep last 1000 lines to avoid unbounded growth
+          const arr = next.split('\n');
+          const MAX = 1000;
+          return arr.length > MAX ? arr.slice(arr.length - MAX).join('\n') : next;
+        });
+      }catch{}
+    };
+    const onEnd = (payload: any) => {
+      if(!mounted) return;
+      if(payload?.unit === unit){ setStreamEnded(`Stream ended (exit ${payload?.code ?? '0'})`); }
+    };
+    // Subscribe to start stream and receive lines
+    const noop = () => {};
+    wsSubscribe(topicStream, noop);
+    wsSubscribe('logs.line', onLine);
+    wsSubscribe('logs.stream.end', onEnd);
+    return () => { mounted = false; wsUnsubscribe('logs.stream.end', onEnd); wsUnsubscribe('logs.line', onLine); wsUnsubscribe(topicStream, noop); };
+  }, [selected]);
+
   // Scroll to bottom (latest entry) whenever logs load or change
   useEffect(()=>{
     if(!logsRef.current) return;
@@ -158,8 +212,8 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
       if(kind==='start') await startService(unit);
       else if(kind==='stop') await stopService(unit);
       else await restartService(unit);
-      // refresh list to reflect new status
-      await load();
+      // If WS is disconnected, refresh list to reflect new status; otherwise WS will update us soon
+      if(!wsIsConnected()) await load();
       // update selected to the refreshed service entry if still open
       const updated = services.find(s=>s.unit===unit);
       if(updated) setSelected(updated);
@@ -181,7 +235,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
       <Card.Body>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h5 className="mb-0">Services</h5>
-          <Button size="sm" variant="outline-secondary" onClick={load} disabled={loading}>Refresh</Button>
+          <Button size="sm" variant="outline-secondary" onClick={load} disabled={loading || wsIsConnected()}>Refresh</Button>
         </div>
         <div style={{ marginTop: 12 }}>
           {loading ? (
@@ -243,7 +297,15 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                         <div style={{ color:'#666', fontSize: 12, marginBottom: 8 }}>Admin permissions required to run actions</div>
                       )}
                       {actionError && <div style={{ color:'#c00', marginBottom: 8 }}>{actionError}</div>}
-                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Recent logs</div>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, fontWeight: 600, marginBottom: 8 }}>
+                        <span>Recent logs</span>
+                        {wsIsConnected() && (
+                          <Badge bg="success">Live</Badge>
+                        )}
+                      </div>
+                      {streamEnded && (
+                        <div style={{ color:'#999', fontSize: 12, marginBottom: 4 }}>{streamEnded}</div>
+                      )}
                       <div
                         style={{
                           background: '#0b0b10',

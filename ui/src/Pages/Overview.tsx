@@ -18,18 +18,25 @@ import HealthWidget from '../components/HealthWidget';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
 import SystemMetricsWidget from '../components/SystemMetricsWidget';
 import { getDevices } from '../api/fleethub';
+import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
 
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
 
-  useEffect(()=>{ (async()=>{ 
-    try{ 
-      const d = await getDevices(); 
-      const list = Array.isArray(d?.devices) ? d.devices : (Array.isArray(d) ? d : []);
-      setDevices(list);
-    }catch{ setDevices([]); }
-  })(); },[]);
+  useEffect(()=>{ 
+    let mounted = true;
+    const onDevices = (data: any) => {
+      if(!mounted) return;
+      try{
+        const list = Array.isArray(data?.devices) ? data.devices : [];
+        setDevices(list);
+      }catch{}
+    };
+    wsSubscribe('devices.list', onDevices);
+    (async()=>{ if(!wsIsConnected()){ try{ const d = await getDevices(); const list = Array.isArray(d?.devices) ? d.devices : (Array.isArray(d) ? d : []); if(mounted) setDevices(list); }catch{ if(mounted) setDevices([]); } } })();
+    return ()=>{ mounted = false; wsUnsubscribe('devices.list', onDevices); };
+  },[]);
 
   return (
     <div>

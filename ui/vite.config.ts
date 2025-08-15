@@ -9,4 +9,13 @@ export default defineConfig({
     sourcemap: false,
     emptyOutDir: true
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
+  },
 });

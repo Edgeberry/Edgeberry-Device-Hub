@@ -7,6 +7,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Card, Col, Modal, Row, Spinner } from 'react-bootstrap';
 import { getMetrics, getMetricsHistory } from '../api/fleethub';
+import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
 type Metrics = {
   cpu?: { load1: number; load5: number; load15: number; cores: number; approxUsagePercent: number };
@@ -38,6 +39,7 @@ export default function SystemMetricsWidget(){
   const [metrics, setMetrics] = useState<Metrics>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [history, setHistory] = useState<{ hours: number; samples: Metrics[] }>({ hours: 24, samples: [] });
+  const [wsOn, setWsOn] = useState<boolean>(false);
 
   async function load(){
     try{
@@ -52,19 +54,61 @@ export default function SystemMetricsWidget(){
     }
   }
 
-  useEffect(()=>{ load(); const id = setInterval(load, 10000); return ()=>clearInterval(id); },[]);
+  useEffect(()=>{
+    // Polling fallback; pause when websocket is connected
+    load();
+    const id = setInterval(()=>{ if(!wsOn) load(); }, 10000);
+    return ()=>clearInterval(id);
+  },[wsOn]);
   // Load history once and then refresh every minute
   useEffect(()=>{
-    let stop = false;
-    async function loadHist(){
+    // Prefer websocket. If WS connects, subscribe and stop polling history.
+    let mounted = true;
+    const onHist = (data: any) => {
+      if(!mounted) return;
+      const hours = data?.hours || 24;
+      const samples = Array.isArray(data?.samples) ? data.samples : [];
+      if(samples.length) setHistory({ hours, samples });
+      setWsOn(true);
+    };
+    const onSnap = (data: any) => {
+      if(!mounted) return;
+      setMetrics(data || {});
+      // append to history if newer
+      setHistory(prev => {
+        const lastTs = prev.samples.length ? (prev.samples[prev.samples.length-1].timestamp||0) : 0;
+        if(!data?.timestamp || data.timestamp <= lastTs) return prev;
+        const samples = [...prev.samples, data];
+        return { hours: prev.hours, samples };
+      });
+      setWsOn(true);
+    };
+    // Subscribe
+    wsSubscribe('metrics.history', onHist);
+    wsSubscribe('metrics.snapshots', onSnap);
+    // Fallback: if WS not connected after short delay, load history via HTTP and keep minute polling
+    let pollId: any;
+    const ensureHistoryPoll = async ()=>{
+      if(wsIsConnected()) return;
       try{
         const h = await getMetricsHistory(24);
-        if(!stop) setHistory({ hours: h.hours || 24, samples: Array.isArray(h.samples)? h.samples : [] });
+        if(mounted) setHistory({ hours: h.hours || 24, samples: Array.isArray(h.samples)? h.samples : [] });
       }catch{}
-    }
-    loadHist();
-    const id = setInterval(loadHist, 60_000);
-    return ()=>{ stop = true; clearInterval(id); };
+      pollId = setInterval(async ()=>{
+        if(wsIsConnected()) { clearInterval(pollId); return; }
+        try{
+          const h = await getMetricsHistory(24);
+          if(mounted) setHistory({ hours: h.hours || 24, samples: Array.isArray(h.samples)? h.samples : [] });
+        }catch{}
+      }, 60_000);
+    };
+    ensureHistoryPoll();
+    return ()=>{
+      mounted = false;
+      wsUnsubscribe('metrics.history', onHist);
+      wsUnsubscribe('metrics.snapshots', onSnap);
+      if(pollId) clearInterval(pollId);
+    };
   },[]);
 
   function Sparkline({ values, color = '#0007FF' }: { values: number[]; color?: string }){

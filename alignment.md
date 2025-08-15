@@ -30,7 +30,7 @@ Whitelist & lifecycle (MVP additions):
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Fleet Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
  
- Last updated: 2025-08-14 (night)
+ Last updated: 2025-08-15 (morning)
  
  ## Alignment Maintenance
  - This document is the single source of truth for project vision and high-level specs.
@@ -108,8 +108,8 @@ Public Surface Area (single HTTP(S) server):
 - Only `core-service` binds public HTTP(S).
 - UI entrypoint: `/` serves the dashboard SPA from the `core-service` (static file server in production).
 - HTTP API prefix: `/api` (versioning via headers or path TBD) — served directly by `core-service`.
- - Observability endpoints are provided by `core-service`, including logs snapshot and SSE stream (`/api/logs`, `/api/logs/stream`).
-  - No dedicated WebSocket server at present; live logs use SSE via `core-service`.
+  - Observability endpoints are provided by `core-service`, including logs snapshot (`/api/logs`). Live streams are delivered over WebSocket at `/api/ws`.
+  - WebSocket server at `/api/ws` (same origin). Authenticates via the `fh_session` JWT cookie on upgrade. Supports topic-based subscribe/unsubscribe and server push updates.
 
 Execution model & IPC:
 
@@ -210,21 +210,33 @@ CI and releases:
 - Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `fleethub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
 
-### MVP Scope (Current)
+### WebSocket Topics (Current)
 
-The current MVP focuses on a lean, self-hostable `microservice`-based IoT device management application that validates the system boundaries and data flows:
+Message envelope: JSON objects `{ type: string, data: any }`.
 
-- Device registry stored in SQLite.
-- MQTT ingestion from `devices/#`, with development-only message previews for troubleshooting.
-- Event logging to `device_events` for operational visibility.
-- Minimal HTTP API:
-  - `/health`, `/version`, `/config/public`, `/status`
-  - `/devices`, `/devices/:id`, `/devices/:id/events`
-- Native development environment (no Docker) to maximize speed.
+Auth: WebSocket upgrade validates the `fh_session` JWT cookie (SameSite=Lax; Secure over HTTPS). On reconnect, the client auto-resubscribes.
 
-Notes on privacy/transparency for MVP: Logged event payloads may include raw device data; Observer-level anonymization is enforced at the UI/API response layer and will be expanded as roles are implemented.
+Subscribe protocol: client sends `{ type: "subscribe", topics: string[] }` (or `{ type: "unsubscribe", topics: string[] }`).
 
-## UI Functionality (MVP)
+Topics implemented:
+
+- `metrics.history`
+  - On subscribe: server sends `{ type: "metrics.history", data: { hours, samples } }` (default 24h window).
+  - Incremental updates may arrive as `{ type: "metrics.history.append", data: { sample } }` (UI normalizes to `metrics.history`).
+
+- `services.status`
+  - Snapshot of systemd managed units: `{ services: [{ unit, status }] }`.
+  - Broadcast every 5s only when payload changes; also sent immediately on subscribe.
+
+- `devices.list`
+  - Device registry list with computed presence: `{ devices: [{ id, name, last_seen, online, ... }] }`.
+  - Broadcast every 10s only when payload changes; also sent immediately on subscribe.
+
+- `logs.stream:<unit>`
+  - Control topic. Subscribing starts a `journalctl -f` stream for `<unit>` (validated). Unsubscribing stops it. Initial HTTP logs snapshot remains available at `GET /api/logs`.
+  - Lines are pushed as `{ type: "logs.line", data: { unit, entry } }` where `entry` is a journal JSON object. When the stream closes, server sends `{ type: "logs.stream.end", data: { unit, code } }`.
+
+### UI Functionality (MVP)
 
 The Web UI is a single-page app served by `core-service` and uses React + TypeScript.
 
@@ -260,9 +272,9 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - Devices (optional placeholder in MVP):
   - `GET /api/devices` — may return `[]` or `{ devices: [] }`; UI tolerates other shapes by falling back to an empty list
  - Service controls (best-effort; may require host privileges):
-   - `POST /api/services/:unit/start`
-   - `POST /api/services/:unit/stop`
-   - `POST /api/services/:unit/restart`
+    - `POST /api/services/:unit/start`
+    - `POST /api/services/:unit/stop`
+    - `POST /api/services/:unit/restart`
 
 ### Error Handling & Resilience
 
@@ -275,7 +287,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `core-service` serves static assets from `ui/build` and exposes `/api/*` endpoints on the same origin.
 - Caching controls: ETag disabled and strict no-cache headers applied for `/api/*` to avoid stale auth state (304) issues in the SPA.
 - Dev: `npm run dev` at repo root runs core-service and serves the UI build; set `DEV_MOSQUITTO=1` to include the broker.
- - `core-service` also exposes logs SSE at `/api/logs/stream` for live tailing.
+ - `core-service` exposes a WebSocket endpoint at `/api/ws` for live updates (metrics, services, devices, logs).
 
 ### Device Registry & Provisioning (MVP)
 

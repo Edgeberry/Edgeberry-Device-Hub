@@ -9,6 +9,8 @@
  * - Convenience downloads: Root CA PEM and provisioning bundle tar.gz.
  */
 import express, { type Request, type Response, type NextFunction } from 'express';
+import http from 'http';
+import { WebSocketServer } from 'ws';
 import path from 'path';
 import morgan from 'morgan';
 import cors from 'cors';
@@ -202,24 +204,8 @@ function getLastSeenMap(): Record<string,string> {
 
 // GET /api/devices -> list known devices from provisioning DB
 app.get('/api/devices', (_req: Request, res: Response) => {
-  const db = openDb(PROVISIONING_DB);
-  if(!db){ res.json({ devices: [] }); return; }
-  try{
-    const rows = db.prepare('SELECT id, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
-    const lastSeen = getLastSeenMap();
-    const now = Date.now();
-    const devices = rows.map((r: any) => {
-      const ls = lastSeen[r.id];
-      const last_seen = ls || null;
-      const online = ls ? (now - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
-      return { id: r.id, name: r.name, token: r.token, meta: tryParseJson(r.meta), created_at: r.created_at, last_seen, online };
-    });
-    res.json({ devices });
-  }catch{
-    res.json({ devices: [] });
-  }finally{
-    try{ db.close(); }catch{}
-  }
+  const list = getDevicesListSync();
+  res.json(list);
 });
 
 // GET /api/devices/:id -> single device
@@ -266,7 +252,53 @@ function bufferToMaybeJson(b: any){
   try{
     const s = Buffer.isBuffer(b) ? b.toString('utf8') : (typeof b === 'string' ? b : String(b));
     try{ return JSON.parse(s); }catch{ return s; }
-  }catch{ return null; }
+  }catch{ return b; }
+}
+
+// ===== Helpers reused by REST and WS =====
+async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; status: string }> }> {
+  const units = DEFAULT_LOG_UNITS;
+  const checks = await Promise.all(units.map(async (u) => {
+    try {
+      const result = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+        const p = spawn('systemctl', ['is-active', u], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const out: string[] = [];
+        const err: string[] = [];
+        p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
+        p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
+        p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim(), err: err.join('') }));
+      });
+      return { unit: u, status: result.out || 'unknown' };
+    } catch (e) {
+      return { unit: u, status: 'error' };
+    }
+  }));
+  return { services: checks };
+}
+
+function getDevicesListSync(): { devices: Array<{ id: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }{
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ return { devices: [] }; }
+  try{
+    const rows = db.prepare('SELECT id, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
+    const lastSeen = getLastSeenMap();
+    const now = Date.now();
+    const devices = rows.map((r: any) => {
+      const ls = lastSeen[r.id];
+      const last_seen = ls || null;
+      const online = ls ? (now - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
+      return { id: r.id, name: r.name, token: r.token, meta: tryParseJson(r.meta), created_at: r.created_at, last_seen, online };
+    });
+    return { devices };
+  }catch{
+    return { devices: [] };
+  }finally{
+    try{ db.close(); }catch{}
+  }
+}
+
+async function getDevicesList(): Promise<{ devices: Array<{ id: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }> {
+  return getDevicesListSync();
 }
 
 // ===== Admin: UUID Whitelist Management =====
@@ -437,23 +469,8 @@ app.delete('/api/settings/certs/provisioning/:name', async (req: Request, res: R
 // ===== Services & Logs =====
 // GET /api/services -> systemd unit status snapshot consumed by ServiceStatusWidget
 app.get('/api/services', async (_req: Request, res: Response) => {
-  const units = DEFAULT_LOG_UNITS;
-  const checks = await Promise.all(units.map(async (u) => {
-    try {
-      const result = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
-        const p = spawn('systemctl', ['is-active', u], { stdio: ['ignore', 'pipe', 'pipe'] });
-        const out: string[] = [];
-        const err: string[] = [];
-        p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
-        p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
-        p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim(), err: err.join('') }));
-      });
-      return { unit: u, status: result.out || 'unknown' };
-    } catch (e) {
-      return { unit: u, status: 'error' };
-    }
-  }));
-  res.json({ services: checks });
+  const data = await getServicesSnapshot();
+  res.json(data);
 });
 
 // GET /api/metrics -> system metrics snapshot
@@ -550,9 +567,7 @@ async function sampleMetrics(){
     while(METRICS_HISTORY.length && METRICS_HISTORY[0].timestamp < cutoff){ METRICS_HISTORY.shift(); }
   }catch{}
 }
-// kick off sampler
-setInterval(sampleMetrics, METRICS_INTERVAL_MS);
-// seed first sample soon after start
+// seed first sample soon after start; recurring interval is managed by WS wrapper below
 setTimeout(sampleMetrics, 1000);
 
 app.get('/api/metrics', async (_req: Request, res: Response) => {
@@ -852,7 +867,159 @@ if (UI_READY) {
   });
 }
 
-app.listen(PORT, () => {
+// --- WebSocket setup ---
+type ClientCtx = { ws: any; topics: Set<string>; logs?: Map<string, any> };
+const clients = new Set<ClientCtx>();
+
+function send(ws: any, msg: any){
+  try{ ws.send(JSON.stringify(msg)); }catch{}
+}
+
+// Create HTTP server and attach both Express and WS
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/api/ws' });
+
+wss.on('connection', (ws: any, req: any) => {
+  // Auth via cookie
+  try{
+    const cookies = parseCookies(req.headers?.cookie || '');
+    const token = cookies[SESSION_COOKIE];
+    if(!token){ ws.close(1008, 'unauthorized'); return; }
+    try{ jwt.verify(token, JWT_SECRET); }catch{ ws.close(1008, 'unauthorized'); return; }
+  }catch{ ws.close(1011, 'error'); return; }
+
+  const ctx: ClientCtx = { ws, topics: new Set(), logs: new Map() };
+  clients.add(ctx);
+
+  ws.on('message', (data: any) => {
+    try{
+      const msg = JSON.parse(String(data || ''));
+      if(msg?.type === 'subscribe' && Array.isArray(msg.topics)){
+        for(const raw of msg.topics){ 
+          const t = String(raw);
+          if(typeof t !== 'string') continue;
+          ctx.topics.add(t);
+          // Handle logs.stream:<unit>
+          if(t.startsWith('logs.stream:')){
+            const unit = t.slice('logs.stream:'.length);
+            if(isSafeUnit(unit)) startLogStream(ctx, unit, t);
+          }
+        }
+        // Special case: metrics.history -> send current history snapshot immediately (default 24h)
+        if (ctx.topics.has('metrics.history')){
+          const hours = 24;
+          const cutoff = Date.now() - hours * 3600 * 1000;
+          const samples = METRICS_HISTORY.filter(s => s.timestamp >= cutoff);
+          send(ws, { type: 'metrics.history', data: { hours, samples } });
+        }
+        // Send immediate snapshots for services and devices when subscribed
+        if (ctx.topics.has('services.status')){
+          getServicesSnapshot().then(svcs => send(ws, { type: 'services.status', data: svcs })).catch(()=>{});
+        }
+        if (ctx.topics.has('devices.list')){
+          getDevicesList().then(list => send(ws, { type: 'devices.list', data: list })).catch(()=>{});
+        }
+      }else if(msg?.type === 'unsubscribe' && Array.isArray(msg.topics)){
+        for(const raw of msg.topics){ 
+          const t = String(raw);
+          ctx.topics.delete(t);
+          if(t.startsWith('logs.stream:')){ stopLogStream(ctx, t); }
+        }
+      }
+    }catch{}
+  });
+  ws.on('close', () => { try{ for(const key of ctx.logs?.keys()||[]) stopLogStream(ctx, key); }catch{} clients.delete(ctx); });
+});
+
+function broadcast(topic: string, payload: any){
+  for(const c of clients){ if(c.ws.readyState === c.ws.OPEN && c.topics.has(topic)) send(c.ws, payload); }
+}
+
+function isSafeUnit(unit: string){
+  // allow typical systemd unit charset to prevent shell injection
+  return /^[A-Za-z0-9@_.\-]+\.service$/.test(unit) || /^[A-Za-z0-9@_.\-]+$/.test(unit);
+}
+
+function startLogStream(ctx: ClientCtx, unit: string, topicKey: string){
+  try{
+    if(!ctx.logs) ctx.logs = new Map();
+    if(ctx.logs.has(topicKey)) return; // already streaming
+    if((ctx.logs.size||0) >= 3) return; // simple per-conn cap
+    const args = buildJournalctlArgs({ units: [unit], lines: 200, follow: true, output: 'json' });
+    const proc = spawn('journalctl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const onData = (buf: Buffer) => {
+      const str = buf.toString('utf8');
+      const lines = str.split(/\r?\n/).filter(Boolean);
+      for(const ln of lines){
+        try{
+          const entry = JSON.parse(ln);
+          send(ctx.ws, { type: 'logs.line', data: { unit, entry } });
+        }catch{
+          send(ctx.ws, { type: 'logs.line', data: { unit, entry: { MESSAGE: ln } } });
+        }
+      }
+    };
+    proc.stdout?.on('data', onData);
+    proc.stderr?.on('data', ()=>{});
+    proc.on('close', (code: number|null) => { 
+      try{ 
+        ctx.logs?.delete(topicKey);
+        send(ctx.ws, { type: 'logs.stream.end', data: { unit, code } });
+      }catch{}
+    });
+    ctx.logs.set(topicKey, proc);
+  }catch{}
+}
+
+function stopLogStream(ctx: ClientCtx, topicKey: string){
+  try{
+    const p = ctx.logs?.get(topicKey);
+    if(p){ try{ p.kill('SIGTERM'); }catch{} ctx.logs?.delete(topicKey); }
+  }catch{}
+}
+
+// Hook to metrics sampler to push updates
+const _origSample = sampleMetrics;
+// Wrap existing sampler to also broadcast
+async function sampleAndBroadcast(){
+  await _origSample();
+  const latest = METRICS_HISTORY[METRICS_HISTORY.length - 1];
+  if(latest){
+    broadcast('metrics.snapshots', { type: 'metrics.snapshots', data: latest });
+    broadcast('metrics.history', { type: 'metrics.history.append', data: latest });
+  }
+}
+// Replace interval to use our wrapper
+// Clear existing interval if any (cannot access id safely); start another interval alongside, harmless since sampleMetrics itself is idempotent per tick.
+setInterval(sampleAndBroadcast, METRICS_INTERVAL_MS);
+
+// Periodic services.status broadcast (on change)
+let _lastServicesJson = '';
+setInterval(async () => {
+  try{
+    const data = await getServicesSnapshot();
+    const js = JSON.stringify(data);
+    if(js !== _lastServicesJson){
+      _lastServicesJson = js;
+      broadcast('services.status', { type: 'services.status', data });
+    }
+  }catch{}
+}, 5000);
+
+// Periodic devices.list broadcast (on change)
+let _lastDevicesJson = '';
+setInterval(() => {
+  try{
+    const data = getDevicesListSync();
+    const js = JSON.stringify(data);
+    if(js !== _lastDevicesJson){
+      _lastDevicesJson = js;
+      broadcast('devices.list', { type: 'devices.list', data });
+    }
+  }catch{}
+}, 10000);
+
+server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`[core-service] listening on :${PORT}, UI_DIST=${UI_DIST}`);
 });
