@@ -12,6 +12,7 @@
  *  - Registration is not supported in the MVP.
  */
 import React, { useState } from 'react';
+import logo from '../EdgeBerry_Logo_text.svg';
 import { useNavigate } from 'react-router-dom';
 
 export default function Login(props:{user:any,onLogin:()=>Promise<void>}){
@@ -43,7 +44,9 @@ export default function Login(props:{user:any,onLogin:()=>Promise<void>}){
   return (
     <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'60vh' }}>
       <form onSubmit={submit} style={{ minWidth: 320, maxWidth: 360, width:'100%', border:'1px solid #e5e7eb', borderRadius:12, padding:20, background:'#fff' }}>
-        <h2 style={{ fontSize:18, marginTop:0 }}>Admin Login</h2>
+        <div style={{display:'flex', justifyContent:'center', marginBottom:10}}>
+          <img src={logo} alt="Edgeberry" style={{height:36}}/>
+        </div>
         <label style={{ display:'block', fontSize:12, color:'#555' }}>Username</label>
         <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="admin" style={{width:'100%', padding:'10px 12px', border:'1px solid #d1d5db', borderRadius:8}}/>
         <label style={{ display:'block', fontSize:12, color:'#555', marginTop:8 }}>Password</label>

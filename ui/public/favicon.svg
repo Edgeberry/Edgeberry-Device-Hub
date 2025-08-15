@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Edgeberry favicon (icon only) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <g fill="#0007ff">
+    <rect x="16" y="80" width="64" height="160"/>
+    <rect x="96" y="272" width="64" height="160"/>
+    <rect x="176" y="128" width="64" height="352"/>
+    <rect x="256" y="320" width="64" height="160"/>
+    <rect x="336" y="352" width="64" height="160"/>
+    <rect x="416" y="336" width="64" height="160"/>
+  </g>
+</svg>

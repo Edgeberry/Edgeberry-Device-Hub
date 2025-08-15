@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="2600" height="500" version="1.1" viewBox="0 0 687.91 132.29" xmlns="http://www.w3.org/2000/svg">
+ <text x="411.6904" y="98.270645" fill="#0007ff" font-family="Lato" font-size="88.194px" font-weight="900" text-anchor="middle">EDGEBERRY</text>
+ <g transform="translate(404.42 133.59)" fill="#0007ff" stroke-linecap="round">
+  <rect transform="scale(1,-1)" x="-395.23" y="37.622" width="19.338" height="46.894" />
+  <rect x="-373.32" y="-91.921" width="19.338" height="46.894" />
+  <rect x="-351.3" y="-126.6" width="19.338" height="103.3" />
+  <rect x="-329.19" y="-63.662" width="19.338" height="46.894" />
+  <rect x="-307.43" y="-54.215" width="19.338" height="46.894" />
+  <rect x="-285.64" y="-60.124" width="19.338" height="46.894" />
+ </g>
+</svg>

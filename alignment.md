@@ -159,6 +159,22 @@ Local development:
 - D-Bus: prefer the user session bus during development (fallback to a private bus if needed); systemd user units can be used to emulate production `systemd` services locally.
  - Dev orchestrator: `scripts/dev_start.sh` starts Mosquitto and all services concurrently with hot-reload (prefers `npm run dev`/`tsx watch`). All process logs are multiplexed in a single terminal with per-service prefixes. Services run with `NODE_ENV=development`.
 
+### Branding
+
+- **Sources**: Official assets live under the repo root `brand/`.
+- **Navbar**: `ui/src/components/Navigationbar.tsx` imports `ui/src/EdgeBerry_Logo_text.svg` and renders it inside `Navbar.Brand` (32px height).
+- **Login**: `ui/src/Pages/Login.tsx` renders the Edgeberry text logo centered above the form.
+- **404**: `ui/src/Pages/NotFound.tsx` shows the logo with a centered "Page not found" message.
+- **Favicon**: `ui/public/favicon.svg` referenced from `ui/index.html` via `/favicon.svg`.
+- **TypeScript**: `ui/src/assets.d.ts` declares `*.svg` modules for asset imports.
+- **Alternative mark**: You may switch to `brand/Edgeberry_icon.svg` (square icon) for tight spaces; swap the import path where needed.
+
+Accessibility:
+- All images include `alt` text ("Edgeberry"). Maintain sufficient color contrast when changing backgrounds.
+
+Change policy:
+- Changes to logo usage or asset filenames should be reflected here and in `brand/`.
+
 ### D-Bus Interfaces (MVP)
 
 Bus: system bus in production.

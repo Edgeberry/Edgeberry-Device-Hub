@@ -38,3 +38,19 @@
 .progress-bar.bg-success {
   background-color: var(--bs-success) !important;
 }
+
+/* Global background (tile) */
+body {
+  margin: 0;
+  /* In Vite, assets in /public are served from root */
+  background-image: url('/cardboard.png');
+}
+
+/* App container Laika background */
+.App {
+  min-height: 100vh;
+  background-image: url('/Laika_Guevara.png');
+  background-size: 15vw;
+  background-repeat: no-repeat;
+  background-position: bottom right;
+}

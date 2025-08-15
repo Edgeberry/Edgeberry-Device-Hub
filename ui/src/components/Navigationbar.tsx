@@ -5,6 +5,7 @@
  * admin-only links (Settings, Logout) when a `user` is present.
  */
 import { Button, Container, ListGroup, Nav, Navbar, Offcanvas } from "react-bootstrap";
+import logo from '../EdgeBerry_Logo_text.svg';
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faBars, faCogs, faGear, faGauge, faSignOutAlt } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
@@ -16,7 +17,9 @@ const NavigationBar = (props:{user:any|null})=>{
         <>
             <Navbar sticky="top" bg={'dark'} data-bs-theme={'dark'}>
                 <Container className="container-fluid" style={{paddingRight:'10px', paddingLeft:'10px'}}>
-                    <Navbar.Brand as={Link} to='/'>Edgeberry Fleet Hub</Navbar.Brand>
+                    <Navbar.Brand as={Link} to='/'>
+                        <img src={logo} alt="Edgeberry Fleet Hub" height={'32px'}/>
+                    </Navbar.Brand>
                     <Nav className="d-flex align-items-center" style={{gap:'12px'}}>
                         {props.user ? (
                             <span style={{ color:'#cfe3ff', fontSize:'0.9rem' }}>
