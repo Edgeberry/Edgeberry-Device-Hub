@@ -6,7 +6,7 @@
  */
 import { Button, Container, ListGroup, Nav, Navbar, Offcanvas } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faBars, faCogs, faGear, faMicrochip, faSignOutAlt } from "@fortawesome/free-solid-svg-icons";
+import { faBars, faCogs, faGear, faGauge, faSignOutAlt } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -34,7 +34,7 @@ const NavigationBar = (props:{user:any|null})=>{
                 <Offcanvas.Body style={{padding:'0px'}}>
                     <ListGroup>
                         <ListGroup.Item as={Link} to='/' onClick={()=>{setShow(false)}}>
-                            <FontAwesomeIcon icon={faMicrochip} /> Overview
+                            <FontAwesomeIcon icon={faGauge} /> Overview
                         </ListGroup.Item>
                         <ListGroup.Item as={Link} to='/health' onClick={()=>{setShow(false)}}>
                             <FontAwesomeIcon icon={faGear} /> Health

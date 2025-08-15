@@ -1,0 +1,40 @@
+:root {
+  /* Edgeberry Blue for success */
+  --bs-success: #0007FF;
+  --bs-success-rgb: 0, 7, 255;
+
+  /* Optional: refine shades for hover/active states */
+  --bs-success-bg-subtle: rgba(0, 7, 255, 0.12);
+  --bs-success-border-subtle: rgba(0, 7, 255, 0.35);
+}
+
+/* Ensure buttons and badges reflect the new success color */
+.btn-success {
+  --bs-btn-bg: var(--bs-success);
+  --bs-btn-border-color: var(--bs-success);
+  --bs-btn-hover-bg: #0006e6;
+  --bs-btn-hover-border-color: #0006e6;
+  --bs-btn-active-bg: #0005cc;
+  --bs-btn-active-border-color: #0005cc;
+  --bs-btn-disabled-bg: var(--bs-success);
+  --bs-btn-disabled-border-color: var(--bs-success);
+}
+
+.badge.bg-success {
+  background-color: var(--bs-success) !important;
+}
+
+.text-bg-success {
+  background-color: var(--bs-success) !important;
+}
+
+/* Progress, alerts, etc. using success color */
+.alert-success {
+  --bs-alert-bg: var(--bs-success-bg-subtle);
+  --bs-alert-border-color: var(--bs-success-border-subtle);
+  --bs-alert-color: rgb(0, 40, 180);
+}
+
+.progress-bar.bg-success {
+  background-color: var(--bs-success) !important;
+}

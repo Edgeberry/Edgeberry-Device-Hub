@@ -5,7 +5,7 @@
  * viewing recent logs and performing admin actions (start/stop/restart).
  * Action buttons are enabled only for authenticated admin (single-user MVP).
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Card, Badge, Spinner, Button, Row, Col, Modal } from 'react-bootstrap';
 import { getServices, getServiceLogs, startService, stopService, restartService } from '../api/fleethub';
 
@@ -22,6 +22,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string>('');
+  const logsRef = useRef<HTMLDivElement|null>(null);
 
   async function load() {
     try {
@@ -43,17 +44,84 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
 
   // Load logs whenever a selection opens the modal
   useEffect(()=>{
-    if(!selected) { setLogs(''); setActionError(''); return; }
+    if(!selected) return;
     (async ()=>{
       try{
         setLogsLoading(true);
         const res: any = await getServiceLogs(selected.unit, 200);
-        // Accept either { logs: string } or raw string/array
+
+        function fmtEntry(e: any): string {
+          try{
+            const ts = e.SYSLOG_TIMESTAMP || e.__REALTIME_TIMESTAMP || e._SOURCE_REALTIME_TIMESTAMP || '';
+            const ident = e.SYSLOG_IDENTIFIER || e._COMM || e._SYSTEMD_UNIT || '';
+            const pid = e._PID ? `[${e._PID}]` : '';
+            const msg = e.MESSAGE ?? JSON.stringify(e);
+            return `${ts} ${ident}${pid} ${msg}`.trim();
+          }catch{
+            return typeof e === 'string' ? e : JSON.stringify(e);
+          }
+        }
+
+        function findEntries(obj: any): any[] | null {
+          if(!obj || typeof obj !== 'object') return null;
+          if(Array.isArray(obj.entries)) return obj.entries as any[];
+          // common alternatives
+          if(Array.isArray(obj.logs)) return obj.logs as any[];
+          if(Array.isArray(obj.lines)) return obj.lines as any[];
+          // search shallow keys first
+          for(const k of Object.keys(obj)){
+            const v = (obj as any)[k];
+            if(v && typeof v === 'object'){
+              if(Array.isArray((v as any).entries)) return (v as any).entries as any[];
+              if(Array.isArray((v as any).logs)) return (v as any).logs as any[];
+              if(Array.isArray((v as any).lines)) return (v as any).lines as any[];
+            }
+          }
+          // deep search (limited)
+          for(const k of Object.keys(obj)){
+            const v = (obj as any)[k];
+            if(v && typeof v === 'object'){
+              const found = findEntries(v);
+              if(found) return found;
+            }
+          }
+          return null;
+        }
+
+        // Normalize to oldest -> newest string lines
         let txt = '';
-        if(typeof res === 'string') txt = res;
-        else if(Array.isArray(res)) txt = res.join('\n');
-        else if(res && typeof res.logs === 'string') txt = res.logs;
-        else txt = JSON.stringify(res);
+        if(typeof res === 'string'){
+          // Try to parse stringified JSON containing entries
+          try{
+            const parsed = JSON.parse(res);
+            if(parsed && Array.isArray(parsed.entries)){
+              const arr = [...parsed.entries].reverse();
+              txt = arr.map(fmtEntry).join('\n');
+            } else {
+              txt = res;
+            }
+          }catch{
+            txt = res;
+          }
+        } else if(Array.isArray(res)){
+          const arr = [...res];
+          const mapped = arr.map(x => (typeof x === 'object' && x) ? fmtEntry(x) : String(x));
+          mapped.reverse();
+          txt = mapped.join('\n');
+        } else if(res && typeof res.logs === 'string'){
+          txt = res.logs;
+        } else if(res && Array.isArray(res.entries)){
+          const arr = [...res.entries].reverse();
+          txt = arr.map(fmtEntry).join('\n');
+        } else {
+          const entries = findEntries(res);
+          if(entries) {
+            const arr = [...entries].reverse();
+            txt = arr.map(fmtEntry).join('\n');
+          } else {
+            txt = JSON.stringify(res);
+          }
+        }
         setLogs(txt);
       }catch(e:any){
         setLogs(`Logs unavailable: ${e?.message || 'unknown error'}`);
@@ -62,6 +130,18 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
       }
     })();
   }, [selected]);
+
+  // Scroll to bottom (latest entry) whenever logs load or change
+  useEffect(()=>{
+    if(!logsRef.current) return;
+    try{
+      // microtask to ensure layout calculated
+      requestAnimationFrame(()=>{
+        const el = logsRef.current!;
+        el.scrollTop = el.scrollHeight;
+      });
+    }catch{}
+  }, [logs, logsLoading, selected]);
 
   function statusVariant(s: string){
     return s === 'active' ? 'success' : (s === 'inactive' ? 'secondary' : 'warning');
@@ -143,7 +223,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                   })}
                 </Row>
               )}
-              <Modal show={!!selected} onHide={() => setSelected(null)} centered>
+              <Modal show={!!selected} onHide={() => setSelected(null)} centered size="xl" scrollable fullscreen="md-down">
                 <Modal.Header closeButton>
                   <Modal.Title>Service details</Modal.Title>
                 </Modal.Header>
@@ -163,13 +243,27 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                         <div style={{ color:'#666', fontSize: 12, marginBottom: 8 }}>Admin permissions required to run actions</div>
                       )}
                       {actionError && <div style={{ color:'#c00', marginBottom: 8 }}>{actionError}</div>}
-                      <div style={{ fontWeight: 600, marginBottom: 6 }}>Recent logs</div>
-                      <div style={{
-                        background:'#0f0f0f', color:'#d0d0d0', fontFamily:'monospace',
-                        borderRadius:6, padding:10, maxHeight:200, overflow:'auto'
-                      }}>
-                        {logsLoading ? <Spinner animation="border" size="sm" /> : (
-                          <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{logs}</pre>
+                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Recent logs</div>
+                      <div
+                        style={{
+                          background: '#0b0b10',
+                          color: '#e0e6f0',
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                          fontSize: 13,
+                          lineHeight: 1.4,
+                          borderRadius: 8,
+                          padding: 12,
+                          maxHeight: 360,
+                          overflow: 'auto',
+                          border: '1px solid rgba(255,255,255,0.08)'
+                        }}
+                        ref={logsRef}
+                        tabIndex={0}
+                      >
+                        {logsLoading ? (
+                          <Spinner animation="border" size="sm" />
+                        ) : (
+                          <pre style={{ margin: 0, whiteSpace: 'pre' }}>{logs}</pre>
                         )}
                       </div>
                     </div>

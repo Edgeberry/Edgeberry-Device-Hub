@@ -18,6 +18,14 @@ Root CA and provisioning certificates are managed under `/api/settings/certs/*` 
 UI behavior on `/settings`:
 - Root CA card shows presence, subject, validity, with actions: Generate (if absent), Download CA (if present).
 - Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
+
+Whitelist & lifecycle (MVP additions):
+- Settings page includes a Provisioning Whitelist section:
+  - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, device_id, name, note, created_at, used_at }`.
+  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated).
+  - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
+- Settings page includes a Device Lifecycle Status section:
+  - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
 # Alignment Document – Edgeberry Fleet Hub
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Fleet Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
@@ -350,21 +358,30 @@ Data model additions (on `devices`):
 Admin onboarding:
 
 1. Admin whitelists a device UUID and binds it to a device row:
-   - `POST /admin/uuid-whitelist` (role: admin)
-   - Body: `{ uuid, id?, name?, model?, firmwareVersion?, tags? }`
-   - The server hashes the UUID with a secret pepper and stores the hash; a device row is created if missing.
+   - `POST /api/admin/uuid-whitelist` (role: admin)
+   - Body (MVP): `{ device_id, name?, note?, uuid? }` → returns `{ uuid, device_id, name, note, created_at, used_at }`.
+   - Production plan: store only salted hashes of UUIDs. MVP stores plaintext UUIDs in `provisioning.db` for simplicity.
 
 Bootstrap (device installer) — MQTT-only:
 
-1. Device connects to the MQTT broker using the fleet provisioning client certificate (mTLS at the broker).
-2. Device publishes a provisioning request to `$fleethub/certificates/create-from-csr` or `$fleethub/certificates/create` with fields including `reqId`, `uuid`, and its system-wide `deviceId`.
-3. Server validates provisioning client (via broker) and checks that the secret UUID whitelist entry matches the provided `deviceId`. If valid, it issues a device certificate, persists metadata, and responds on the corresponding `/accepted` or `/rejected` topic.
-4. Device installs the returned cert/key, reconnects with its per-device client certificate, and uses runtime topics.
+Production model:
+1. Device connects to the broker using the fleet provisioning client certificate (mTLS at the broker).
+2. Device publishes a provisioning request to `$fleethub/certificates/create-from-csr` (CSR-based) including `reqId`, `uuid`, `deviceId`.
+3. Server validates the provisioning client and UUID whitelist (hash-based), issues a signed device certificate, and replies on `/accepted` or `/rejected`.
+4. Device installs the returned cert/key and reconnects using its per-device client certificate.
+
+MVP/dev model (implemented):
+1. Device connects to the broker and publishes to `$fleethub/devices/{deviceId}/provision/request` with JSON `{ name?, token?, meta?, uuid? }`.
+2. Provisioning service validates the whitelist when `ENFORCE_WHITELIST=true`:
+   - Looks up `uuid` in `uuid_whitelist` and requires `device_id` match and `used_at` null.
+   - On success, marks `used_at` and upserts the device row in `provisioning.db`.
+3. Service replies on `$fleethub/devices/{deviceId}/provision/accepted|rejected`.
 
 Security posture:
 
-- Two gates protect bootstrap: the provisioning client certificate and the secret UUID whitelist.
-- UUIDs are stored only as salted hashes. Never log raw UUIDs.
+- Two gates protect bootstrap (production): provisioning client certificate and secret UUID whitelist (stored as salted hashes).
+- MVP stores plaintext UUIDs in a local SQLite table for speed of iteration; never log raw UUIDs where avoidable.
+- `ENFORCE_WHITELIST` (provisioning-service env) controls whether whitelist is required during provisioning.
 - Production enforces mTLS at the broker. Devices never use HTTP(S) to communicate with the server.
 
 ### Provisioning Service (MVP, dev path) — Step-by-Step
