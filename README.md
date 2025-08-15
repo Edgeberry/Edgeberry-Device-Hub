@@ -1,4 +1,4 @@
-![Edgeberry Banner](https://raw.githubusercontent.com/Edgeberry/.github/main/brand/Edgeberry_banner_fleethub.png)
+![Edgeberry Banner](https://raw.githubusercontent.com/Edgeberry/.github/main/brand/Edgeberry_banner_device_hub.png)
 
 **A self-hostable device management service for Edgeberry devices.**
 
