@@ -1,10 +1,14 @@
 ![Edgeberry Banner](https://raw.githubusercontent.com/Edgeberry/.github/main/brand/Edgeberry_banner_device_hub.png)
 
+<img src="documentation/devicehub.png" align="right" width="50%"/>
+
 **A self-hostable device management service for Edgeberry devices.**
 
 **Edgeberry Device Hub** acts as the central coordination layer in the Edgeberry ecosystem. It provides a structured way to onboard, monitor, and interact with your fleet of Edgeberry devices - serving as the interface between physical devices and their digital presence.
 
 It’s designed to be lightweight, transparent, and fully under your control.
+
+<br clear="right"/>
 
 ## Getting Started
 [ToDo]
