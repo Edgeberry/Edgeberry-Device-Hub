@@ -4,9 +4,19 @@
 
 **A self-hostable device management service for Edgeberry devices.**
 
-**Edgeberry Device Hub** acts as the central coordination layer in the Edgeberry ecosystem. It provides a structured way to onboard, monitor, and interact with your fleet of Edgeberry devices - serving as the interface between physical devices and their digital presence.
+**Edgeberry Device Hub** is the single control plane for your Edgeberry fleet — a dashboard and API to onboard devices, manage their digital twins, and observe the system in real time.
 
-It’s designed to be lightweight, transparent, and fully under your control.
+Use it to:
+
+- **Self-host a single dashboard** to operate your fleet on your own infrastructure (no vendor lock‑in).
+- **Onboard devices securely** via MQTT + mTLS with a CSR-based bootstrap flow.
+- **Manage certificates** in the UI: generate Root CA, issue provisioning certs, inspect/delete, and download ready-to-use bundles.
+- **Maintain a device registry** with identity, status, tags, and last-seen presence.
+- **Control digital twins**: read/update desired and reported state, with automatic deltas published to devices.
+- **Monitor health and services**: view systemd unit status, version, and service logs (snapshot and live stream) from the dashboard.
+- **Use a clean HTTP API and WebSocket** for automation and integrations; the Web UI consumes the same public endpoints.
+- **Run lightweight and offline-friendly**: Node.js + SQLite, designed for small hosts; ships as `systemd` services.
+- **Extend easily** with modular microservices while keeping a single public surface (`/` UI and `/api/*`).
 
 <br clear="right"/>
 
