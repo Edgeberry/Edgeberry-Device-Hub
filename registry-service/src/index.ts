@@ -1,12 +1,29 @@
 /**
  * Registry Service (MVP)
  * ---------------------------------------------
- * Responsibilities:
- * - Ingest device runtime events from MQTT topics `devices/#`
- * - Persist raw events into SQLite for operational visibility
+ * Purpose
+ * - Collect and persist device runtime events for observability and auditing.
  *
- * Notes:
- * - Payloads are stored as raw BLOBs for simplicity in MVP.
+ * Responsibilities
+ * - Subscribe to `devices/#` MQTT topics and store raw payloads in SQLite (`registry.db`).
+ * - Provide data for UI/API endpoints (e.g., `/api/devices/:id/events`).
+ *
+ * Messaging Contracts
+ * - Ingests: `devices/#` (QoS 1). No outgoing topics from this service in MVP.
+ * - Payloads are stored verbatim (BLOB). Interpretation is deferred to readers.
+ *
+ * Environment & Dependencies
+ * - MQTT_URL, MQTT_USERNAME, MQTT_PASSWORD: broker connection; production expects mTLS and ACLs.
+ * - REGISTRY_DB: path to SQLite database file (default `registry.db`).
+ *
+ * Operational Notes
+ * - QoS 1 for subscribe to balance reliability and throughput.
+ * - WAL mode enabled in DB for concurrent writes/reads.
+ * - Shutdown cleans up MQTT and DB via `registerShutdown()`.
+ *
+ * Security Notes
+ * - Do not log payload contents if they may include sensitive data.
+ * - Broker ACLs should scope each device to its namespace.
  */
 import { SERVICE, DB_PATH } from './config.js';
 import { initDb } from './db.js';

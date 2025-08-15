@@ -1,12 +1,38 @@
 /**
- * Edgeberry Device Hub core-service
+ * Edgeberry Device Hub — core-service
+ * ---------------------------------------------
+ * Purpose
+ * - Public entrypoint. Serves the SPA and exposes all public HTTP(S) APIs and WebSocket.
  *
- * Responsibilities:
- * - Serve the SPA and expose JSON APIs under `/api/*`.
- * - Single-user admin auth using JWT stored in an HttpOnly cookie (`fh_session`).
- * - Global no-cache headers for `/api/*` to avoid stale auth/UI state.
- * - Certificate management: Root CA and provisioning certificates (inspect, create, delete, download).
- * - Convenience downloads: Root CA PEM and provisioning bundle tar.gz.
+ * Responsibilities
+ * - Serve SPA assets and implement `/api/*` endpoints (health, auth, settings/certs, services, devices, logs, metrics).
+ * - Single-user admin auth with JWT in HttpOnly cookie `fh_session`.
+ * - Apply strict no-cache headers on `/api/*` to avoid stale auth/UI state.
+ * - Manage Root CA/provisioning certs and offer downloads (PEM and provisioning bundle `.tgz`).
+ * - Provide WebSocket endpoint `/api/ws` for metrics/services/devices/logs streaming.
+ *
+ * Environment & Dependencies
+ * - PORT: HTTP port (dev default 8080; prod may be 80/443 behind TLS terminator).
+ * - ADMIN_USER, ADMIN_PASSWORD: single admin credentials (MUST set strong password in prod).
+ * - JWT_SECRET, JWT_TTL_SECONDS: JWT signing (HS256) and expiration (default 86400s).
+ * - CERTS_DIR: base dir for certs data; contains `root/ca.key|ca.crt` and `provisioning/*.crt|*.key`.
+ * - UI_DIST: path to built SPA directory served in production.
+ * - MQTT_URL: included in provisioning bundle config for device convenience.
+ * - PROVISIONING_DB, REGISTRY_DB: SQLite files for devices list and events snapshot.
+ * - ONLINE_THRESHOLD_SECONDS: window to consider device "online" from last seen event.
+ * - External tools: `tar` (for bundle creation), `systemctl` and `journalctl` for services/logs.
+ *
+ * Operational Notes
+ * - ETag disabled to prevent 304 on auth state; explicit no-store headers for `/api/*`.
+ * - SQLite opened read-only per request scope; WAL expected; errors degrade gracefully.
+ * - WS topic model: client subscribes to named topics; server pushes snapshots and increments.
+ * - Service control endpoints are best-effort and may require host privileges.
+ * - Shutdown handled by Node process signals; HTTP and WS share the same server instance.
+ *
+ * Security Notes
+ * - Never log secrets. Cookies are HttpOnly and SameSite=Lax; set `Secure` on HTTPS.
+ * - Root CA operations are local-only; ensure filesystem permissions on `CERTS_DIR`.
+ * - Logs streaming validates unit names; only whitelisted units are allowed.
  */
 import express, { type Request, type Response, type NextFunction } from 'express';
 import http from 'http';
