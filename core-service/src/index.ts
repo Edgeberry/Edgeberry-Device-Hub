@@ -327,6 +327,77 @@ async function getDevicesList(): Promise<{ devices: Array<{ id: string; name: st
   return getDevicesListSync();
 }
 
+// ===== Device Actions (stub) =====
+// In future, wire these to MQTT/cloud connector to invoke direct methods on devices.
+// For now, return an ok message so the UI can integrate the flows.
+app.post('/api/devices/:id/actions/identify', (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
+  res.json({ ok: true, message: `Identifying device ${id}` });
+});
+
+app.post('/api/devices/:id/actions/reboot', (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
+  res.json({ ok: true, message: `Reboot requested for device ${id}` });
+});
+
+// Application controls
+app.post('/api/devices/:id/actions/application/restart', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, message:`Application restart requested for ${id}` });
+});
+app.post('/api/devices/:id/actions/application/stop', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, message:`Application stop requested for ${id}` });
+});
+app.post('/api/devices/:id/actions/application/info', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, payload:{ version:'n/a', state:'unknown' } });
+});
+app.post('/api/devices/:id/actions/application/update', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, message:`Application update requested for ${id}` });
+});
+
+// System info/network
+app.post('/api/devices/:id/actions/system/info', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, payload:{ platform:'unknown', state:'unknown' } });
+});
+app.post('/api/devices/:id/actions/system/network', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, payload:{ interfaces:{} } });
+});
+
+// Connection parameters
+app.post('/api/devices/:id/actions/connection/get-params', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, payload:{ broker:'', clientId:id } });
+});
+app.post('/api/devices/:id/actions/connection/update-params', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, message:`Connection parameters updated for ${id}` });
+});
+app.post('/api/devices/:id/actions/connection/reconnect', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, message:`Reconnect requested for ${id}` });
+});
+
+// Provisioning
+app.post('/api/devices/:id/actions/provisioning/get-params', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, payload:{ endpoint:'', thingName:id } });
+});
+app.post('/api/devices/:id/actions/provisioning/update-params', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, message:`Provisioning parameters updated for ${id}` });
+});
+app.post('/api/devices/:id/actions/provisioning/reprovision', (req: Request, res: Response) => {
+  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+  res.json({ ok:true, message:`Reprovision requested for ${id}` });
+});
+
 // ===== Admin: UUID Whitelist Management =====
 // Table lives in provisioning.db as `uuid_whitelist` with columns
 // (uuid PRIMARY KEY, device_id TEXT, name TEXT, note TEXT, created_at TEXT, used_at TEXT)

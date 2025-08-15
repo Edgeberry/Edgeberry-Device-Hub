@@ -9,6 +9,9 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ART_DIR="${ROOT_DIR}/dist-artifacts"
 mkdir -p "$ART_DIR"
 
+# Staging directory for the combined artifact (single tarball only)
+COMBINED_STAGE="$(mktemp -d)"
+
 # Determine version tag for artifact filenames
 VERSION="${GITHUB_REF_NAME:-}"  # available in GitHub Actions on tag events
 if [[ -z "$VERSION" ]]; then
@@ -45,23 +48,17 @@ build_node_service() {
   npm prune --omit=dev || true
   popd >/dev/null
 
-  # Stage artifact
-  local stage
-  stage="$(mktemp -d)"
-  mkdir -p "$stage/${svc}"
-  rsync -a --exclude ".git" --exclude "node_modules/.cache" \
-    "${dir}/" "$stage/${svc}/"
+  # Stage files into the combined artifact directory
+  mkdir -p "$COMBINED_STAGE/${svc}"
+  rsync -a --exclude ".git" --exclude "node_modules" --exclude "node_modules/.cache" \
+    "${dir}/" "$COMBINED_STAGE/${svc}/"
   # Include root config when useful
   if [[ -f "${ROOT_DIR}/config/mosquitto.conf" && "$svc" == "provisioning-service" ]]; then
-    mkdir -p "$stage/config"
-    cp "${ROOT_DIR}/config/mosquitto.conf" "$stage/config/" || true
+    mkdir -p "$COMBINED_STAGE/config"
+    cp "${ROOT_DIR}/config/mosquitto.conf" "$COMBINED_STAGE/config/" || true
   fi
-  # Create tar.gz
-  local tarname
-  tarname="devicehub-${svc}-${VERSION}.tar.gz"
-  tar -C "$stage" -czf "${ART_DIR}/${tarname}" .
-  rm -rf "$stage"
-  log "artifact: ${ART_DIR}/${tarname}"
+  # No per-service tarballs. Content is staged for the single combined tar.
+  log "staged: ${svc}"
 }
 
 build_ui() {
@@ -84,14 +81,11 @@ build_ui() {
       npm prune --omit=dev || true
     fi
     popd >/dev/null
-    local stage="$(mktemp -d)"
-    mkdir -p "$stage/${name}"
-    rsync -a --exclude ".git" --exclude "node_modules/.cache" \
-      "${dir}/" "$stage/${name}/"
-    local tarname="devicehub-${name}-${VERSION}.tar.gz"
-    tar -C "$stage" -czf "${ART_DIR}/${tarname}" .
-    rm -rf "$stage"
-    log "artifact: ${ART_DIR}/${tarname}"
+    mkdir -p "$COMBINED_STAGE/${name}"
+    # Only stage built static assets for the UI
+    rsync -a --delete "${dir}/build/" "$COMBINED_STAGE/${name}/build/"
+    # No per-package tarball; staged into combined artifact
+    log "staged: ${name}"
   else
     log "skip UI: not found"
   fi
@@ -100,22 +94,20 @@ build_ui() {
 # Build UI first so other services (e.g., core-service) can rely on its presence
 build_ui
 
-build_node_service api
 build_node_service core-service
 build_node_service provisioning-service
 build_node_service twin-service
 build_node_service registry-service
 
-# Create a single combined tarball that contains all artifacts
-if [[ -d "$ART_DIR" ]]; then
+# Create a single combined tarball from the staged content only
+if [[ -d "$COMBINED_STAGE" ]]; then
   COMBINED_TAR="devicehub-${VERSION}.tar.gz"
-  # Create outside of ART_DIR to avoid "file changed as we read it" while tar is being written
+  rm -f "${ART_DIR}/${COMBINED_TAR}" || true
   TMP_OUT="${ROOT_DIR}/${COMBINED_TAR}"
-  tar -C "$ART_DIR" -czf "$TMP_OUT" .
+  tar -C "$COMBINED_STAGE" -czf "$TMP_OUT" .
   mv "$TMP_OUT" "${ART_DIR}/${COMBINED_TAR}"
   log "combined artifact: ${ART_DIR}/${COMBINED_TAR}"
-  # Remove individual tarballs so only one tarball remains
-  find "$ART_DIR" -maxdepth 1 -type f -name 'devicehub-*.tar.gz' ! -name "$COMBINED_TAR" -print -delete || true
+  rm -rf "$COMBINED_STAGE"
 fi
 
 log "done"

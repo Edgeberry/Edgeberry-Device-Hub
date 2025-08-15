@@ -20,9 +20,11 @@ import SystemMetricsWidget from '../components/SystemMetricsWidget';
 import { getDevices } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
+import DeviceDetailModal from '../components/DeviceDetailModal';
 
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(()=>{ 
     let mounted = true;
@@ -57,24 +59,41 @@ export default function Overview(props:{user:any}){
               </tr>
             </thead>
             <tbody>
-              {(devices||[]).map((d:any)=> (
-                <tr key={d.id || d._id || d.name}>
-                  <td><Link to={`/devices/${encodeURIComponent(d.id || d._id || d.name)}`}>{d.id || d._id || d.name}</Link></td>
-                  <td>{d.name || '-'}</td>
-                  <td>
-                    {d.online ? (
-                      <Badge bg="success">Online</Badge>
-                    ) : (
-                      <Badge bg="secondary">Offline</Badge>
-                    )}
-                  </td>
-                  <td>{d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}</td>
-                </tr>
-              ))}
+              {(devices||[]).map((d:any)=> {
+                const id = d.id || d._id || d.name;
+                const open = () => setSelected(String(id));
+                const onKeyDown = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                  if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
+                };
+                return (
+                  <tr key={id}
+                      tabIndex={0}
+                      role="button"
+                      onClick={open}
+                      onKeyDown={onKeyDown}
+                      style={{ cursor:'pointer' }}>
+                    <td>
+                      {/* Keep deep-link for optional navigation, but clicking row opens modal */}
+                      <Link to={`/devices/${encodeURIComponent(id)}`} onClick={(e)=>{ e.preventDefault(); open(); }}>{id}</Link>
+                    </td>
+                    <td>{d.name || '-'}</td>
+                    <td>
+                      {d.online ? (
+                        <Badge bg="success">Online</Badge>
+                      ) : (
+                        <Badge bg="secondary">Offline</Badge>
+                      )}
+                    </td>
+                    <td>{d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </Table>
         </Card.Body>
       </Card>
+
+      <DeviceDetailModal deviceId={selected||''} show={!!selected} onClose={()=> setSelected(null)} />
     </div>
   );
 }
