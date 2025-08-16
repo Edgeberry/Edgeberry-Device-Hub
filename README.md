@@ -21,7 +21,8 @@ Use it to:
 <br clear="right"/>
 
 ## Getting Started
-[ToDo]
+
+See the [alignment document](documentation/alignment.md) for detailed setup instructions and architecture overview.
 
 ## Description
 
@@ -29,17 +30,14 @@ Edgeberry Device Hub is a self-hostable device management server for Edgeberry d
 
 ## Microservices
 
-- **Core Orchestrator (`core-service/`)**
-  - Hosts the Device Hub orchestrator HTTP service (default :8080) and serves the built Web UI from `ui/build` in production. Provides a health endpoint at `/healthz`. Intended as the entrypoint for users accessing the UI and, optionally, for light orchestration duties.
-
-- **API (`api/`)**
-  - Public HTTP surface for the Device Hub. Handles authn/z, exposes REST and WebSocket endpoints, talks to internal services over D-Bus, and attributes MQTT events to devices.
+- **Core Service (`core-service/`)**
+  - Main HTTP service (default :8080) serving the Web UI and all `/api/*` endpoints. Handles authentication, coordinates with microservices via D-Bus, and provides health monitoring at `/healthz`.
 
 - **Provisioning Service (`provisioning-service/`)**
   - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$devicehub/certificates/create-from-csr`, signs CSRs, and returns signed certs. No digital twin responsibilities.
 
 - **Device Twin Service (`twin-service/`)**
-  - Owns desired/reported twin state. Persists state, generates deltas, and publishes twin updates over `$devicehub/devices/{deviceId}/twin/#`. Provides D-Bus methods for the API to read/update twin state.
+  - Owns desired/reported twin state. Persists state, generates deltas, and publishes twin updates over `$devicehub/devices/{deviceId}/twin/#`. Provides D-Bus methods for the core service to read/update twin state.
 
 - **Device Registry Service (`registry-service/`)**
   - Authoritative inventory for devices. Stores identity anchors (device ID, cert metadata, optional manufacturer UUID hash), status, and operational context. Exposes a D-Bus interface to query/update registry data.
@@ -47,7 +45,7 @@ Edgeberry Device Hub is a self-hostable device management server for Edgeberry d
 - **Web UI (`ui/`)**
   - React SPA for dashboards, devices, events, and twin management. Consumes only public API/WebSocket endpoints.
 
-See `alignment.md` for architecture and interface details.
+See `documentation/alignment.md` for architecture and interface details.
 
 ## Architecture (MVP)
 

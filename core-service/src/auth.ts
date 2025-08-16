@@ -31,7 +31,7 @@ export function getSession(req: Request): { user: string } | null {
 }
 
 export function setSessionCookie(res: Response, token: string) {
-  const isHttps = false; // TODO: detect HTTPS (e.g., via X-Forwarded-Proto or config)
+  const isHttps = false; // Note: HTTPS detection could be added via X-Forwarded-Proto or config if needed
   const attrs = [
     `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
     'Path=/',

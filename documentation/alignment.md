@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-16 (evening)
+**Last updated:** 2025-08-16 21:24 CET
 
 ## Alignment Maintenance
 
@@ -313,9 +313,7 @@ Internal modularity is an implementation detail and must not leak into the publi
   - Serves the built UI in production
   - May provide light orchestration endpoints (e.g., `/healthz`)
 
-- **`api/`** — Previously a standalone Node.js + Express HTTP API
-  - Its responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`
-  - Any remaining code here will be migrated or retired
+- **`api/` (deprecated)** — Former standalone HTTP API, now fully integrated into `core-service`
 
 - **`provisioning-service/`** — Long-running Node.js service
   - Subscribed to `$devicehub/#` topics for bootstrap flows
@@ -349,8 +347,7 @@ Internal modularity is an implementation detail and must not leak into the publi
     - `scripts/deploy.sh` — SSH deployment to remote hosts
 
 #### Documentation & Examples
-- **`docs/`** — Extended documentation referenced from this file
-
+- **`documentation/`** — Extended documentation including this alignment file
 - **`examples/`** — Example integrations and reference nodes
   - **`examples/nodered/`** — TypeScript-based Node-RED node "edgeberry-device"
     - Minimal example that sets status to ready, logs "hello world" on input, and passes the message through
@@ -369,8 +366,8 @@ Internal modularity is an implementation detail and must not leak into the publi
 
 Responsibilities and boundaries:
 
-- `ui/` calls `api/` only. It should never talk to MQTT directly.
-- `api/` is the single writer to the database and the HTTP surface area for external clients. It must enforce the permission model.
+- `ui/` calls HTTP APIs served by `core-service` only. It should never talk to MQTT directly.
+- `core-service` is the single writer to the database and the HTTP surface area for external clients. It must enforce the permission model.
 - `provisioning-service/` owns MQTT bootstrap and certificate lifecycle. It may update DB via internal repositories shared with `api/` (from `shared/`). Exposes a D-Bus API for operations and emits signals for status.
 - `twin-service/` maintains digital twins (desired/reported state, deltas, reconciliation). Subscribes/publishes to twin topics and updates the DB via shared repositories.
 - `mqtt-broker/` config enforces mTLS, maps cert subject → device identity, and defines ACLs per topic family.
@@ -379,14 +376,14 @@ Responsibilities and boundaries:
 
 Interfaces (high level):
 
-- UI → API (served by `core-service`): REST endpoints like `/devices`, `/devices/:id/events`, `/config/public`, `/status`, plus operational endpoints `/api/services`, `/api/logs`, and service control under `/api/services/:unit/{start|stop|restart}`.
-- API ↔ DB: SQLite via a thin data access layer in `shared/` (e.g., `shared/db` with query builders and schema migrations).
-- API ↔ Workers over D-Bus: API invokes worker methods and subscribes to worker signals using well-defined D-Bus interfaces.
-- API/Services (provisioning-service, twin-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
+- UI → Core Service: REST endpoints like `/devices`, `/devices/:id/events`, `/config/public`, `/status`, plus operational endpoints `/api/services`, `/api/logs`, and service control under `/api/services/:unit/{start|stop|restart}`.
+- Core Service ↔ DB: SQLite via a thin data access layer in `shared/` (e.g., `shared/db` with query builders and schema migrations).
+- Core Service ↔ Workers over D-Bus: `core-service` invokes worker methods and subscribes to worker signals using well-defined D-Bus interfaces.
+- Services (provisioning-service, twin-service, registry-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
 
 Local development:
 
-- Each subproject runs independently with its own `package.json` and start script. A top-level `dev` script can orchestrate broker, API, worker, and UI.
+- Each subproject runs independently with its own `package.json` and start script. A top-level `dev` script can orchestrate broker, core service, workers, and UI.
  - No Docker for dev; Mosquitto runs locally. MVP uses `config/mosquitto-dev.conf` and dev TLS materials under `config/certs/`.
    - Future: consolidate under `mqtt-broker/dev.conf` and `mqtt-broker/dev-certs/` for clearer separation.
 - Env via `.env` files per project; never commit secrets.
@@ -525,7 +522,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `/health` — detailed health view
 - `/devices/:assetId` — device detail placeholder
 - Admin controls are integrated into the Overview via admin-only modals (Certificates, Whitelist)
-- Auth routes: `/login`, `/logout` (registration disabled for MVP; UI hides any register links)
+- Auth UX: Login is a navbar-triggered modal (no dedicated `/login` route). `/logout` exists and returns to `/` (anonymous view). Registration is disabled for MVP; UI hides any register links.
 
 ### Core Components
 
@@ -544,11 +541,12 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
   - `GET /api/health` — returns `{ healthy: boolean, ... }`
   - `GET /api/services` — returns array or object of systemd unit statuses (includes `devicehub-registry.service`)
   - Default monitored units include Device Hub services and key dependencies: `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`, `dbus.service`, `mosquitto.service`.
-  - `GET /api/logs` — recent logs snapshot. Accepts `units` (comma-separated) or `unit` (single) and `lines`.
+  - `GET /api/logs` — recent logs snapshot. Accepts `units` (comma-separated) or `unit` (single) and `lines`. For live updates, the server provides `GET /api/logs/stream` (SSE).
 - Optional (UI handles absence gracefully; fields display as "-"):
   - `GET /api/status`
   - `GET /api/version`
   - `GET /api/config/public`
+  - `POST /api/diagnostics/mqtt-test` — runs the MQTT mTLS sanity script on the host; returns `{ ok, exitCode, startedAt, durationMs, stdout, stderr }`
 - Devices (optional placeholder in MVP):
   - `GET /api/devices` — may return `[]` or `{ devices: [] }`; UI tolerates other shapes by falling back to an empty list
  - Service controls (best-effort; may require host privileges):
@@ -879,7 +877,7 @@ Behavior:
 
 Interactions:
 
-- API: `/devices`, `/devices/:id`, `/devices/:id/events` (RBAC governs sensitive fields).
+- HTTP API: `/devices`, `/devices/:id`, `/devices/:id/events` (RBAC governs sensitive fields).
 - MQTT: topics and ACLs resolved via registry entries.
 - Twin service: twin desired/reported state stored by `twin-service` and keyed by `deviceId`; registry provides identity and lineage references.
 
