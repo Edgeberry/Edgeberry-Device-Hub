@@ -12,7 +12,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard from './Pages/Dashboard';
 import Overview from './Pages/Overview';
 import Logout from './Pages/Logout';
-import NotFound from './Pages/NotFound';
 
 function App(){
   const [user, setUser] = useState<any|null>(null);
@@ -53,13 +52,12 @@ function App(){
         <Routes>
           { /* Login is handled via a modal inside Dashboard */ }
 
-          { /* Public app shell: Overview is accessible without login (anonymous mode) */ }
+          { /* One-page app: everything resolves to '/' with Overview */ }
           <Route path='/' element={<Dashboard user={user} onLoggedIn={async ()=>{ await refreshUser(); }} /> }>
             <Route index element={<Overview user={user} />} />
-            <Route path='overview' element={<Overview user={user} />} />
-            { /* Protected routes */ }
+            { /* Protected route for logout action */ }
             <Route path='logout' element={<RequireAuth><Logout user={user} onLogout={()=>{ setUser(null); }} /></RequireAuth>} />
-            <Route path='*' element={<NotFound />} />
+            <Route path='*' element={<Navigate to='/' replace />} />
           </Route>
           <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>

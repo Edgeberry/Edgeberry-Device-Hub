@@ -16,7 +16,8 @@ export default function Logout(props:{user:any,onLogout:()=>void}){
     (async ()=>{
       try{ await fetch('/api/auth/logout', { method: 'POST' }); }catch{}
       props.onLogout();
-      nav('/login', { replace: true });
+      // Return to the main page in anonymous mode
+      nav('/', { replace: true });
     })();
   },[]);
   return null;

@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-16 (afternoon)
+**Last updated:** 2025-08-16 (evening)
 
 ## Alignment Maintenance
 
@@ -265,7 +265,7 @@ Internal modularity is an implementation detail and must not leak into the publi
 #### Base Configuration
 - **Base URL:** Single hostname (e.g., `https://devicehub.edgeberry.io`)
 - **HTTP binding:** Only `core-service` binds public HTTP(S)
-- **UI entrypoint:** `/` serves the dashboard SPA from the `core-service` (static file server in production)
+- **UI entrypoint:** `/` serves the dashboard SPA from the `core-service` (static file server in production). The UI is a one-page app; all client routes resolve to `/`.
 
 #### API Structure
 - **HTTP API prefix:** `/api` (versioning via headers or path TBD) — served directly by `core-service`
@@ -276,6 +276,15 @@ Internal modularity is an implementation detail and must not leak into the publi
 - **Endpoint:** `/api/ws` (same origin)
 - **Authentication:** Via the `fh_session` JWT cookie on upgrade
 - **Features:** Topic-based subscribe/unsubscribe and server push updates
+
+#### UI Routing (One-Page App)
+- The UI is a single Overview page; all routes redirect/resolve to `/`.
+- Anonymous mode is enabled: non-sensitive data is visible without login; admin-only actions are disabled.
+- Login is presented as a modal triggered from the navbar (no dedicated `/login` page).
+- Logout returns to `/` (anonymous view) instead of redirecting to a login page.
+- The former menu/off-canvas is removed. Navbar shows auth status and a Login/Logout control only.
+- Layout: full-viewport (100vh/100vw) with a sticky footer. Only the inner content container scrolls.
+- Footer: transparent background with a subtle top border and license notice.
 
 ### Execution Model & IPC
 
@@ -389,8 +398,8 @@ Local development:
 
 - **Sources**: Official assets live under the repo root `brand/`.
 - **Navbar**: `ui/src/components/Navigationbar.tsx` imports `ui/src/EdgeBerry_Logo_text.svg` and renders it inside `Navbar.Brand` (32px height).
-- **Login**: `ui/src/Pages/Login.tsx` renders the Edgeberry text logo centered above the form.
-- **404**: `ui/src/Pages/NotFound.tsx` shows the logo with a centered "Page not found" message.
+- **Login**: Implemented as a modal (`ui/src/components/LoginModal.tsx`) opened from the navbar; no dedicated route/page.
+- **404**: The app redirects unknown routes to `/` (single-page). The `NotFound` component is not linked in routing.
 - **Favicon**: `ui/public/favicon.svg` referenced from `ui/index.html` via `/favicon.svg`.
 - **TypeScript**: `ui/src/assets.d.ts` declares `*.svg` modules for asset imports.
 - **Alternative mark**: You may switch to `brand/Edgeberry_icon.svg` (square icon) for tight spaces; swap the import path where needed.

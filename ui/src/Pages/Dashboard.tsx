@@ -14,7 +14,7 @@ export default function Dashboard(props:{user:any, onLoggedIn: ()=>Promise<void>
           <Outlet />
         </Container>
       </div>
-      <footer style={{ padding: '12px 0', background: '#f8f9fa', borderTop: '1px solid #e5e7eb' }}>
+      <footer style={{ padding: '12px 0', background: 'transparent', borderTop: '1px solid #e5e7eb' }}>
         <Container style={{ fontSize: '12px', color: '#555' }}>
           <p style={{ margin: 0 }}>Edgeberry Device Hub is open-source software. Licensed under GPL-3.0-or-later.</p>
         </Container>
