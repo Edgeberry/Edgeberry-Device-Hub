@@ -8,6 +8,6 @@
     "predev": "bash scripts/build-all.sh",
     "dev": "bash scripts/dev_start.sh",
     "build": "bash scripts/build-all.sh",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh -h 192.168.1.116 -u spuq"
   }
 }
