@@ -7,7 +7,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, Badge, Spinner, Button, Row, Col, Modal } from 'react-bootstrap';
-import { getServices, getServiceLogs, startService, stopService, restartService } from '../api/devicehub';
+import { getServices, getServiceLogs, startService, stopService, restartService, runMqttSanityTest } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
 type ServiceItem = { unit: string; status: string };
@@ -24,6 +24,10 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
   const [streamEnded, setStreamEnded] = useState<string>('');
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string>('');
+  const [diagOpen, setDiagOpen] = useState<boolean>(false);
+  const [diagBusy, setDiagBusy] = useState<boolean>(false);
+  const [diagError, setDiagError] = useState<string>('');
+  const [diagData, setDiagData] = useState<any>(null);
   const logsRef = useRef<HTMLDivElement|null>(null);
 
   async function load() {
@@ -235,7 +239,32 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
       <Card.Body>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h5 className="mb-0">Services</h5>
-          <Button size="sm" variant="outline-secondary" onClick={load} disabled={loading || wsIsConnected()}>Refresh</Button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button
+              size="sm"
+              variant="outline-primary"
+              onClick={async ()=>{
+                setDiagOpen(true);
+                if(!canControl) return; // guard: admin only
+                setDiagBusy(true);
+                setDiagError('');
+                setDiagData(null);
+                try{
+                  const res: any = await runMqttSanityTest();
+                  setDiagData(res);
+                }catch(e:any){
+                  setDiagError(e?.message || 'Diagnostics failed');
+                }finally{
+                  setDiagBusy(false);
+                }
+              }}
+              disabled={!canControl || diagBusy}
+              title={canControl ? 'Run device-side MQTT sanity test' : 'Admin only'}
+            >
+              {diagBusy ? (<><Spinner as="span" animation="border" size="sm" /> Running...</>) : 'Sanity Check'}
+            </Button>
+            <Button size="sm" variant="outline-secondary" onClick={load} disabled={loading || wsIsConnected()}>Refresh</Button>
+          </div>
         </div>
         <div style={{ marginTop: 12 }}>
           {loading ? (
@@ -333,6 +362,49 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                 </Modal.Body>
                 <Modal.Footer>
                   <Button variant="secondary" onClick={() => setSelected(null)}>Close</Button>
+                </Modal.Footer>
+              </Modal>
+              {/* Diagnostics Modal */}
+              <Modal show={diagOpen} onHide={()=>{ if(!diagBusy) setDiagOpen(false); }} centered size="lg" scrollable>
+                <Modal.Header closeButton>
+                  <Modal.Title>Sanity Check — Device MQTT Diagnostics</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                  {diagBusy && (
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <Spinner animation="border" size="sm" />
+                      <span>Running device-side test…</span>
+                    </div>
+                  )}
+                  {!diagBusy && (
+                    <div>
+                      {diagError && <div style={{ color:'#c00', marginBottom: 8 }}>{diagError}</div>}
+                      {diagData && (
+                        <div>
+                          <div style={{ marginBottom: 8, fontWeight: 600 }}>
+                            Result: {diagData.ok ? <span style={{ color:'#0a0' }}>OK</span> : <span style={{ color:'#a00' }}>FAIL</span>} {' '}
+                            <small style={{ color:'#666' }}>(exit {diagData.exitCode ?? 'n/a'}, {diagData.durationMs ?? '?'} ms)</small>
+                          </div>
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                            <div>
+                              <div style={{ fontWeight:600, marginBottom:4 }}>STDOUT</div>
+                              <pre style={{ background:'#0b0b10', color:'#e0e6f0', borderRadius:8, padding:8, maxHeight:240, overflow:'auto' }}>{diagData.stdout || ''}</pre>
+                            </div>
+                            <div>
+                              <div style={{ fontWeight:600, marginBottom:4 }}>STDERR</div>
+                              <pre style={{ background:'#0b0b10', color:'#e0e6f0', borderRadius:8, padding:8, maxHeight:240, overflow:'auto' }}>{diagData.stderr || ''}</pre>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {!diagError && !diagData && (
+                        <div className="text-muted">No diagnostics output.</div>
+                      )}
+                    </div>
+                  )}
+                </Modal.Body>
+                <Modal.Footer>
+                  <Button variant="secondary" onClick={()=> setDiagOpen(false)} disabled={diagBusy}>Close</Button>
                 </Modal.Footer>
               </Modal>
             </>

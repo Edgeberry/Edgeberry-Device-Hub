@@ -123,6 +123,7 @@ ALLOWED_NAMES=(
   twin-service
   registry-service
   config
+  scripts
 )
 
 log() { echo "[install] $*"; }
@@ -205,6 +206,10 @@ extract_artifacts() {
       fi
     done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print0)
     rm -rf "$tmp"
+    # chmod +x scripts/*.sh if present so diagnostics script runs
+    if [[ -d "${INSTALL_ROOT}/scripts" ]]; then
+      chmod +x "${INSTALL_ROOT}/scripts"/*.sh || true
+    fi
   done
 }
 
@@ -265,11 +270,76 @@ configure_mosquitto() {
   if command -v mosquitto >/dev/null 2>&1; then
     log "configuring Mosquitto"
     mkdir -p /etc/mosquitto/conf.d
-    if [[ -f "${ROOT_DIR}/config/mosquitto.conf" ]]; then
-      install -m 0644 "${ROOT_DIR}/config/mosquitto.conf" /etc/mosquitto/conf.d/devicehub.conf
-    else
-      log "WARN: config/mosquitto.conf not found; using default broker config"
+    # Source files packaged with the app
+    local SRC_CA="$INSTALL_ROOT/config/certs/ca.crt"
+    local SRC_CERT="$INSTALL_ROOT/config/certs/server.crt"
+    local SRC_KEY="$INSTALL_ROOT/config/certs/server.key"
+    local SRC_ACL="$INSTALL_ROOT/config/mosquitto.acl"
+
+    # Warn if any are missing
+    [[ -f "$SRC_CA" ]] || log "WARN: missing CA file: $SRC_CA"
+    [[ -f "$SRC_CERT" ]] || log "WARN: missing server cert: $SRC_CERT"
+    [[ -f "$SRC_KEY" ]] || log "WARN: missing server key: $SRC_KEY"
+    [[ -f "$SRC_ACL" ]] || log "WARN: missing ACL file: $SRC_ACL"
+
+    # Install runtime copies under /etc/mosquitto (AppArmor allows access here)
+    mkdir -p /etc/mosquitto/certs /etc/mosquitto/acl.d
+    local ETC_CA="/etc/mosquitto/certs/ca.crt"
+    local ETC_CERT="/etc/mosquitto/certs/server.crt"
+    local ETC_KEY="/etc/mosquitto/certs/server.key"
+    local ETC_ACL="/etc/mosquitto/acl.d/edgeberry.acl"
+
+    if [[ -f "$SRC_CA" ]]; then install -m 0640 "$SRC_CA" "$ETC_CA"; fi
+    if [[ -f "$SRC_CERT" ]]; then install -m 0640 "$SRC_CERT" "$ETC_CERT"; fi
+    if [[ -f "$SRC_KEY" ]]; then install -m 0640 "$SRC_KEY" "$ETC_KEY"; fi
+    if [[ -f "$SRC_ACL" ]]; then install -m 0644 "$SRC_ACL" "$ETC_ACL"; fi
+
+    if id -u mosquitto >/dev/null 2>&1; then
+      chown root:mosquitto "$ETC_CA" "$ETC_CERT" "$ETC_KEY" 2>/dev/null || true
     fi
+
+    # Ensure persistence directory exists with correct ownership (common failure)
+    mkdir -p /var/lib/mosquitto
+    if id -u mosquitto >/dev/null 2>&1; then
+      chown mosquitto:mosquitto /var/lib/mosquitto || true
+    fi
+
+    # Remove any prior Device Hub mosquitto snippets to avoid duplicates
+    rm -f /etc/mosquitto/conf.d/devicehub.conf /etc/mosquitto/conf.d/edgeberry.conf || true
+
+    # Write a dedicated conf.d file that references our installed paths (minimal to avoid dupes)
+    cat > /etc/mosquitto/conf.d/edgeberry.conf <<EOF
+# Edgeberry Device Hub (installed) — mTLS listener
+listener 8883 0.0.0.0
+allow_anonymous false
+
+# TLS
+cafile $ETC_CA
+certfile $ETC_CERT
+keyfile $ETC_KEY
+
+# mTLS auth mapping
+require_certificate true
+use_subject_as_username true
+
+# ACLs
+acl_file $ETC_ACL
+EOF
+
+    # Validate broker configuration before restart to surface clear errors
+    if command -v mosquitto >/dev/null 2>&1; then
+      if ! mosquitto -c /etc/mosquitto/mosquitto.conf -v -t >/dev/null 2>&1; then
+        log "ERROR: mosquitto configuration validation failed. Dumping diagnostics:"
+        log "--- /etc/mosquitto/conf.d/edgeberry.conf ---"
+        sed -n '1,200p' /etc/mosquitto/conf.d/edgeberry.conf 2>/dev/null || true
+        log "--- ls -l certs and acl ---"
+        ls -l "$INSTALL_ROOT/config/certs" 2>/dev/null || true
+        ls -l "$INSTALL_ROOT/config/mosquitto.acl" 2>/dev/null || true
+        log "--- attempting journalctl hint (previous run) ---"
+        journalctl -u mosquitto -n 50 --no-pager 2>/dev/null | tail -n 50 || true
+      fi
+    fi
+
     systemctl_safe enable mosquitto || true
     systemctl_safe restart mosquitto || true
   else

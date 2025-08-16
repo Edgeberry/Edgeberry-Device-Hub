@@ -1,0 +1,60 @@
+# Edgeberry Device Hub — Mosquitto ACLs
+# Ref: https://mosquitto.org/man/mosquitto-conf-5.html#acl_file
+# Notes:
+# - For PROD (mTLS), set `use_subject_as_username true` and the cert CN becomes the username.
+# - `%u` expands to the authenticated username (CN for mTLS when configured).
+# - `%c` expands to the client id (not used here).
+
+## mTLS-only: usernames come from client cert CNs
+## No password-based users required.
+
+# --- Device identity (mTLS) ---------------------------------------------------
+# Devices are identified by their certificate CN (= deviceId)
+# Grant each device read/write access to its own topic namespace
+pattern write devices/%u/#
+pattern read  devices/%u/#
+
+# Provisioning flow (device bootstrap over MQTT)
+# Devices publish provision request and read accepted/rejected responses
+# Using patterns with %u (CN) to scope per device
+pattern write $devicehub/devices/%u/provision/request
+pattern read  $devicehub/devices/%u/provision/accepted
+pattern read  $devicehub/devices/%u/provision/rejected
+
+# Twin flow (device twin interactions)
+# Devices write get/update; read accepted/rejected + delta
+pattern write $devicehub/devices/%u/twin/get
+pattern write $devicehub/devices/%u/twin/update
+pattern read  $devicehub/devices/%u/twin/update/accepted
+pattern read  $devicehub/devices/%u/twin/update/rejected
+pattern read  $devicehub/devices/%u/twin/delta
+
+# Optionally allow devices to read public broadcast announcements (if any)
+# topic read $devicehub/broadcast/#
+
+# --- Backend service accounts -------------------------------------------------
+# These blocks apply when the service connects with a client cert whose CN
+# matches the username below (e.g., CN=registry, CN=twin, CN=provisioning).
+
+# Registry service: subscribes to devices/# to persist events
+user registry
+topic read devices/#
+
+# Twin service: handles twin get/update and responses
+user twin
+# Subscribe to device twin requests
+topic read  $devicehub/devices/+/twin/get
+topic read  $devicehub/devices/+/twin/update
+# Publish responses and deltas
+topic write $devicehub/devices/+/twin/update/accepted
+topic write $devicehub/devices/+/twin/update/rejected
+topic write $devicehub/devices/+/twin/delta
+
+# Provisioning service: handles provision requests and replies
+user provisioning
+topic read  $devicehub/devices/+/provision/request
+topic write $devicehub/devices/+/provision/accepted
+topic write $devicehub/devices/+/provision/rejected
+
+# ----------------------------------------------------------------------------
+# Keep service accounts least-privileged in production. Adjust above as needed.

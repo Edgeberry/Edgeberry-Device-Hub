@@ -154,6 +154,139 @@ app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' })
 // GET /api/health
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
+// === Diagnostics: device-side MQTT sanity test ===
+// POST /api/diagnostics/mqtt-test
+// Body: { deviceId?, mqttUrl?, ca?, cert?, key?, rejectUnauthorized?, timeoutSec? }
+// Runs scripts/device_mqtt_test.sh and returns stdout/stderr and exit code
+app.post('/api/diagnostics/mqtt-test', async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (body.deviceId) env.DEVICE_ID = String(body.deviceId);
+    if (body.mqttUrl) env.MQTT_URL = String(body.mqttUrl);
+    if (body.ca) env.MQTT_TLS_CA = String(body.ca);
+    if (body.cert) env.MQTT_TLS_CERT = String(body.cert);
+    if (body.key) env.MQTT_TLS_KEY = String(body.key);
+    if (typeof body.rejectUnauthorized === 'boolean') env.MQTT_TLS_REJECT_UNAUTHORIZED = body.rejectUnauthorized ? 'true' : 'false';
+    if (body.timeoutSec) env.TIMEOUT_SEC = String(body.timeoutSec);
+
+    // Resolve diagnostics script path robustly.
+    // Priority:
+    // 1) DIAG_SCRIPT_PATH env
+    // 2) Repo dev path: ../scripts/device_mqtt_test.sh (relative to core-service cwd)
+    // 3) Repo dev alt: ../../scripts/device_mqtt_test.sh (in case cwd differs)
+    // 4) Installed path: /opt/Edgeberry/devicehub/scripts/device_mqtt_test.sh
+    const candidates: string[] = [];
+    if (process.env.DIAG_SCRIPT_PATH) candidates.push(String(process.env.DIAG_SCRIPT_PATH));
+    candidates.push(
+      path.resolve(process.cwd(), '..', 'scripts', 'device_mqtt_test.sh'),
+      path.resolve(process.cwd(), '..', '..', 'scripts', 'device_mqtt_test.sh'),
+      '/opt/Edgeberry/devicehub/scripts/device_mqtt_test.sh',
+    );
+    const scriptPath = candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } });
+    if (!scriptPath) {
+      return res.status(500).json({ ok: false, error: 'device_mqtt_test.sh not found', tried: candidates });
+    }
+    const startedAt = Date.now();
+    const proc = spawn('bash', [scriptPath], { env });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
+    proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
+    proc.on('error', (e) => {
+      res.status(500).json({ ok: false, error: String(e), startedAt, durationMs: Date.now() - startedAt });
+    });
+    proc.on('close', (code) => {
+      const ok = code === 0;
+      res.status(ok ? 200 : 500).json({ ok, exitCode: code, startedAt, durationMs: Date.now() - startedAt, stdout, stderr });
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || 'failed to run diagnostics' });
+  }
+});
+
+// Minimal diagnostics UI (independent of SPA) at /diagnostics
+app.get('/diagnostics', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(`<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Edgeberry Device Hub — Diagnostics</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:24px;}
+      input,button{font-size:14px;padding:6px 8px;margin:4px 0}
+      label{display:block;margin-top:8px}
+      .row{display:flex;gap:8px;flex-wrap:wrap}
+      textarea{width:100%;height:280px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace}
+      .muted{color:#666}
+      .ok{color:#0a0}
+      .fail{color:#a00}
+    </style>
+  </head>
+  <body>
+    <h2>Diagnostics: MQTT Sanity Test</h2>
+    <div class="muted">Runs device-side MQTT tests via mTLS (provisioning, twin, telemetry).</div>
+    <div>
+      <label>Device ID (CN) <input id="deviceId" placeholder="leave empty to infer from cert" /></label>
+      <label>MQTT URL <input id="mqttUrl" value="mqtts://localhost:8883" /></label>
+      <div class="row">
+        <label>CA <input id="ca" value="/etc/mosquitto/certs/ca.crt" size="40"/></label>
+        <label>Cert <input id="cert" value="/opt/Edgeberry/devicehub/config/certs/my-device.crt" size="40"/></label>
+        <label>Key <input id="key" value="/opt/Edgeberry/devicehub/config/certs/my-device.key" size="40"/></label>
+      </div>
+      <div class="row">
+        <label>Reject unauthorized
+          <select id="reject">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>Timeout (sec) <input id="timeout" type="number" value="10" style="width:80px"/></label>
+      </div>
+      <button id="run">Run Test</button>
+      <span id="status" class="muted"></span>
+    </div>
+    <h3>Result</h3>
+    <div id="summary"></div>
+    <textarea id="output" readonly></textarea>
+    <script>
+      const el = (id) => document.getElementById(id);
+      el('run').onclick = async () => {
+        el('status').textContent = 'Running...';
+        el('summary').innerHTML = '';
+        el('output').value = '';
+        const body = {
+          deviceId: el('deviceId').value || undefined,
+          mqttUrl: el('mqttUrl').value || undefined,
+          ca: el('ca').value || undefined,
+          cert: el('cert').value || undefined,
+          key: el('key').value || undefined,
+          rejectUnauthorized: el('reject').value === 'true',
+          timeoutSec: Number(el('timeout').value || '10')
+        };
+        try{
+          const r = await fetch('/api/diagnostics/mqtt-test', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+          const data = await r.json();
+          el('status').textContent = '';
+          const ok = !!data.ok;
+          const cls = ok ? 'ok' : 'fail';
+          const exitCode = (data.exitCode ?? 'n/a');
+          const dur = (data.durationMs ?? '?');
+          el('summary').innerHTML = '<div class="' + cls + '">' + (ok ? 'OK' : 'FAIL') + ' — exit ' + exitCode + ' — ' + dur + ' ms</div>';
+          el('output').value = 'STDOUT\n' + (data.stdout || '') + '\n\nSTDERR\n' + (data.stderr || '');
+        }catch(e){
+          el('status').textContent = '';
+          el('summary').innerHTML = '<div class="fail">Request failed</div>';
+          el('output').value = String(e);
+        }
+      };
+    </script>
+  </body>
+</html>`);
+});
+
 // Log a startup hello from core-service
 console.log('[core-service] hello from Device Hub core-service');
 

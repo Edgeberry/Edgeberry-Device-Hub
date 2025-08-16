@@ -1,23 +1,36 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
+import { readFileSync } from 'fs';
 
 // Simple virtual device that:
 // 1) Connects to MQTT broker
 // 2) Sends provisioning request to $devicehub/devices/{deviceId}/provision/request
 // 3) On accepted, publishes periodic telemetry to devices/{deviceId}/telemetry
 
-const MQTT_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
+const MQTT_URL = process.env.MQTT_URL || 'mqtts://localhost:8883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME;
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD;
+const MQTT_TLS_CA = process.env.MQTT_TLS_CA;
+const MQTT_TLS_CERT = process.env.MQTT_TLS_CERT;
+const MQTT_TLS_KEY = process.env.MQTT_TLS_KEY;
+const MQTT_TLS_REJECT_UNAUTHORIZED = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
 const DEVICE_ID = process.env.DEVICE_ID || `vd-${Math.random().toString(36).slice(2, 8)}`;
 const TELEMETRY_PERIOD_MS = Number(process.env.TELEMETRY_PERIOD_MS || 3000);
 
 function start() {
+  const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
+  const cert = MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined;
+  const key = MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined;
+
   const opts: IClientOptions = {
     username: MQTT_USERNAME,
     password: MQTT_PASSWORD,
     protocolVersion: 5,
     reconnectPeriod: 2000,
     clean: true,
+    ca,
+    cert,
+    key,
+    rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
   };
   const client: MqttClient = connect(MQTT_URL, opts);
 

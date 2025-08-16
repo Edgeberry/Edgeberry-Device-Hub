@@ -100,6 +100,29 @@ export async function restartService(unit: string){
   return jsonOrMessage(res);
 }
 
+// --- Diagnostics ---
+/**
+ * Run device-side MQTT sanity test via core-service
+ * Body fields are optional; defaults are used by backend when omitted.
+ */
+export async function runMqttSanityTest(body?: {
+  deviceId?: string;
+  mqttUrl?: string;
+  ca?: string;
+  cert?: string;
+  key?: string;
+  rejectUnauthorized?: boolean;
+  timeoutSec?: number;
+}){
+  const res = await fetch(base()+"/diagnostics/mqtt-test", {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body || {})
+  });
+  return jsonOrMessage(res);
+}
+
 // --- Devices registry (future expansion) ---
 /**
  * List devices

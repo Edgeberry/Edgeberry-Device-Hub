@@ -48,6 +48,8 @@ start_mosquitto() {
   local conf
   if [[ -f "$ROOT_DIR/mqtt-broker/dev.conf" ]]; then
     conf="$ROOT_DIR/mqtt-broker/dev.conf"
+  elif [[ -f "$ROOT_DIR/config/mosquitto-dev.conf" ]]; then
+    conf="$ROOT_DIR/config/mosquitto-dev.conf"
   elif [[ -f "$ROOT_DIR/config/mosquitto.conf" ]]; then
     conf="$ROOT_DIR/config/mosquitto.conf"
   else
@@ -69,21 +71,46 @@ start_service() {
     return 0
   fi
   pushd "$dir" >/dev/null
+  # Prepare MQTT mTLS env for known services (MVP)
+  local -a ENV_VARS=()
+  case "$name" in
+    provisioning-service)
+      ENV_VARS+=("MQTT_URL=mqtts://localhost:8883")
+      ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
+      ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/provisioning.crt")
+      ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/provisioning.key")
+      ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
+      ;;
+    twin-service)
+      ENV_VARS+=("MQTT_URL=mqtts://localhost:8883")
+      ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
+      ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/twin.crt")
+      ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/twin.key")
+      ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
+      ;;
+    registry-service)
+      ENV_VARS+=("MQTT_URL=mqtts://localhost:8883")
+      ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
+      ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/registry.crt")
+      ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/registry.key")
+      ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
+      ;;
+  esac
   local cmd
   if has_npm_script "$dir" dev; then
-    cmd=(npm run dev)
+    cmd=(env "${ENV_VARS[@]}" npm run dev)
   elif [[ -x node_modules/.bin/tsx && -f src/index.ts ]]; then
-    cmd=(node_modules/.bin/tsx watch src/index.ts)
+    cmd=(env "${ENV_VARS[@]}" node_modules/.bin/tsx watch src/index.ts)
   elif command -v npx >/dev/null 2>&1 && [[ -f src/index.ts ]]; then
-    cmd=(npx -y tsx watch src/index.ts)
+    cmd=(env "${ENV_VARS[@]}" npx -y tsx watch src/index.ts)
   elif has_npm_script "$dir" start; then
-    cmd=(npm start)
+    cmd=(env "${ENV_VARS[@]}" npm start)
   elif [[ -f dist/index.js ]]; then
-    cmd=(node dist/index.js)
+    cmd=(env "${ENV_VARS[@]}" node dist/index.js)
   elif [[ -x node_modules/.bin/nodemon && -f src/index.ts ]]; then
-    cmd=(node_modules/.bin/nodemon --exec "node --loader ts-node/esm" src/index.ts)
+    cmd=(env "${ENV_VARS[@]}" node_modules/.bin/nodemon --exec "node --loader ts-node/esm" src/index.ts)
   elif command -v npx >/dev/null 2>&1 && [[ -f src/index.ts ]]; then
-    cmd=(npx -y ts-node src/index.ts)
+    cmd=(env "${ENV_VARS[@]}" npx -y ts-node src/index.ts)
   else
     log "WARN: cannot determine start command for $name"
     popd >/dev/null

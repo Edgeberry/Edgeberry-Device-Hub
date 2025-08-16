@@ -40,6 +40,56 @@ Simple rules so you can contribute confidently:
 - **Quick start:** `npm run dev` or `bash scripts/dev_start.sh` (hot reload, broker + services)
 - **Environment:** Copy `.env.example` → `.env` per project if needed
 
+#### MQTT mTLS quickstart (MVP)
+
+Minimal steps to run broker + services with mTLS locally:
+
+1) Broker certs (dev)
+- Generate dev CA and server certs using `config/certs/README.md`.
+- Files used by dev broker: `config/certs/ca.crt`, `server.crt`, `server.key`.
+
+2) Start Mosquitto (mTLS dev config)
+- `mosquitto -c $(pwd)/config/mosquitto-dev.conf`
+- Dev/prod configs enforce mTLS and set `use_subject_as_username true` (CN → username for ACLs).
+
+3) Service client certs
+- Create client certs with CNs matching service usernames: `provisioning`, `registry`, `twin`.
+- CN mapping is required for ACLs (see `config/mosquitto.acl`).
+
+4) Environment for services (example)
+```
+export MQTT_URL=mqtts://localhost:8883
+export MQTT_TLS_CA=./config/certs/ca.crt
+export MQTT_TLS_CERT=./config/certs/provisioning.crt
+export MQTT_TLS_KEY=./config/certs/provisioning.key
+export MQTT_TLS_REJECT_UNAUTHORIZED=true
+```
+- Run per service (adjust CERT/KEY per service):
+  - `npm --prefix provisioning-service run dev`
+  - `npm --prefix registry-service run dev`
+  - `npm --prefix twin-service run dev`
+
+5) Virtual device example
+- Device client cert CN must equal the deviceId (e.g., `my-device-01`).
+```
+export DEVICE_ID=my-device-01
+export MQTT_URL=mqtts://localhost:8883
+export MQTT_TLS_CA=./config/certs/ca.crt
+export MQTT_TLS_CERT=./config/certs/my-device-01.crt
+export MQTT_TLS_KEY=./config/certs/my-device-01.key
+```
+- Run: `npm --prefix examples/virtual-device run dev`
+
+#### MQTT connection env vars (standardized)
+
+- `MQTT_URL` (default `mqtts://localhost:8883`)
+- `MQTT_USERNAME` (optional; with mTLS, CN is used as username)
+- `MQTT_PASSWORD` (optional)
+- `MQTT_TLS_CA` path to CA cert file
+- `MQTT_TLS_CERT` path to client cert file
+- `MQTT_TLS_KEY` path to client key file
+- `MQTT_TLS_REJECT_UNAUTHORIZED` boolean, default `true`
+
 ### Adding New Features
 - **API endpoint:**
   - Add a handler and register route
@@ -274,7 +324,8 @@ Interfaces (high level):
 Local development:
 
 - Each subproject runs independently with its own `package.json` and start script. A top-level `dev` script can orchestrate broker, API, worker, and UI.
-- No Docker for dev; Mosquitto runs locally with dev TLS materials under `mqtt-broker/dev-certs/` and config under `mqtt-broker/dev.conf`.
+ - No Docker for dev; Mosquitto runs locally. MVP uses `config/mosquitto-dev.conf` and dev TLS materials under `config/certs/`.
+   - Future: consolidate under `mqtt-broker/dev.conf` and `mqtt-broker/dev-certs/` for clearer separation.
 - Env via `.env` files per project; never commit secrets.
 - D-Bus: prefer the user session bus during development (fallback to a private bus if needed); systemd user units can be used to emulate production `systemd` services locally.
  - Dev orchestrator: `scripts/dev_start.sh` starts Mosquitto and all services concurrently with hot-reload (prefers `npm run dev`/`tsx watch`). All process logs are multiplexed in a single terminal with per-service prefixes. Services run with `NODE_ENV=development`.

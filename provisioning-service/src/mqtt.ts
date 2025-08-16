@@ -1,5 +1,6 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
-import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST } from './config.js';
+import { readFileSync } from 'fs';
+import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED } from './config.js';
 import { upsertDevice, getWhitelistByUuid, markWhitelistUsed } from './db.js';
 import type { Json } from './types.js';
 
@@ -21,10 +22,18 @@ function parseDeviceId(topic: string, suffix: string): string | null {
 }
 
 export function startMqtt(db: any): MqttClient {
+  const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
+  const cert = MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined;
+  const key = MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined;
+
   const options: IClientOptions = {
     username: MQTT_USERNAME,
     password: MQTT_PASSWORD,
     reconnectPeriod: 2000,
+    ca,
+    cert,
+    key,
+    rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
   };
   const client: MqttClient = connect(MQTT_URL, options);
   client.on('connect', () => {

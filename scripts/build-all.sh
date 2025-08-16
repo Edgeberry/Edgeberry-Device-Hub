@@ -52,10 +52,20 @@ build_node_service() {
   mkdir -p "$COMBINED_STAGE/${svc}"
   rsync -a --exclude ".git" --exclude "node_modules" --exclude "node_modules/.cache" \
     "${dir}/" "$COMBINED_STAGE/${svc}/"
-  # Include root config when useful
-  if [[ -f "${ROOT_DIR}/config/mosquitto.conf" && "$svc" == "provisioning-service" ]]; then
-    mkdir -p "$COMBINED_STAGE/config"
-    cp "${ROOT_DIR}/config/mosquitto.conf" "$COMBINED_STAGE/config/" || true
+  # Ensure full config directory is included in the combined artifact once
+  if [[ ! -d "$COMBINED_STAGE/config" ]]; then
+    if [[ -d "${ROOT_DIR}/config" ]]; then
+      mkdir -p "$COMBINED_STAGE/config"
+      # Copy everything under config (certs, ACLs, systemd units, broker configs)
+      rsync -a "${ROOT_DIR}/config/" "$COMBINED_STAGE/config/"
+    fi
+  fi
+  # Ensure scripts directory (including device_mqtt_test.sh) is included once
+  if [[ ! -d "$COMBINED_STAGE/scripts" ]]; then
+    if [[ -d "${ROOT_DIR}/scripts" ]]; then
+      mkdir -p "$COMBINED_STAGE/scripts"
+      rsync -a "${ROOT_DIR}/scripts/" "$COMBINED_STAGE/scripts/"
+    fi
   fi
   # No per-service tarballs. Content is staged for the single combined tar.
   log "staged: ${svc}"
