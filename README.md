@@ -20,32 +20,24 @@ Use it to:
 
 <br clear="right"/>
 
-## Getting Started
-
-See the [alignment document](documentation/alignment.md) for detailed setup instructions and architecture overview.
-
-## Description
-
-Edgeberry Device Hub is a self-hostable device management server for Edgeberry devices. It provides a single, secure control plane to provision devices (MQTT + mTLS), observe telemetry, manage digital twins, and expose a clean HTTP API and UI. Internally, independent microservices communicate over D-Bus; devices communicate via MQTT.
-
 ## Services
 Microservice architecture seperates the responsibilities. Each service is a separate process that communicates with the others via D-Bus.
 
 - **Core Service**
-  - Main HTTP service serving the Web UI and all `/api/*` endpoints. Handles authentication, coordinates with microservices via D-Bus.
-  - Handles the configuration of the Device Hub, including the MQTT broker, D-Bus, and other services.
+  - The main entry point that serves the web dashboard and handles all HTTP requests. Think of it as the "front desk" that coordinates everything behind the scenes.
+  - Manages user authentication, system configuration, and provides the REST API that powers the web interface.
 
 - **Provisioning Service**
-  - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$devicehub/certificates/create-from-csr`, signs CSRs, and returns signed certs.
-  - Upserts device records into SQLite table `devices` (fields: `id`, `name?`, `token?`, `meta?`, `created_at`)
+  - Handles device onboarding and security certificates. When a new Edgeberry device wants to join your network, this service validates it and issues the proper credentials.
+  - Creates and manages device identities, ensuring only authorized devices can connect to your hub.
 
 - **Device Twin Service**
-  - Owns desired/reported twin state. Persists state, generates deltas, and publishes twin updates over `$devicehub/devices/{deviceId}/twin/#`. Provides D-Bus methods for the core service to read/update twin state.
-  - Persists desired/reported documents in SQLite tables `twin_desired` and `twin_reported`
+  - Maintains a "digital twin" for each device - a real-time mirror of its current state and desired configuration.
+  - Tracks what you want each device to do (desired state) versus what it's actually doing (reported state), automatically syncing changes between your dashboard and devices.
 
 - **Device Registry Service**
-  - Authoritative inventory for devices. Stores identity anchors (device ID, cert metadata, optional manufacturer UUID hash), status, and operational context. Exposes a D-Bus interface to query/update registry data.
-  - Persists device records in SQLite table `devices` (fields: `id`, `name?`, `token?`, `meta?`, `created_at`)
+  - Your device inventory system that keeps track of all connected Edgeberry devices. Like a phonebook for your IoT fleet.
+  - Records device information, connection history, and operational status so you always know what's connected and when it was last seen.
 
 See `documentation/alignment.md` for architecture and interface details.
 
@@ -54,78 +46,16 @@ See `documentation/alignment.md` for architecture and interface details.
 | Topic | Direction | Description |
 | --- | --- | --- |
 | `$devicehub/certificates/create-from-csr` | Inbound | Create a new certificate from a CSR |
-| `$devicehub/certificates/create-from-csr` | Outbound | Create a new certificate from a CSR | 
+| `$devicehub/certificates/create-from-csr/accepted` | Outbound | Certificate created successfully |
+| `$devicehub/certificates/create-from-csr/rejected` | Outbound | Certificate creation failed |
 | `$devicehub/devices/{deviceId}/provision/request` | Inbound | Request a new device to be provisioned |
 | `$devicehub/devices/{deviceId}/provision/accepted` | Outbound | Device has been provisioned |
-| `$devicehub/devices/{deviceId}/provision/rejected` | Outbound | Device has been rejected |
-| `$devicehub/devices/{deviceId}/twin/get` | Inbound | Request a new device to be provisioned |
-| `$devicehub/devices/{deviceId}/twin/update` | Inbound | Request a new device to be provisioned |  
-| `$devicehub/devices/{deviceId}/twin/update/accepted` | Outbound | Device has been provisioned |
-| `$devicehub/devices/{deviceId}/twin/update/rejected` | Outbound | Device has been rejected |
-| `$devicehub/devices/{deviceId}/twin/update/delta` | Outbound | Device has been rejected |
-
-## Architecture (MVP)
-
-- __Core-service (`core-service/`)__ serves the SPA and exposes JSON under `/api/*`.
-- __Auth model__: single-user admin, JWT stored in HttpOnly cookie `dh_session`.
-  - Endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
-  - UI gates routes via `RequireAuth` in `ui/src/App.tsx`.
-- __Certificates__ (Overview modal): Root CA generate/download; Provisioning certs issue/inspect/delete/download bundle.
-  - Root CA: `GET/POST /api/settings/certs/root`, `GET /api/settings/certs/root/download`.
-  - Provisioning: `GET/POST /api/settings/certs/provisioning`, `GET/DELETE /api/settings/certs/provisioning/:name`, `GET .../:name/download`.
-- __Services & metrics__: `/api/services`, `/api/logs`, `/api/metrics` consumed by dashboard widgets.
-
-## Development
-
-- __Prereqs__: Node 18+, a local MQTT broker (e.g., Mosquitto) for metrics/device features.
-- __Environment__ (core-service): `ADMIN_USER`, `ADMIN_PASSWORD`, `JWT_SECRET`, `JWT_TTL_SECONDS`, `MQTT_URL`.
-- __Workflow__:
-  1. Build UI first so core-service serves fresh SPA bundles:
-     ```bash
-     cd ui && npm run build
-     ```
-  2. Start core-service (dev or prod):
-     ```bash
-     # dev convenience
-     npm run dev
-     # or just core-service
-     cd core-service && npm start
-     ```
-  3. Open http://localhost:8080 → login → open Certificates from the Overview page (top-right) to manage certificates and provisioning whitelist.
-- __Gotchas__:
-  - Hard refresh the browser after UI rebuilds to bust cache if needed.
-  - All UI `fetch` calls include `credentials: 'include'` so the JWT cookie is sent.
-  - Admin-only actions (e.g., service start/stop) are enabled after login.
-
-## Current Implementation (MVP)
-
-The repository contains a working MVP focused on MQTT- and SQLite-backed microservices with a minimal UI and example Node-RED node.
-
-### Features present
-
-- **Node-RED example (`examples/nodered/`)**
-  - Node `edgeberry-device` (TypeScript) with settings: `host`, `uuid`, credential `token`
-  - On input, logs "hello world" and forwards the message
-
-### Build, run, and artifacts
-
-- Build all artifacts:
-  ```bash
-  npm run build
-  # outputs tarballs under dist-artifacts/
-  ```
-
-- Dev run (starts core + services, assumes a broker at MQTT_URL or localhost):
-  ```bash
-  npm run dev
-  # core-service on http://localhost:8080
-  ```
-
-### Notes
-
-- Services use `mqtt@4.x` (with built-in TypeScript types) and `better-sqlite3` for persistence.
-- You need a working MQTT broker (e.g., Mosquitto) reachable at `MQTT_URL`.
-- See `alignment.md` for deeper architecture, topic contracts, and security posture.
+| `$devicehub/devices/{deviceId}/provision/rejected` | Outbound | Device provisioning rejected |
+| `$devicehub/devices/{deviceId}/twin/get` | Inbound | Request device twin state |
+| `$devicehub/devices/{deviceId}/twin/update` | Inbound | Update device twin state |
+| `$devicehub/devices/{deviceId}/twin/update/accepted` | Outbound | Twin update accepted |
+| `$devicehub/devices/{deviceId}/twin/update/rejected` | Outbound | Twin update rejected |
+| `$devicehub/devices/{deviceId}/twin/update/delta` | Outbound | Twin state delta notification |
 
 ## License & Collaboration
 **Copyright 2025 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
