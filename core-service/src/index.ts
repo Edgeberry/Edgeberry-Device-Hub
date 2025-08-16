@@ -92,6 +92,37 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Serve static UI (built by Vite into UI_DIST). Place this before defining the
+// catch-all so that /api/* routes remain handled by API handlers above.
+try {
+  if (fs.existsSync(UI_DIST)) {
+    // Long-cache assets folder (Vite hashed filenames)
+    app.use('/assets', express.static(path.join(UI_DIST, 'assets'), {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    } as any));
+    // Other static files at UI root
+    app.use(express.static(UI_DIST, {
+      setHeaders: (res, file) => {
+        // Do not cache index.html to ensure new deployments are picked up
+        if (file.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-store');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+        }
+      }
+    } as any));
+    // SPA fallback: send index.html for non-API GETs
+    app.get('*', (req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith('/api/')) return next();
+      const indexPath = path.join(UI_DIST, 'index.html');
+      if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+      return res.status(404).send('UI not found');
+    });
+  }
+} catch {}
+
 // GET /api/settings/certs/root/download -> download Root CA certificate (PEM)
 app.get('/api/settings/certs/root/download', async (_req: Request, res: Response) => {
   try {
@@ -341,11 +372,37 @@ app.use(authRequired);
 
 function openDb(file: string){
   try{
+    // Ensure parent directory exists so sqlite can create the DB file
+    try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch {}
     const db: any = new (Database as any)(file);
     db.pragma('journal_mode = WAL');
     return db as any;
   }catch(e){
     return null;
+  }
+}
+
+// Ensure provisioning database schema exists for features that rely on it (e.g., UUID whitelist).
+// This is especially helpful in local development where the DB may start empty.
+function ensureProvisioningSchema(){
+  const db = openDb(PROVISIONING_DB);
+  if(!db) return;
+  try{
+    // uuid_whitelist: tracks pre-approved provisioning UUIDs
+    // Columns: uuid PRIMARY KEY, device_id, name, note, created_at, used_at
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS uuid_whitelist ('+
+      ' uuid TEXT PRIMARY KEY,'+
+      ' device_id TEXT NOT NULL,'+
+      ' name TEXT,'+
+      ' note TEXT,'+
+      " created_at TEXT NOT NULL,"+
+      ' used_at TEXT)'
+    ).run();
+  }catch{
+    // ignore; routes will handle errors if schema still unavailable
+  }finally{
+    try{ db.close(); }catch{}
   }
 }
 
@@ -382,6 +439,24 @@ app.get('/api/devices/:id', (req: Request, res: Response) => {
   }catch{
     res.status(500).json({ error: 'failed to read device' });
   }finally{
+    try{ db.close(); }catch{}
+  }
+});
+
+// DELETE /api/devices/:id -> decommission device (remove from provisioning DB)
+app.delete('/api/devices/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!id) { res.status(400).json({ error: 'invalid_device_id' }); return; }
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try {
+    const info = db.prepare('DELETE FROM devices WHERE id = ?').run(id);
+    // Return also how many whitelist entries exist for this device so UI can prompt follow-up removal.
+    const wlCount = db.prepare('SELECT COUNT(1) as c FROM uuid_whitelist WHERE device_id = ?').get(id)?.c || 0;
+    res.json({ ok: true, removed: info.changes || 0, whitelist_entries: Number(wlCount) });
+  } catch (e:any) {
+    res.status(500).json({ error: 'decommission_failed', message: e?.message || 'failed' });
+  } finally {
     try{ db.close(); }catch{}
   }
 });
@@ -535,6 +610,9 @@ app.post('/api/devices/:id/actions/provisioning/reprovision', (req: Request, res
 // Table lives in provisioning.db as `uuid_whitelist` with columns
 // (uuid PRIMARY KEY, device_id TEXT, name TEXT, note TEXT, created_at TEXT, used_at TEXT)
 
+// Ensure schema exists before exposing routes
+ensureProvisioningSchema();
+
 // GET /api/admin/uuid-whitelist -> list entries
 app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
   const db = openDb(PROVISIONING_DB);
@@ -578,6 +656,19 @@ app.delete('/api/admin/uuid-whitelist/:uuid', (req: Request, res: Response) => {
   try{
     const info = db.prepare('DELETE FROM uuid_whitelist WHERE uuid = ?').run(uuid);
     res.json({ deleted: info.changes > 0 });
+  }catch{ res.status(500).json({ error: 'delete_failed' }); }
+  finally{ try{ db.close(); }catch{} }
+});
+
+// DELETE /api/admin/uuid-whitelist/by-device/:deviceId -> remove all whitelist entries for a device
+app.delete('/api/admin/uuid-whitelist/by-device/:deviceId', (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  if(!deviceId){ res.status(400).json({ error: 'invalid_device_id' }); return; }
+  const db = openDb(PROVISIONING_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try{
+    const info = db.prepare('DELETE FROM uuid_whitelist WHERE device_id = ?').run(deviceId);
+    res.json({ deleted: info.changes || 0 });
   }catch{ res.status(500).json({ error: 'delete_failed' }); }
   finally{ try{ db.close(); }catch{} }
 });

@@ -114,6 +114,8 @@ ART_DIR="${1:-${ROOT_DIR}/dist-artifacts}"
 INSTALL_ROOT="/opt/Edgeberry/devicehub"
 SYSTEMD_DIR="/etc/systemd/system"
 ETC_DIR="/etc/Edgeberry/devicehub"
+DATA_DIR="/var/lib/edgeberry/devicehub"
+PROV_DB_TARGET="${DATA_DIR}/provisioning.db"
 
 # Allowed top-level directories inside the combined artifact
 ALLOWED_NAMES=(
@@ -213,6 +215,20 @@ extract_artifacts() {
   done
 }
 
+ensure_data_dir_and_migrate_db() {
+  # Ensure persistent data directory exists with strict permissions
+  mkdir -p "$DATA_DIR"
+  chmod 0750 "$DATA_DIR" || true
+  # Migrate legacy DB from install tree if present and target not yet created
+  local legacy_db="${INSTALL_ROOT}/provisioning-service/provisioning.db"
+  if [[ -f "$legacy_db" && ! -f "$PROV_DB_TARGET" ]]; then
+    log "migrating legacy provisioning.db to ${PROV_DB_TARGET}"
+    mv -f "$legacy_db" "$PROV_DB_TARGET"
+    chmod 0640 "$PROV_DB_TARGET" || true
+  fi
+  # Do not create or seed a DB here; first service run initializes schema only if absent
+}
+
 install_systemd_units() {
   if ! have_systemd; then
     log "NOTE: systemd not available; skipping unit installation"
@@ -225,7 +241,9 @@ install_systemd_units() {
     devicehub-api.service \
     devicehub-provisioning.service \
     devicehub-twin.service \
-    devicehub-registry.service; do
+    devicehub-registry.service \
+    edgeberry-ca-rehash.service \
+    edgeberry-ca-rehash.path; do
     if [[ -f "${ROOT_DIR}/config/${unit}" ]]; then
       install -m 0644 "${ROOT_DIR}/config/${unit}" "${SYSTEMD_DIR}/${unit}"
       log "installed ${SYSTEMD_DIR}/${unit}"
@@ -247,6 +265,9 @@ enable_services() {
   systemctl_safe enable devicehub-provisioning.service || true
   systemctl_safe enable devicehub-twin.service || true
   systemctl_safe enable devicehub-registry.service || true
+  # Enable CA rehash path (auto-reload broker when CA dir changes)
+  systemctl_safe enable edgeberry-ca-rehash.path || true
+  systemctl_safe enable edgeberry-ca-rehash.service || true
 }
 
 start_services() {
@@ -260,6 +281,8 @@ start_services() {
   systemctl_safe restart devicehub-provisioning.service || true
   systemctl_safe restart devicehub-twin.service || true
   systemctl_safe restart devicehub-registry.service || true
+  # Start path unit to monitor CA directory changes
+  systemctl_safe start edgeberry-ca-rehash.path || true
 }
 
 configure_mosquitto() {
@@ -285,6 +308,7 @@ configure_mosquitto() {
     # Install runtime copies under /etc/mosquitto (AppArmor allows access here)
     mkdir -p /etc/mosquitto/certs /etc/mosquitto/acl.d
     local ETC_CA="/etc/mosquitto/certs/ca.crt"
+    local ETC_CA_DIR="/etc/mosquitto/certs/edgeberry-ca.d"
     local ETC_CERT="/etc/mosquitto/certs/server.crt"
     local ETC_KEY="/etc/mosquitto/certs/server.key"
     local ETC_ACL="/etc/mosquitto/acl.d/edgeberry.acl"
@@ -293,6 +317,13 @@ configure_mosquitto() {
     if [[ -f "$SRC_CERT" ]]; then install -m 0640 "$SRC_CERT" "$ETC_CERT"; fi
     if [[ -f "$SRC_KEY" ]]; then install -m 0640 "$SRC_KEY" "$ETC_KEY"; fi
     if [[ -f "$SRC_ACL" ]]; then install -m 0644 "$SRC_ACL" "$ETC_ACL"; fi
+
+    mkdir -p "$ETC_CA_DIR"
+    cp -f "$SRC_CA" "$ETC_CA_DIR/ca.crt"
+    for cert in "$INSTALL_ROOT/config/ca-trust"/*.crt; do
+      cp -f "$cert" "$ETC_CA_DIR/"
+    done
+    c_rehash "$ETC_CA_DIR" || openssl rehash "$ETC_CA_DIR" || true
 
     if id -u mosquitto >/dev/null 2>&1; then
       chown root:mosquitto "$ETC_CA" "$ETC_CERT" "$ETC_KEY" 2>/dev/null || true
@@ -314,7 +345,10 @@ listener 8883 0.0.0.0
 allow_anonymous false
 
 # TLS
-cafile $ETC_CA
+# Use a CA path so new roots added by the server are trusted automatically
+capath ${ETC_CA_DIR}
+# Fallback single CA (unused when capath is set)
+# cafile ${ETC_CA}
 certfile $ETC_CERT
 keyfile $ETC_KEY
 
@@ -358,6 +392,7 @@ main() {
   ensure_runtime_deps
   ensure_system_deps
   extract_artifacts
+  ensure_data_dir_and_migrate_db
   install_node_deps
   install_systemd_units
   enable_services

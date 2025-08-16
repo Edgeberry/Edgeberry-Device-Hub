@@ -13,11 +13,11 @@
  *  - This route is protected by `RequireAuth` in `App.tsx`. `props.user` is the authenticated admin.
  */
 import React, { useEffect, useState } from 'react';
-import { Badge, Card, Table } from 'react-bootstrap';
+import { Badge, Button, Card, Table } from 'react-bootstrap';
 import HealthWidget from '../components/HealthWidget';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
 import SystemMetricsWidget from '../components/SystemMetricsWidget';
-import { getDevices } from '../api/devicehub';
+import { getDevices, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
 import DeviceDetailModal from '../components/DeviceDetailModal';
@@ -25,6 +25,7 @@ import DeviceDetailModal from '../components/DeviceDetailModal';
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   useEffect(()=>{ 
     let mounted = true;
@@ -56,6 +57,7 @@ export default function Overview(props:{user:any}){
                 <th>Name</th>
                 <th>Status</th>
                 <th>Last seen</th>
+                <th style={{width:140}}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -64,6 +66,27 @@ export default function Overview(props:{user:any}){
                 const open = () => setSelected(String(id));
                 const onKeyDown = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
                   if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
+                };
+                const onDecommission = async (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  if (!id) return;
+                  if (!confirm(`Decommission device "${id}"? This removes it from the devices list.`)) return;
+                  try{
+                    setActionBusy(String(id));
+                    const res:any = await decommissionDevice(String(id));
+                    // If whitelist entries remain, offer to remove them
+                    const wlCount = Number(res?.whitelist_entries || 0);
+                    if (wlCount > 0) {
+                      const also = confirm(`There are ${wlCount} whitelist entr${wlCount===1?'y':'ies'} for this device. Remove them now?`);
+                      if (also) {
+                        await deleteWhitelistByDevice(String(id));
+                      }
+                    }
+                    // Refresh devices list
+                    try{ const d = await getDevices(); const list = Array.isArray(d?.devices) ? d.devices : (Array.isArray(d) ? d : []); setDevices(list); }catch{}
+                  } finally {
+                    setActionBusy(null);
+                  }
                 };
                 return (
                   <tr key={id}
@@ -85,6 +108,13 @@ export default function Overview(props:{user:any}){
                       )}
                     </td>
                     <td>{d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}</td>
+                    <td>
+                      <div className="d-flex gap-2">
+                        <Button size="sm" variant="outline-danger" disabled={actionBusy===String(id)} onClick={onDecommission}>
+                          {actionBusy===String(id) ? 'Working…' : 'Decommission'}
+                        </Button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}

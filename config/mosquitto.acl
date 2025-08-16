@@ -21,6 +21,21 @@ pattern write $devicehub/devices/%u/provision/request
 pattern read  $devicehub/devices/%u/provision/accepted
 pattern read  $devicehub/devices/%u/provision/rejected
 
+# Provisioning-by-claim (shared client cert): scope by clientId instead of CN
+# This allows all devices using the shared provisioning certificate to publish
+# and receive only within their own clientId namespace during provisioning.
+# Keep both %u and %c rules for compatibility.
+pattern write $devicehub/devices/%c/provision/request
+pattern read  $devicehub/devices/%c/provision/accepted
+pattern read  $devicehub/devices/%c/provision/rejected
+
+# Provisioning (open within authenticated realm): do not restrict by CN or clientId
+# The server performs authorization using the whitelist UUID, so the broker
+# can allow any authenticated client to use provisioning topics.
+topic write $devicehub/devices/+/provision/request
+topic read  $devicehub/devices/+/provision/accepted
+topic read  $devicehub/devices/+/provision/rejected
+
 # Twin flow (device twin interactions)
 # Devices write get/update; read accepted/rejected + delta
 pattern write $devicehub/devices/%u/twin/get

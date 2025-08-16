@@ -1,0 +1,16 @@
+[Unit]
+Description=Rehash Edgeberry CA directory and reload Mosquitto
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '
+  CAPATH="/etc/mosquitto/certs/edgeberry-ca.d";
+  if command -v c_rehash >/dev/null 2>&1; then c_rehash "$CAPATH"; else openssl rehash "$CAPATH"; fi;
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then systemctl reload mosquitto || systemctl restart mosquitto; else service mosquitto reload || service mosquitto restart; fi
+'
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

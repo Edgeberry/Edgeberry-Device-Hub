@@ -21,7 +21,12 @@ export const CA_CRT: string = path.join(ROOT_DIR, 'ca.crt');
 export const UI_DIST: string = process.env.UI_DIST || '/opt/Edgeberry/devicehub/ui/build';
 export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://localhost:1883';
 // SQLite DBs owned by worker services (MVP direct-read from core-service)
-export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || path.resolve(process.cwd(), '..', 'provisioning-service', 'provisioning.db');
+// Persist provisioning DB under system data dir by default so whitelist survives reinstalls
+export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/provisioning.db'
+    : path.resolve(process.cwd(), 'data', 'provisioning.db')
+);
 export const REGISTRY_DB: string = process.env.REGISTRY_DB || path.resolve(process.cwd(), '..', 'registry-service', 'registry.db');
 // Consider a device online if we've seen an event within this window (seconds)
 export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);

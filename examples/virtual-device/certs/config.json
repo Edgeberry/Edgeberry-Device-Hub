@@ -1,0 +1,6 @@
+{
+  "mqttUrl": "mqtt://localhost:1883",
+  "caCert": "ca.crt",
+  "cert": "provisioning.crt",
+  "key": "provisioning.key"
+}

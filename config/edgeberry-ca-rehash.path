@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch Edgeberry CA directory and trigger rehash on changes
+
+[Path]
+PathModified=/etc/mosquitto/certs/edgeberry-ca.d
+PathChanged=/etc/mosquitto/certs/edgeberry-ca.d
+Unit=edgeberry-ca-rehash.service
+
+[Install]
+WantedBy=multi-user.target

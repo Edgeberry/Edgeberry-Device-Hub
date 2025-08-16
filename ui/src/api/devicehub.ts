@@ -148,6 +148,20 @@ export async function createDevice(body: any){
   return jsonOrMessage(res);
 }
 /**
+ * Decommission a device (remove from provisioning DB)
+ */
+export async function decommissionDevice(id: string){
+  const res = await fetch(base()+`/devices/${encodeURIComponent(id)}`, { method:'DELETE', credentials:'include' });
+  return jsonOrMessage(res);
+}
+/**
+ * Remove all whitelist entries for a device
+ */
+export async function deleteWhitelistByDevice(deviceId: string){
+  const res = await fetch(base()+`/admin/uuid-whitelist/by-device/${encodeURIComponent(deviceId)}`, { method:'DELETE', credentials:'include' });
+  return jsonOrMessage(res);
+}
+/**
  * Issue a short-lived provision token for a device
  * @param id device id
  * @param hours token lifetime (optional)

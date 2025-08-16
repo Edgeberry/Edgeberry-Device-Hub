@@ -9,6 +9,15 @@ export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA || undefi
 export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT || undefined; // e.g., ../config/certs/provisioning.crt
 export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY || undefined; // e.g., ../config/certs/provisioning.key
 export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
-export const DB_PATH: string = process.env.PROVISIONING_DB || 'provisioning.db';
+// Persist provisioning database under system data dir in production by default
+// Fresh installs MUST NOT seed the whitelist; file will be created on first run if absent
+const NODE_ENV = process.env.NODE_ENV || 'development';
+export const DB_PATH: string = process.env.PROVISIONING_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/provisioning.db'
+    // Align with core-service default dev path: core-service/data/provisioning.db
+    : new URL('../../core-service/data/provisioning.db', import.meta.url).pathname
+);
 // If true, incoming provision requests must include a UUID that exists in uuid_whitelist, matches device_id, and not yet used
 export const ENFORCE_WHITELIST: boolean = (process.env.ENFORCE_WHITELIST || 'false').toLowerCase() === 'true';
+

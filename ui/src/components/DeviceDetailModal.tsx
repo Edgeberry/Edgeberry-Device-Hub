@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Button, Modal, Tab, Tabs, Alert, Spinner } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faLocationDot, faPowerOff } from '@fortawesome/free-solid-svg-icons';
-import { getDevice, getDeviceEvents } from '../api/devicehub';
+import { getDevice, getDeviceEvents, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
 import StatusIndicator from './StatusIndicator';
 import ApplicationPanel from './Device/Application';
 import ConnectionPanel from './Device/Connection';
@@ -119,6 +119,27 @@ export default function DeviceDetailModal(props:{
     }catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to update provisioning', type:'danger'});} finally{ setBusy(false); }
   }
 
+  async function onDecommission(){
+    if(!window.confirm('Decommission this device? This will remove it from the device list.')) return;
+    try{
+      setBusy(true); setDisabled(true);
+      const res:any = await decommissionDevice(deviceId);
+      const wlCount = Number(res?.whitelist_entries || 0);
+      if (wlCount > 0) {
+        const doWipe = window.confirm(`There are ${wlCount} whitelist entr${wlCount===1?'y':'ies'} for this device. Remove them now?`);
+        if (doWipe) {
+          await deleteWhitelistByDevice(deviceId);
+        }
+      }
+      // Close the modal after successful decommission
+      onClose();
+    }catch(err:any){
+      setMsg({ text: err?.toString?.() || 'Failed to decommission device', type: 'danger' });
+    } finally{
+      setBusy(false); setDisabled(false);
+    }
+  }
+
   return (
     <Modal show={show} onHide={onClose} size="xl" centered scrollable>
       <Modal.Header closeButton>
@@ -161,7 +182,8 @@ export default function DeviceDetailModal(props:{
         </Tabs>
       </Modal.Body>
       <Modal.Footer>
-        <Button variant={'danger'} onClick={onClose} disabled={disabled}>Close</Button>
+        <Button variant={'outline-danger'} onClick={onDecommission} disabled={disabled || busy}>Decommission</Button>
+        <Button variant={'secondary'} onClick={onClose} disabled={disabled}>Close</Button>
       </Modal.Footer>
     </Modal>
   );

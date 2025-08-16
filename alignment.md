@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-16 (morning)
+**Last updated:** 2025-08-16 (afternoon)
 
 ## Alignment Maintenance
 
@@ -89,6 +89,59 @@ export MQTT_TLS_KEY=./config/certs/my-device-01.key
 - `MQTT_TLS_CERT` path to client cert file
 - `MQTT_TLS_KEY` path to client key file
 - `MQTT_TLS_REJECT_UNAUTHORIZED` boolean, default `true`
+
+#### Diagnostics: MQTT Sanity Test (mTLS)
+
+Purpose: Device-side connectivity and ACL verification against Mosquitto using mTLS.
+
+Components:
+- **Script**: `scripts/device_mqtt_test.sh`
+  - Executed by the backend, validates connect, basic provisioning/twin topics, and telemetry publish/subscribe flows.
+  - Uses the standardized MQTT envs above.
+- **Backend API**: implemented in `core-service/src/index.ts`
+  - `POST /api/diagnostics/mqtt-test`
+    - Body (all optional): `{ deviceId, mqttUrl, ca, cert, key, rejectUnauthorized, timeoutSec }`
+    - Returns: `{ ok, exitCode, startedAt, durationMs, stdout, stderr }`
+  - `GET /diagnostics`
+    - Minimal HTML page to run the same test manually from a browser.
+- **UI**: `ui/src/components/ServiceStatusWidget.tsx`
+  - Admin-only "Sanity Check" button next to "Refresh".
+  - Opens a modal, runs the test, and displays pass/fail with full STDOUT/STDERR.
+  - The button is visible to all, but disabled when the user is not admin.
+
+Script path resolution (server-side):
+- `core-service` resolves the test script from the first existing path:
+  1) `DIAG_SCRIPT_PATH` (env override)
+  2) `../scripts/device_mqtt_test.sh`
+  3) `../../scripts/device_mqtt_test.sh`
+  4) `/opt/Edgeberry/devicehub/scripts/device_mqtt_test.sh`
+- If the script is missing, the API responds `500` with the attempted paths.
+
+Installer & artifact notes (remote installs):
+- Combined artifact (via `scripts/build-all.sh`) now includes the full `config/` and `scripts/` directories.
+- Installer (`scripts/install.sh`) whitelists `scripts/` in `ALLOWED_NAMES` and installs it to `/opt/Edgeberry/devicehub/scripts/`.
+- Installer sets `chmod +x /opt/Edgeberry/devicehub/scripts/*.sh` so diagnostics execute.
+- Mosquitto config and materials are placed for AppArmor compatibility:
+  - Broker snippet: `/etc/mosquitto/conf.d/edgeberry.conf` with mTLS listener `8883`, `require_certificate true`, `use_subject_as_username true`.
+  - Server certs: `/etc/mosquitto/certs/{server.crt,server.key}`.
+  - ACL: `/etc/mosquitto/acl.d/edgeberry.acl`.
+  - TLS trust model: broker uses OpenSSL `capath` for dynamic CA trust at `/etc/mosquitto/certs/edgeberry-ca.d`.
+    - Any CA PEM dropped into this directory is trusted after an automatic rehash and broker reload.
+    - Systemd watcher: `edgeberry-ca-rehash.path` → triggers `edgeberry-ca-rehash.service` to run `c_rehash`/`openssl rehash` and `systemctl reload mosquitto` when contents change.
+    - Helper scripts:
+      - `scripts/update-broker-ca.sh` — installs an additional CA PEM into `edgeberry-ca.d`, rehashes, and reloads the broker.
+      - `scripts/rotate-root-ca.sh` — replaces all prior trust with a new Root CA (and optionally rotates broker server cert/key), restarts services.
+- Data persistence (provisioning DB):
+  - Persistent data directory: `/var/lib/edgeberry/devicehub/` (created with 0750 perms).
+  - Default provisioning DB path: `/var/lib/edgeberry/devicehub/provisioning.db` (configurable via `PROVISIONING_DB`).
+  - The installer NEVER seeds whitelist entries. It will not create the DB file; the service initializes schema on first run if absent.
+  - Re-install/update behavior: existing `provisioning.db` is preserved. If a legacy DB is found under the install tree, the installer migrates it to the persistent path once.
+
+Operational tips:
+- For remote production nodes, run the sanity check from the UI Services widget. If it fails:
+  - Verify script presence/permissions on the host: `/opt/Edgeberry/devicehub/scripts/device_mqtt_test.sh` is executable.
+  - Optionally set `DIAG_SCRIPT_PATH` in the `devicehub-core.service` environment to point directly at the script.
+  - Confirm Mosquitto is running and reading `/etc/mosquitto/conf.d/edgeberry.conf` with the expected TLS files and ACL.
 
 ### Adding New Features
 - **API endpoint:**
@@ -312,6 +365,7 @@ Responsibilities and boundaries:
 - `provisioning-service/` owns MQTT bootstrap and certificate lifecycle. It may update DB via internal repositories shared with `api/` (from `shared/`). Exposes a D-Bus API for operations and emits signals for status.
 - `twin-service/` maintains digital twins (desired/reported state, deltas, reconciliation). Subscribes/publishes to twin topics and updates the DB via shared repositories.
 - `mqtt-broker/` config enforces mTLS, maps cert subject → device identity, and defines ACLs per topic family.
+    - Provisioning topics are open to any authenticated client (mTLS) at the broker layer; authorization is enforced by `provisioning-service` via whitelist UUID validation. This supports shared provisioning certificates.
 - All microservices expose stable D-Bus interfaces under a common namespace (e.g., `io.edgeberry.devicehub.*`).
 
 Interfaces (high level):
@@ -596,6 +650,9 @@ Whitelist & lifecycle (MVP additions):
   - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, device_id, name, note, created_at, used_at }`.
   - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated).
   - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
+ - Install & persistence rules:
+   - Fresh installs MUST NOT populate the whitelist. The `uuid_whitelist` table is created empty on first run.
+   - On re-install/update, the whitelist MUST persist. The provisioning DB lives under `/var/lib/edgeberry/devicehub/provisioning.db` by default and is not overwritten by the installer.
 - Settings page includes a Device Lifecycle Status section:
   - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
 
@@ -637,7 +694,8 @@ Security posture:
 
 - Two gates protect bootstrap (production): provisioning client certificate and secret UUID whitelist (stored as salted hashes).
 - MVP stores plaintext UUIDs in a local SQLite table for speed of iteration; never log raw UUIDs where avoidable.
-- `ENFORCE_WHITELIST` (provisioning-service env) controls whether whitelist is required during provisioning.
+ - `ENFORCE_WHITELIST` (provisioning-service env) controls whether whitelist is required during provisioning.
+ - Default production path for whitelist DB: `/var/lib/edgeberry/devicehub/provisioning.db` (override with `PROVISIONING_DB`).
 - Production enforces mTLS at the broker. Devices never use HTTP(S) to communicate with the server.
 
 ### Provisioning Service (MVP, dev path) — Step-by-Step

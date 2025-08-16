@@ -11,6 +11,7 @@ Environment=PORT=80
 EnvironmentFile=-/etc/Edgeberry/devicehub/core.env
 # Optionally serve built UI from /opt/Edgeberry/devicehub/ui/build
 Environment=UI_DIST=/opt/Edgeberry/devicehub/ui/build
+Environment=PROVISIONING_DB=/var/lib/edgeberry/devicehub/provisioning.db
 ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/core-service/dist/index.js
 Restart=on-failure
 RestartSec=3
