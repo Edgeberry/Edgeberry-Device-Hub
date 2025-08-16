@@ -132,6 +132,15 @@ main() {
 
   pick_remote_dir
   log "using remote staging: ${REMOTE_STAGING}"
+  
+  # Test sudo access first
+  log "testing sudo access..."
+  if ! ${SSH_BASE[@]} "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' whoami" >/dev/null 2>&1; then
+    echo "[deploy] ERROR: Cannot authenticate with sudo on remote host" >&2
+    echo "[deploy] Check that user '$USER' has sudo privileges and the password is correct" >&2
+    exit 1
+  fi
+  
   ${SSH_BASE[@]} "${USER}@${HOST}" "mkdir -p '${REMOTE_STAGING}/dist-artifacts' '${REMOTE_STAGING}/config' '${REMOTE_STAGING}/scripts'"
 
   # Copy (prefer rsync)
@@ -166,7 +175,12 @@ main() {
   if (( VERBOSE )); then
     ${SSH_BASE[@]} -tt "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' bash -c 'DEBUG=1 TMPDIR=\"${REMOTE_STAGING}\" bash \"${REMOTE_STAGING}/scripts/install.sh\" \"${REMOTE_STAGING}/dist-artifacts\"'"
   else
-    ${SSH_BASE[@]} -tt "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' bash -c 'TMPDIR=\"${REMOTE_STAGING}\" bash \"${REMOTE_STAGING}/scripts/install.sh\" \"${REMOTE_STAGING}/dist-artifacts\"'" >/dev/null 2>&1
+    if ! ${SSH_BASE[@]} -tt "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' bash -c 'TMPDIR=\"${REMOTE_STAGING}\" bash \"${REMOTE_STAGING}/scripts/install.sh\" \"${REMOTE_STAGING}/dist-artifacts\"'" 2>/tmp/deploy_error.log; then
+      echo "[deploy] Remote installer failed. Last error output:" >&2
+      ${SSH_BASE[@]} "${USER}@${HOST}" "tail -20 /var/log/syslog 2>/dev/null || echo 'Could not read syslog'" >&2 || true
+      echo "[deploy] Try running with -v/--verbose for more details" >&2
+      exit 1
+    fi
   fi
 
   # Cleanup

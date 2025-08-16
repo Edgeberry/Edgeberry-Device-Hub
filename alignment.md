@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
  
- Last updated: 2025-08-15 (morning)
+ Last updated: 2025-08-16 (morning)
  
  ## Alignment Maintenance
   - This document is the single source of truth for project vision and high-level specs.
@@ -29,7 +29,7 @@ Simple rules so you can contribute confidently:
 - **Tools you need**: TypeScript, Node.js/Express, React, SQLite, Mosquitto (MQTT), D‑Bus. No extra frameworks.
 
 - **Run locally**:
-  - `bash scripts/dev_start.sh` (hot reload, broker + services). 
+  - `npm run dev` or `bash scripts/dev_start.sh` (hot reload, broker + services). 
   - Copy `.env.example` → `.env` per project if needed.
 
 - **Add something new**:
@@ -125,7 +125,7 @@ Execution model & IPC:
 - `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
  - `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
  - `scripts/` — Developer tooling and CI checks (e.g., DB migrations, seeders).
-  - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer).
+  - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer), `scripts/deploy.sh` (SSH deployment to remote hosts).
 - `docs/` — Extended documentation referenced from this file.
 - `examples/` — Example integrations and reference nodes.
   - `examples/nodered/` — TypeScript-based Node-RED node "edgeberry-device". Minimal example that sets status to ready, logs "hello world" on input, and passes the message through. Required settings when adding the node: `host` (Device Hub base URL), `uuid` (device UUID), and a credential `token` (host access token). Build with `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`. Install into Node-RED via `npm link` or `npm pack` from this folder. CI will build and upload this asset for easy install/testing.
@@ -155,6 +155,7 @@ Local development:
 - Env via `.env` files per project; never commit secrets.
 - D-Bus: prefer the user session bus during development (fallback to a private bus if needed); systemd user units can be used to emulate production `systemd` services locally.
  - Dev orchestrator: `scripts/dev_start.sh` starts Mosquitto and all services concurrently with hot-reload (prefers `npm run dev`/`tsx watch`). All process logs are multiplexed in a single terminal with per-service prefixes. Services run with `NODE_ENV=development`.
+ - Deployment: `scripts/deploy.sh` provides SSH-based deployment to remote hosts. Supports key-based or password authentication, builds artifacts locally (unless `--skip-build`), copies to remote staging, and runs the installer with sudo.
 
 ### Branding
 
@@ -220,8 +221,35 @@ CI and releases:
 
 - Lint, typecheck, test per project. Alignment checks run at repo root and fail if sections here drift from code.
 - Versioning per project package; releases tagged at the repo root with affected packages noted in changelog.
-- Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>`.
+- Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
+
+### Deployment Process (SSH)
+
+The `scripts/deploy.sh` script provides automated deployment to remote hosts via SSH:
+
+**Usage**: `bash scripts/deploy.sh -h <host> [-u <user>] [-i <identity_file>] [options]`
+
+**Options**:
+- `-h, --host` — Remote host or IP (required)
+- `-u, --user` — SSH username (prompts if not provided; defaults to current user)
+- `-i, --identity` — SSH private key file (optional; uses password auth if omitted)
+- `--remote-dir` — Custom remote staging directory (default: `~/.edgeberry-deploy-<timestamp>`)
+- `--skip-build` — Skip local artifact building (use existing `dist-artifacts/`)
+- `-v, --verbose` — Verbose SSH/rsync output
+
+**Process**:
+1. Prompts for SSH credentials (user if not provided, password always)
+2. Tests sudo access on remote host
+3. Builds artifacts locally via `scripts/build-all.sh` (unless `--skip-build`)
+4. Creates remote staging directory
+5. Copies artifacts, config, and installer using rsync (with scp fallback)
+6. Runs `scripts/install.sh` remotely with sudo privileges
+7. Cleans up staging directory
+
+**Dependencies**: `ssh`, `scp`, `sshpass` (for password auth). Optional: `rsync` for faster transfers.
+
+**NPM Integration**: Use `npm run deploy` for quick deployment with predefined host/user, or `npm run build` + `scripts/deploy.sh --skip-build` for faster iterations.
 
 ### WebSocket Topics (Current)
 
