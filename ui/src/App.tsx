@@ -11,10 +11,6 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard from './Pages/Dashboard';
 import Overview from './Pages/Overview';
-import Health from './Pages/Health';
-import DeviceDetail from './Pages/DeviceDetail';
-import Settings from './Pages/Settings';
-import Login from './Pages/Login';
 import Logout from './Pages/Logout';
 import NotFound from './Pages/NotFound';
 
@@ -55,17 +51,14 @@ function App(){
     <div className="App">
       <BrowserRouter>
         <Routes>
-          { /* Public auth route */ }
-          <Route path='/login' element={<Login user={user} onLogin={async ()=>{ await refreshUser(); }} />} />
+          { /* Login is handled via a modal inside Dashboard */ }
 
-          { /* Protected app shell */ }
-          <Route path='/' element={<RequireAuth><Dashboard user={user}/></RequireAuth> }>
+          { /* Public app shell: Overview is accessible without login (anonymous mode) */ }
+          <Route path='/' element={<Dashboard user={user} onLoggedIn={async ()=>{ await refreshUser(); }} /> }>
             <Route index element={<Overview user={user} />} />
-            <Route path='logout' element={<Logout user={user} onLogout={()=>{ setUser(null); }} />} />
             <Route path='overview' element={<Overview user={user} />} />
-            <Route path='devices/:assetId' element={<DeviceDetail user={user} />} />
-            <Route path='settings' element={<Settings user={user} />}/>
-            <Route path='health' element={<Health />}/>
+            { /* Protected routes */ }
+            <Route path='logout' element={<RequireAuth><Logout user={user} onLogout={()=>{ setUser(null); }} /></RequireAuth>} />
             <Route path='*' element={<NotFound />} />
           </Route>
           <Route path='*' element={<Navigate to='/' replace />} />

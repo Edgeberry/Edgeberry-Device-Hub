@@ -55,8 +55,7 @@ See `alignment.md` for architecture and interface details.
 - __Auth model__: single-user admin, JWT stored in HttpOnly cookie `dh_session`.
   - Endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
   - UI gates routes via `RequireAuth` in `ui/src/App.tsx`.
-- __Caching policy__: ETag disabled and strict no-cache headers on `/api/*` to avoid stale auth/UI state.
-- __Certificates__ (Settings page): Root CA generate/download; Provisioning certs issue/inspect/delete/download bundle.
+- __Certificates__ (Overview modal): Root CA generate/download; Provisioning certs issue/inspect/delete/download bundle.
   - Root CA: `GET/POST /api/settings/certs/root`, `GET /api/settings/certs/root/download`.
   - Provisioning: `GET/POST /api/settings/certs/provisioning`, `GET/DELETE /api/settings/certs/provisioning/:name`, `GET .../:name/download`.
 - __Services & metrics__: `/api/services`, `/api/logs`, `/api/metrics` consumed by dashboard widgets.
@@ -77,7 +76,7 @@ See `alignment.md` for architecture and interface details.
      # or just core-service
      cd core-service && npm start
      ```
-  3. Open http://localhost:8080 → login → navigate to Settings to manage certificates.
+  3. Open http://localhost:8080 → login → open Certificates from the Overview page (top-right) to manage certificates and provisioning whitelist.
 - __Gotchas__:
   - Hard refresh the browser after UI rebuilds to bust cache if needed.
   - All UI `fetch` calls include `credentials: 'include'` so the JWT cookie is sent.

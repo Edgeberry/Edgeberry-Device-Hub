@@ -21,11 +21,15 @@ import { getDevices, decommissionDevice, deleteWhitelistByDevice } from '../api/
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
 import DeviceDetailModal from '../components/DeviceDetailModal';
+import CertificateSettingsModal from '../components/CertificateSettingsModal';
+import WhitelistModal from '../components/WhitelistModal';
 
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [showCerts, setShowCerts] = useState(false);
+  const [showWhitelist, setShowWhitelist] = useState(false);
 
   useEffect(()=>{ 
     let mounted = true;
@@ -48,7 +52,17 @@ export default function Overview(props:{user:any}){
       <SystemMetricsWidget />
 
       <Card>
-        <Card.Header>Devices</Card.Header>
+        <Card.Header className="d-flex justify-content-between align-items-center">
+          <span>Devices</span>
+          <div className="d-flex gap-2">
+            <Button size="sm" variant="outline-secondary" onClick={()=> setShowWhitelist(true)} disabled={!props.user}>
+              Whitelist
+            </Button>
+            <Button size="sm" variant="outline-primary" onClick={()=> setShowCerts(true)} disabled={!props.user}>
+              Certificates
+            </Button>
+          </div>
+        </Card.Header>
         <Card.Body>
           <Table size="sm" responsive hover>
             <thead>
@@ -110,7 +124,7 @@ export default function Overview(props:{user:any}){
                     <td>{d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}</td>
                     <td>
                       <div className="d-flex gap-2">
-                        <Button size="sm" variant="outline-danger" disabled={actionBusy===String(id)} onClick={onDecommission}>
+                        <Button size="sm" variant="outline-danger" disabled={!props.user || actionBusy===String(id)} onClick={onDecommission}>
                           {actionBusy===String(id) ? 'Working…' : 'Decommission'}
                         </Button>
                       </div>
@@ -124,6 +138,8 @@ export default function Overview(props:{user:any}){
       </Card>
 
       <DeviceDetailModal deviceId={selected||''} show={!!selected} onClose={()=> setSelected(null)} />
+      <CertificateSettingsModal show={showCerts} onClose={()=> setShowCerts(false)} user={props.user} />
+      <WhitelistModal show={showWhitelist} onClose={()=> setShowWhitelist(false)} user={props.user} />
     </div>
   );
 }

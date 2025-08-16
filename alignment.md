@@ -515,7 +515,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - `/overview` — alias to Overview
 - `/health` — detailed health view
 - `/devices/:assetId` — device detail placeholder
- - `/settings` — admin-only settings page: shows server snapshot, Root CA status/generator/download, and provisioning certificates list with issuance/inspect/delete/download
+- Admin controls are integrated into the Overview via admin-only modals (Certificates, Whitelist)
 - Auth routes: `/login`, `/logout` (registration disabled for MVP; UI hides any register links)
 
 ### Core Components
@@ -526,6 +526,8 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
   - Service tiles open a modal with recent logs and Start/Restart/Stop controls. Actions are visible to everyone but disabled unless the user has the `admin` role.
   - Display names hide the `devicehub-` prefix and `.service` suffix. The legacy `api` tile is removed (merged into core).
 - `Overview` page (`ui/src/Pages/Overview.tsx`) — contains `HealthWidget`, `ServiceStatusWidget`, and a simple devices table
+- `CertificateSettingsModal` (`ui/src/components/CertificateSettingsModal.tsx`) — admin-only modal to manage Root CA and provisioning certificates, opened from Overview
+- `WhitelistModal` (`ui/src/components/WhitelistModal.tsx`) — admin-only modal to manage provisioning UUID whitelist, opened from Overview
 
 ### API Contracts (UI dependencies)
 
@@ -626,7 +628,7 @@ For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT
 
 ### Settings & Certificate Management
 
-Root CA and provisioning certificates are managed under `/api/settings/certs/*` and surfaced in the SPA Settings page (`/settings`).
+Root CA and provisioning certificates are managed under `/api/settings/certs/*` and surfaced in the Overview via admin-only modals.
 
 - Root CA
   - `GET /api/settings/certs/root` → returns `{ pem, meta }` if present; `404` if absent
@@ -641,19 +643,19 @@ Root CA and provisioning certificates are managed under `/api/settings/certs/*` 
   - `GET /api/settings/certs/provisioning/:name/download` → downloads a `.tgz` bundle containing:
     - `ca.crt` (Root CA), `:name.crt`, `:name.key`, and `config.json` with `{ mqttUrl, caCert, cert, key }`
 
-UI behavior on `/settings`:
+UI behavior in Certificates modal:
 - Root CA card shows presence, subject, validity, with actions: Generate (if absent), Download CA (if present).
 - Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
 
 Whitelist & lifecycle (MVP additions):
-- Settings page includes a Provisioning Whitelist section:
+- Overview includes a Provisioning Whitelist modal:
   - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, device_id, name, note, created_at, used_at }`.
   - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated).
   - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
  - Install & persistence rules:
-   - Fresh installs MUST NOT populate the whitelist. The `uuid_whitelist` table is created empty on first run.
-   - On re-install/update, the whitelist MUST persist. The provisioning DB lives under `/var/lib/edgeberry/devicehub/provisioning.db` by default and is not overwritten by the installer.
-- Settings page includes a Device Lifecycle Status section:
+    - Fresh installs MUST NOT populate the whitelist. The `uuid_whitelist` table is created empty on first run.
+    - On re-install/update, the whitelist MUST persist. The provisioning DB lives under `/var/lib/edgeberry/devicehub/provisioning.db` by default and is not overwritten by the installer.
+- Overview includes a Device Lifecycle section:
   - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
 
 ### Fleet Provisioning Model (Current)

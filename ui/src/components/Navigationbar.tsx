@@ -1,18 +1,13 @@
 /**
- * Top navigation bar and off-canvas menu.
+ * Top navigation bar (no menu).
  *
- * Shows inline auth status ("Signed in as ...") and conditionally renders
- * admin-only links (Settings, Logout) when a `user` is present.
+ * Shows inline auth status and a Login/Logout button.
  */
-import { Button, Container, ListGroup, Nav, Navbar, Offcanvas } from "react-bootstrap";
+import { Container, Nav, Navbar } from "react-bootstrap";
 import logo from '../EdgeBerry_Logo_text.svg';
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faBars, faCogs, faGear, faGauge, faSignOutAlt } from "@fortawesome/free-solid-svg-icons";
-import { useState } from "react";
 import { Link } from "react-router-dom";
 
-const NavigationBar = (props:{user:any|null})=>{
-    const[ show, setShow ] = useState<boolean>(false);
+const NavigationBar = (props:{user:any|null, onLoginClick?: ()=>void })=>{
     return(
         <>
             <Navbar sticky="top" bg={'dark'} data-bs-theme={'dark'}>
@@ -25,43 +20,19 @@ const NavigationBar = (props:{user:any|null})=>{
                             <span style={{ color:'#cfe3ff', fontSize:'0.9rem' }}>
                                 Signed in as <b>{props.user?.name || 'admin'}</b>
                             </span>
-                        ) : null}
-                        <Button variant={'transparent'} className="btn-outline-light" onClick={()=>{setShow(true)}}><FontAwesomeIcon icon={faBars}/></Button>
+                        ) : (
+                            <span style={{ color:'#cfe3ff', fontSize:'0.9rem', opacity: 0.9 }}>
+                                Viewing as <b>anonymous</b>
+                            </span>
+                        )}
+                        {props.user ? (
+                          <Link to='/logout' className='btn btn-sm btn-outline-light'>Logout</Link>
+                        ) : (
+                          <button className='btn btn-sm btn-outline-light' onClick={props.onLoginClick}>Login</button>
+                        )}
                     </Nav>
                 </Container>
             </Navbar>
-            <Offcanvas show={show} onHide={()=>{setShow(false)}} placement={'end'} style={{maxWidth:'300px'}}>
-                <Offcanvas.Header closeButton>
-                    <Offcanvas.Title>Menu</Offcanvas.Title>
-                </Offcanvas.Header>
-                <Offcanvas.Body style={{padding:'0px'}}>
-                    <ListGroup>
-                        <ListGroup.Item as={Link} to='/' onClick={()=>{setShow(false)}}>
-                            <FontAwesomeIcon icon={faGauge} /> Overview
-                        </ListGroup.Item>
-                        <ListGroup.Item as={Link} to='/health' onClick={()=>{setShow(false)}}>
-                            <FontAwesomeIcon icon={faGear} /> Health
-                        </ListGroup.Item>
-                        {props.user? <>
-                            <ListGroup.Item as={Link} to='/settings' onClick={()=>{setShow(false)}}>
-                                <FontAwesomeIcon icon={faCogs} /> Settings
-                            </ListGroup.Item>
-                            <ListGroup.Item as={Link} to='/logout' onClick={()=>{setShow(false)}}>
-                                <FontAwesomeIcon icon={faSignOutAlt} /> Log out
-                            </ListGroup.Item>
-                            {/* Admin features are integrated across pages; no dedicated page/link */}
-                        </> : <>
-                            <ListGroup.Item as={Link} to='/login' onClick={()=>{setShow(false)}}>
-                                Login
-                            </ListGroup.Item>
-                        </>}
-                    </ListGroup>
-                    <Container className="container-bottom" style={{fontSize:'12px'}}>
-                        <hr/>
-                        <p>Edgeberry Device Hub is open-source software.</p>
-                    </Container>
-                </Offcanvas.Body>
-            </Offcanvas>
         </>
     );
 }

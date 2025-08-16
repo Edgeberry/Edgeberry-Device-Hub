@@ -1,4 +1,6 @@
 import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
 export const SERVICE = 'core-service';
 
@@ -18,7 +20,12 @@ export const PROV_DIR: string = path.join(CERTS_DIR, 'provisioning');
 export const CA_KEY: string = path.join(ROOT_DIR, 'ca.key');
 export const CA_CRT: string = path.join(ROOT_DIR, 'ca.crt');
 
-export const UI_DIST: string = process.env.UI_DIST || '/opt/Edgeberry/devicehub/ui/build';
+// Resolve UI_DIST to the freshly built UI bundled alongside the service by default.
+// Works in both repo (core-service/dist relative to ../../ui/build) and combined artifact staging.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const CANDIDATE_UI_DIST = path.resolve(__dirname, '../../ui/build');
+export const UI_DIST: string = process.env.UI_DIST || (fs.existsSync(CANDIDATE_UI_DIST) ? CANDIDATE_UI_DIST : '/opt/Edgeberry/devicehub/ui/build');
 export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://localhost:1883';
 // SQLite DBs owned by worker services (MVP direct-read from core-service)
 // Persist provisioning DB under system data dir by default so whitelist survives reinstalls

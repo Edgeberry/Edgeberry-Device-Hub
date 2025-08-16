@@ -98,13 +98,13 @@ try {
   if (fs.existsSync(UI_DIST)) {
     // Long-cache assets folder (Vite hashed filenames)
     app.use('/assets', express.static(path.join(UI_DIST, 'assets'), {
-      setHeaders: (res) => {
+      setHeaders: (res: Response) => {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
     } as any));
     // Other static files at UI root
     app.use(express.static(UI_DIST, {
-      setHeaders: (res, file) => {
+      setHeaders: (res: Response, file: string) => {
         // Do not cache index.html to ensure new deployments are picked up
         if (file.endsWith('index.html')) {
           res.setHeader('Cache-Control', 'no-store');
@@ -674,7 +674,7 @@ app.delete('/api/admin/uuid-whitelist/by-device/:deviceId', (req: Request, res: 
 });
 
 // ===== Server Settings & Certificate Management =====
-// Endpoints backing the Settings page in the UI. Root CA must exist before issuing
+// Endpoints backing the admin modals (Certificates/Whitelist) on the Overview UI. Root CA must exist before issuing
 // provisioning certificates. Files are written under CERTS_DIR.
 // Filesystem layout (configurable via env):
 //  ROOT: CERTS_DIR (default: ./data/certs relative to process cwd)

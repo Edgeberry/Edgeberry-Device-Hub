@@ -82,18 +82,30 @@ build_ui() {
       if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
       if npm run | grep -qE '^\s*build\s'; then
         npm run build
-        # Ensure build output exists
-        if [[ ! -f "build/index.html" ]]; then
-          echo "[build-all] ERROR: UI build output missing at ui/build/index.html" >&2
+        # Determine output dir (vite default is dist/ unless configured)
+        local OUT_DIR=""
+        if [[ -f "build/index.html" ]]; then OUT_DIR="build"; fi
+        if [[ -z "$OUT_DIR" && -f "dist/index.html" ]]; then OUT_DIR="dist"; fi
+        if [[ -z "$OUT_DIR" ]]; then
+          echo "[build-all] ERROR: UI build output missing (expected ui/build/ or ui/dist/)" >&2
           exit 1
         fi
+        export UI_BUILD_OUT="$OUT_DIR"
       fi
       npm prune --omit=dev || true
     fi
     popd >/dev/null
     mkdir -p "$COMBINED_STAGE/${name}"
     # Only stage built static assets for the UI
-    rsync -a --delete "${dir}/build/" "$COMBINED_STAGE/${name}/build/"
+    # Normalize any OUT_DIR (build/ or dist/) to staged ui/build/ to match core-service UI_DIST default
+    if [[ -d "${dir}/build" ]]; then
+      rsync -a --delete "${dir}/build/" "$COMBINED_STAGE/${name}/build/"
+    elif [[ -d "${dir}/dist" ]]; then
+      rsync -a --delete "${dir}/dist/" "$COMBINED_STAGE/${name}/build/"
+    else
+      echo "[build-all] ERROR: No UI build output directory to stage (looked for build/ and dist/)" >&2
+      exit 1
+    fi
     # No per-package tarball; staged into combined artifact
     log "staged: ${name}"
   else

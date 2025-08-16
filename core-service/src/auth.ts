@@ -47,7 +47,15 @@ export function clearSessionCookie(res: Response) {
 }
 
 export function authRequired(req: Request, res: Response, next: NextFunction) {
-  if (req.path === '/healthz' || req.path === '/api/health') return next();
+  // Public endpoints (non-sensitive): health, metrics, service status, auth
+  if (
+    req.path === '/healthz' ||
+    req.path === '/api/health' ||
+    req.path === '/api/metrics' ||
+    req.path === '/api/services'
+  ) {
+    return next();
+  }
   if (req.path.startsWith('/api/auth/')) return next();
   const s = getSession(req);
   if (!s) {
