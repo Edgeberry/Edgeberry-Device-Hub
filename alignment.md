@@ -1,14 +1,20 @@
 # Alignment Document – Edgeberry Device Hub
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
- 
- Last updated: 2025-08-16 (morning)
- 
- ## Alignment Maintenance
-  - This document is the single source of truth for project vision and high-level specs.
-  - Update it in the same pull request as any change that materially affects: technology stack, roles/permissions, public observability, device lifecycle, or system boundaries.
-  - Required sections to keep accurate: All
-  - Prefer clarity over completeness: link to detailed docs when necessary, but ensure intent and scope live here.
+
+**Last updated:** 2025-08-16 (morning)
+
+## Alignment Maintenance
+
+- This document is the single source of truth for project vision and high-level specs
+- Update it in the same pull request as any change that materially affects:
+  - Technology stack
+  - Roles/permissions
+  - Public observability
+  - Device lifecycle
+  - System boundaries
+- **Required sections to keep accurate:** All
+- **Prefer clarity over completeness:** Link to detailed docs when necessary, but ensure intent and scope live here
 
 ## Purpose
 
@@ -22,53 +28,96 @@ Edgeberry Device Hub is a **self-hostable device management service** designed s
 * **Decentralization** – Each server instance is sovereign but can optionally sync or interoperate with others.
 * **Bounded flexibility** – The system supports many use cases, but always within the defined scope of managing Edgeberry devices.
 
-## Maintainability & DX (Junior‑Friendly)
+## Maintainability & Developer Experience (Junior-Friendly)
 
 Simple rules so you can contribute confidently:
 
-- **Tools you need**: TypeScript, Node.js/Express, React, SQLite, Mosquitto (MQTT), D‑Bus. No extra frameworks.
+### Required Tools
+- **Core stack:** TypeScript, Node.js/Express, React, SQLite, Mosquitto (MQTT), D-Bus
+- **No extra frameworks** - Keep it simple
 
-- **Run locally**:
-  - `npm run dev` or `bash scripts/dev_start.sh` (hot reload, broker + services). 
-  - Copy `.env.example` → `.env` per project if needed.
+### Running Locally
+- **Quick start:** `npm run dev` or `bash scripts/dev_start.sh` (hot reload, broker + services)
+- **Environment:** Copy `.env.example` → `.env` per project if needed
 
-- **Add something new**:
-  - API endpoint: add a handler, register route, add a short comment with request/response, add a tiny test.
-  - MQTT topic: use `shared/mqtt` helpers, document request/response topic names here, add a fixture test.
-  - UI widget: create a small component with loading/error states and a typed fetch hook.
+### Adding New Features
+- **API endpoint:**
+  - Add a handler and register route
+  - Add short comment with request/response format
+  - Add a minimal test
+- **MQTT topic:**
+  - Use `shared/mqtt` helpers
+  - Document request/response topic names in this file
+  - Add a fixture test
+- **UI widget:**
+  - Create small component with loading/error states
+  - Use typed fetch hook
 
-- **Coding rules**:
-  - TypeScript strict, ESLint + Prettier pass before commit.
-  - Use types from `shared/` for DTOs/schemas; don’t duplicate shapes.
-  - Never log secrets. Make errors actionable (what failed and what to try).
+### Coding Standards
+- **TypeScript:** Strict mode, ESLint + Prettier must pass before commit
+- **Types:** Use types from `shared/` for DTOs/schemas; avoid duplication
+- **Security:** Never log secrets
+- **Errors:** Make errors actionable (what failed and what to try)
 
-- **Before opening a PR**:
-  - Run lint/typecheck/build locally.
-  - If you changed an API/topic/contract, update this file and the nearest README or code comment.
-  - Keep PRs small and focused.
+### Before Opening a PR
+- Run lint/typecheck/build locally
+- If you changed an API/topic/contract, update this file and nearest README/code comment
+- Keep PRs small and focused
 
 ## Readability & Documentation Standards
 
-We prioritize human readability to reduce onboarding time and prevent operational mistakes. Contributors must follow these conventions:
+We prioritize human readability to reduce onboarding time and prevent operational mistakes.
 
-- **Comment the why, not just the what**: Explain decisions, invariants, trade-offs, and security implications where non-obvious. Avoid restating code.
-- **Document environment and contracts**: At each service entrypoint, document env vars, expected directory layout, network ports, and external dependencies (MQTT, D-Bus, HTTP).
-- **APIs and topics**: Co-locate short endpoint/topic summaries near handlers (methods, routes, message handlers). Link to this file for the canonical contract.
-- **Security notes**: Call out auth, authn/z boundaries, and sensitive data handling (cookies, tokens, certificates) at the point of use.
-- **Operational clarity**: For background workers, document subscriptions, QoS, retry/backoff, and shutdown behavior.
-- **UI code**: Briefly annotate data sources, loading/error fallbacks, and admin gating logic in components consuming APIs.
-- **Keep comments truthful**: Update comments when behavior changes; treat stale comments as bugs.
+### Documentation Requirements
 
-Style:
+- **Comment the why, not just the what**
+  - Explain decisions, invariants, trade-offs, and security implications where non-obvious
+  - Avoid restating code
 
-- Prefer concise line comments near logic over large headers, except at file/service entrypoints where a short header is encouraged.
-- Use TypeScript types and clear naming; comments supplement, not replace, types.
-- Avoid leaking secrets in examples or logs. Include TODOs with owner/context when applicable.
+- **Document environment and contracts**
+  - At each service entrypoint, document:
+    - Environment variables
+    - Expected directory layout
+    - Network ports
+    - External dependencies (MQTT, D-Bus, HTTP)
 
-PR checklist additions:
+- **APIs and topics**
+  - Co-locate short endpoint/topic summaries near handlers
+  - Link to this file for canonical contracts
 
-- If behavior or contracts changed, ensure inline comments are updated and this alignment file is amended when scope/principles are affected.
-- New endpoints/topics: add a brief comment where implemented and ensure the corresponding section in this document stays accurate.
+- **Security notes**
+  - Call out auth/authz boundaries
+  - Document sensitive data handling (cookies, tokens, certificates) at point of use
+
+- **Operational clarity**
+  - For background workers, document:
+    - Subscriptions and QoS
+    - Retry/backoff behavior
+    - Shutdown behavior
+
+- **UI code**
+  - Annotate data sources
+  - Document loading/error fallbacks
+  - Note admin gating logic in API-consuming components
+
+- **Keep comments truthful**
+  - Update comments when behavior changes
+  - Treat stale comments as bugs
+
+### Style Guidelines
+
+- **Prefer concise line comments** near logic over large headers
+  - Exception: Short headers encouraged at file/service entrypoints
+- **Use TypeScript types and clear naming**
+  - Comments supplement, don't replace, types
+- **Security conscious**
+  - Avoid leaking secrets in examples or logs
+  - Include TODOs with owner/context when applicable
+
+### PR Checklist Additions
+
+- **Contract changes:** Ensure inline comments are updated and this alignment file is amended when scope/principles are affected
+- **New endpoints/topics:** Add brief comment where implemented and ensure corresponding section in this document stays accurate
 
 ## Technology Stack
 
@@ -85,52 +134,126 @@ These choices are made to maximize simplicity, performance, and long-term mainta
 
 ## Project Structure
 
-The Device Hub is a set of smaller projects in a single monorepo to keep development tight and interfaces explicit:
+The Device Hub is a set of smaller projects in a single monorepo to keep development tight and interfaces explicit.
 
-### Code Organization (Generalized)
+### Code Organization Principles
 
-- **Self-contained services**: Each microservice is organized by concern and starts from a thin entrypoint that only bootstraps dependencies and wiring.
-- **Separation of concerns**: Configuration, data access, messaging, and shutdown live in focused modules. Business logic is isolated from startup code.
-- **Cohesive modules, not micro-files**: Related logic is grouped into a few larger files per service (e.g., a single messaging module), prioritizing readability over fragmentation.
-- **Consistent patterns**: Naming, logging style, and import conventions are uniform across services to reduce cognitive load.
-- **Gateway service**: One service exposes the public HTTP API and serves the UI; internal workers communicate via their own channels.
-- **Environment-driven**: Behavior is configured via environment variables (ports, paths, secrets, endpoints) and remains explicit.
-- **Graceful teardown**: Each service provides a clear shutdown path to close external resources safely.
+#### Service Design
+- **Self-contained services:** Each microservice is organized by concern and starts from a thin entrypoint that only bootstraps dependencies and wiring
+- **Separation of concerns:** Configuration, data access, messaging, and shutdown live in focused modules. Business logic is isolated from startup code
+- **Cohesive modules, not micro-files:** Related logic is grouped into a few larger files per service (e.g., a single messaging module), prioritizing readability over fragmentation
+- **Consistent patterns:** Naming, logging style, and import conventions are uniform across services to reduce cognitive load
 
-External presentation: To the outside world, Edgeberry Device Hub is a monolithic product — a single hostname, a single API surface, and a single dashboard UI. Internal modularity is an implementation detail and must not leak into the public surface area. The `core-service` acts as the orchestrator and public entrypoint for the UI.
+#### Architecture Patterns
+- **Gateway service:** One service exposes the public HTTP API and serves the UI; internal workers communicate via their own channels
+- **Environment-driven:** Behavior is configured via environment variables (ports, paths, secrets, endpoints) and remains explicit
+- **Graceful teardown:** Each service provides a clear shutdown path to close external resources safely
 
-Public Surface Area (single HTTP(S) server):
+#### External Presentation
+To the outside world, Edgeberry Device Hub is a monolithic product:
+- Single hostname
+- Single API surface
+- Single dashboard UI
 
-- Base URL: single hostname (e.g., `https://devicehub.edgeberry.io`).
-- Only `core-service` binds public HTTP(S).
-- UI entrypoint: `/` serves the dashboard SPA from the `core-service` (static file server in production).
-- HTTP API prefix: `/api` (versioning via headers or path TBD) — served directly by `core-service`.
-  - Observability endpoints are provided by `core-service`, including logs snapshot (`/api/logs`). Live streams are delivered over WebSocket at `/api/ws`.
-  - WebSocket server at `/api/ws` (same origin). Authenticates via the `fh_session` JWT cookie on upgrade. Supports topic-based subscribe/unsubscribe and server push updates.
+Internal modularity is an implementation detail and must not leak into the public surface area. The `core-service` acts as the orchestrator and public entrypoint for the UI.
 
-Execution model & IPC:
+### Public Surface Area (Single HTTP(S) Server)
 
-- Each microservice runs independently as a `systemd` service (units per component).
-- Internal service-to-service communication uses D-Bus (method calls + signals). No internal HTTP between microservices.
-- Device communication remains via MQTT; D-Bus is only for server-internal coordination.
-- Configuration: `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs are stored at the repo root under `config/`. For the MVP, `config/` is flat (no subdirectories).
- - Release packaging (MVP): we publish per-microservice build artifacts (tar.gz) attached to GitHub Releases and install them on the host via a privileged installer. No Docker is used for release packaging.
- - Host installation (MVP): `scripts/install.sh` installs artifacts under `/opt/Edgeberry/devicehub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services.
+#### Base Configuration
+- **Base URL:** Single hostname (e.g., `https://devicehub.edgeberry.io`)
+- **HTTP binding:** Only `core-service` binds public HTTP(S)
+- **UI entrypoint:** `/` serves the dashboard SPA from the `core-service` (static file server in production)
 
-- `ui/` — Web UI (React). Consumes only public HTTP APIs and websocket endpoints. No direct DB access.
-- `core-service/` — Orchestrator and public entrypoint. Serves the built UI in production and may provide light orchestration endpoints (e.g., `/healthz`).
-- `api/` — Previously a standalone Node.js + Express HTTP API. Its responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`. Any remaining code here will be migrated or retired.
- - `provisioning-service/` — Long-running Node.js service subscribed to `$devicehub/#` topics for bootstrap flows (CSR handling, cert issuance, template provisioning). No device twin responsibility. MVP adds a simplified provisioning request/ack flow on `$devicehub/devices/{deviceId}/provision/request` for development.
-- `twin-service/` — Dedicated service for digital twin maintenance: processes twin updates/deltas, reconciliation, and desired→reported state sync.
-- `mqtt-broker/` — TLS materials (dev-only), ACL templates, and helper scripts. Mosquitto broker config files live under `config/`. Production secrets are never committed.
- - `shared/` — Isomorphic TypeScript packages used by multiple projects: DTOs/types, validation schemas, MQTT topic helpers, logging, config loader.
- - `scripts/` — Developer tooling and CI checks (e.g., DB migrations, seeders).
-  - Includes: `scripts/dev_start.sh` (hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured), `scripts/build-all.sh` (release builds), `scripts/install.sh` (host installer), `scripts/deploy.sh` (SSH deployment to remote hosts).
-- `docs/` — Extended documentation referenced from this file.
-- `examples/` — Example integrations and reference nodes.
-  - `examples/nodered/` — TypeScript-based Node-RED node "edgeberry-device". Minimal example that sets status to ready, logs "hello world" on input, and passes the message through. Required settings when adding the node: `host` (Device Hub base URL), `uuid` (device UUID), and a credential `token` (host access token). Build with `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`. Install into Node-RED via `npm link` or `npm pack` from this folder. CI will build and upload this asset for easy install/testing.
-- `config/` — `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs (dev/prod variants). MVP: flat directory (no subfolders).
-  - Example unit files (MVP): `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`.
+#### API Structure
+- **HTTP API prefix:** `/api` (versioning via headers or path TBD) — served directly by `core-service`
+- **Observability endpoints:** Provided by `core-service`, including logs snapshot (`/api/logs`)
+- **Live streams:** Delivered over WebSocket at `/api/ws`
+
+#### WebSocket Configuration
+- **Endpoint:** `/api/ws` (same origin)
+- **Authentication:** Via the `fh_session` JWT cookie on upgrade
+- **Features:** Topic-based subscribe/unsubscribe and server push updates
+
+### Execution Model & IPC
+
+#### Service Runtime
+- **Process model:** Each microservice runs independently as a `systemd` service (units per component)
+- **Internal communication:** D-Bus (method calls + signals). No internal HTTP between microservices
+- **Device communication:** Remains via MQTT; D-Bus is only for server-internal coordination
+
+#### Configuration Management
+- **Storage location:** `systemd` unit templates, D-Bus service/policy files, and Mosquitto broker configs stored at repo root under `config/`
+- **MVP structure:** `config/` is flat (no subdirectories)
+
+#### Release & Installation (MVP)
+- **Release packaging:** Per-microservice build artifacts (tar.gz) attached to GitHub Releases, installed via privileged installer
+- **No Docker:** Docker is not used for release packaging
+- **Host installation:** `scripts/install.sh` installs artifacts under `/opt/Edgeberry/devicehub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services
+
+### Directory Structure
+
+#### Core Services
+- **`ui/`** — Web UI (React)
+  - Consumes only public HTTP APIs and websocket endpoints
+  - No direct DB access
+
+- **`core-service/`** — Orchestrator and public entrypoint
+  - Serves the built UI in production
+  - May provide light orchestration endpoints (e.g., `/healthz`)
+
+- **`api/`** — Previously a standalone Node.js + Express HTTP API
+  - Its responsibility has moved into `core-service`, which now serves all public HTTP(S) including `/api`
+  - Any remaining code here will be migrated or retired
+
+- **`provisioning-service/`** — Long-running Node.js service
+  - Subscribed to `$devicehub/#` topics for bootstrap flows
+  - Handles CSR processing, cert issuance, template provisioning
+  - No device twin responsibility
+  - MVP adds simplified provisioning request/ack flow on `$devicehub/devices/{deviceId}/provision/request` for development
+
+- **`twin-service/`** — Dedicated service for digital twin maintenance
+  - Processes twin updates/deltas
+  - Handles reconciliation and desired→reported state sync
+
+#### Infrastructure & Support
+- **`mqtt-broker/`** — MQTT broker configuration and materials
+  - TLS materials (dev-only)
+  - ACL templates and helper scripts
+  - Mosquitto broker config files live under `config/`
+  - Production secrets are never committed
+
+- **`shared/`** — Isomorphic TypeScript packages used by multiple projects
+  - DTOs/types
+  - Validation schemas
+  - MQTT topic helpers
+  - Logging and config loader
+
+- **`scripts/`** — Developer tooling and CI checks
+  - DB migrations, seeders
+  - **Key scripts:**
+    - `scripts/dev_start.sh` — Hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured
+    - `scripts/build-all.sh` — Release builds
+    - `scripts/install.sh` — Host installer
+    - `scripts/deploy.sh` — SSH deployment to remote hosts
+
+#### Documentation & Examples
+- **`docs/`** — Extended documentation referenced from this file
+
+- **`examples/`** — Example integrations and reference nodes
+  - **`examples/nodered/`** — TypeScript-based Node-RED node "edgeberry-device"
+    - Minimal example that sets status to ready, logs "hello world" on input, and passes the message through
+    - **Required settings:** `host` (Device Hub base URL), `uuid` (device UUID), and credential `token` (host access token)
+    - **Build:** `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`
+    - **Install:** Into Node-RED via `npm link` or `npm pack` from this folder
+    - CI will build and upload this asset for easy install/testing
+
+#### Configuration
+- **`config/`** — System configuration files
+  - `systemd` unit templates
+  - D-Bus service/policy files
+  - Mosquitto broker configs (dev/prod variants)
+  - **MVP structure:** Flat directory (no subfolders)
+  - **Example unit files:** `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`
 
 Responsibilities and boundaries:
 
