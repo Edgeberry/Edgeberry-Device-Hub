@@ -28,24 +28,41 @@ See the [alignment document](documentation/alignment.md) for detailed setup inst
 
 Edgeberry Device Hub is a self-hostable device management server for Edgeberry devices. It provides a single, secure control plane to provision devices (MQTT + mTLS), observe telemetry, manage digital twins, and expose a clean HTTP API and UI. Internally, independent microservices communicate over D-Bus; devices communicate via MQTT.
 
-## Microservices
+## Services
+Microservice architecture seperates the responsibilities. Each service is a separate process that communicates with the others via D-Bus.
 
-- **Core Service (`core-service/`)**
-  - Main HTTP service (default :8080) serving the Web UI and all `/api/*` endpoints. Handles authentication, coordinates with microservices via D-Bus, and provides health monitoring at `/healthz`.
+- **Core Service**
+  - Main HTTP service serving the Web UI and all `/api/*` endpoints. Handles authentication, coordinates with microservices via D-Bus.
+  - Handles the configuration of the Device Hub, including the MQTT broker, D-Bus, and other services.
 
-- **Provisioning Service (`provisioning-service/`)**
-  - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$devicehub/certificates/create-from-csr`, signs CSRs, and returns signed certs. No digital twin responsibilities.
+- **Provisioning Service**
+  - Handles bootstrap and certificate lifecycle via MQTT-only CSR flow. Subscribes to `$devicehub/certificates/create-from-csr`, signs CSRs, and returns signed certs.
+  - Upserts device records into SQLite table `devices` (fields: `id`, `name?`, `token?`, `meta?`, `created_at`)
 
-- **Device Twin Service (`twin-service/`)**
+- **Device Twin Service**
   - Owns desired/reported twin state. Persists state, generates deltas, and publishes twin updates over `$devicehub/devices/{deviceId}/twin/#`. Provides D-Bus methods for the core service to read/update twin state.
+  - Persists desired/reported documents in SQLite tables `twin_desired` and `twin_reported`
 
-- **Device Registry Service (`registry-service/`)**
+- **Device Registry Service**
   - Authoritative inventory for devices. Stores identity anchors (device ID, cert metadata, optional manufacturer UUID hash), status, and operational context. Exposes a D-Bus interface to query/update registry data.
-
-- **Web UI (`ui/`)**
-  - React SPA for dashboards, devices, events, and twin management. Consumes only public API/WebSocket endpoints.
+  - Persists device records in SQLite table `devices` (fields: `id`, `name?`, `token?`, `meta?`, `created_at`)
 
 See `documentation/alignment.md` for architecture and interface details.
+
+## MQTT API
+
+| Topic | Direction | Description |
+| --- | --- | --- |
+| `$devicehub/certificates/create-from-csr` | Inbound | Create a new certificate from a CSR |
+| `$devicehub/certificates/create-from-csr` | Outbound | Create a new certificate from a CSR | 
+| `$devicehub/devices/{deviceId}/provision/request` | Inbound | Request a new device to be provisioned |
+| `$devicehub/devices/{deviceId}/provision/accepted` | Outbound | Device has been provisioned |
+| `$devicehub/devices/{deviceId}/provision/rejected` | Outbound | Device has been rejected |
+| `$devicehub/devices/{deviceId}/twin/get` | Inbound | Request a new device to be provisioned |
+| `$devicehub/devices/{deviceId}/twin/update` | Inbound | Request a new device to be provisioned |  
+| `$devicehub/devices/{deviceId}/twin/update/accepted` | Outbound | Device has been provisioned |
+| `$devicehub/devices/{deviceId}/twin/update/rejected` | Outbound | Device has been rejected |
+| `$devicehub/devices/{deviceId}/twin/update/delta` | Outbound | Device has been rejected |
 
 ## Architecture (MVP)
 
@@ -86,48 +103,9 @@ The repository contains a working MVP focused on MQTT- and SQLite-backed microse
 
 ### Features present
 
-- **Core service (`core-service/`)**
-  - Serves the built Web UI on http://localhost:8080
-  - Exposes basic endpoints used by the UI: `/api/health`, `/api/services`, `/api/logs`, `/api/version`, `/api/config/public`
-  - Dev script `npm run dev` starts core and workers with hot reload (see `scripts/dev_start.sh`)
-
-- **Provisioning service (`provisioning-service/`)**
-  - Subscribes to `$devicehub/devices/{deviceId}/provision/request`
-  - Upserts device records into SQLite table `devices` (fields: `id`, `name?`, `token?`, `meta?`, `created_at`)
-  - Publishes `$devicehub/devices/{deviceId}/provision/accepted|rejected`
-  - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `PROVISIONING_DB`
-
-- **Twin service (`twin-service/`)**
-  - Subscribes to `$devicehub/devices/{deviceId}/twin/get` and `.../twin/update`
-  - Persists desired/reported documents in SQLite tables `twin_desired` and `twin_reported`
-  - Publishes `.../twin/update/accepted` and `.../twin/update/delta`
-  - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `TWIN_DB`
-
-- **Registry service (`registry-service/`)**
-  - Subscribes to `devices/#`
-  - Persists raw events into SQLite `device_events` (`device_id`, `topic`, `payload` BLOB, `ts`)
-  - Env: `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `REGISTRY_DB`
-
-- **Web UI (`ui/`)**
-  - React SPA built to `ui/build/`, served by core-service
-  - Overview displays health, unit statuses, and sample devices/events placeholders
-
 - **Node-RED example (`examples/nodered/`)**
   - Node `edgeberry-device` (TypeScript) with settings: `host`, `uuid`, credential `token`
   - On input, logs "hello world" and forwards the message
-
-### MQTT topics (MVP subset)
-
-- Provisioning (dev simplification):
-  - Request: `$devicehub/devices/{deviceId}/provision/request`
-  - Responses: `.../provision/accepted`, `.../provision/rejected`
-
-- Twin:
-  - Get: `$devicehub/devices/{deviceId}/twin/get` → responds on `.../twin/update/accepted`
-  - Update: `$devicehub/devices/{deviceId}/twin/update` → `.../accepted`, optional `.../delta`
-
-- Registry ingest:
-  - Device publishes: `devices/{deviceId}/...` → persisted to `device_events`
 
 ### Build, run, and artifacts
 
@@ -142,21 +120,6 @@ The repository contains a working MVP focused on MQTT- and SQLite-backed microse
   npm run dev
   # core-service on http://localhost:8080
   ```
-
-- Individual service run (example):
-  ```bash
-  MQTT_URL="mqtt://localhost:1883" node provisioning-service/dist/index.js
-  MQTT_URL="mqtt://localhost:1883" node twin-service/dist/index.js
-  MQTT_URL="mqtt://localhost:1883" node registry-service/dist/index.js
-  ```
-
-- Produced artifacts (tar.gz) after build:
-  - `dist-artifacts/devicehub-core-service-<version>.tar.gz`
-  - `dist-artifacts/devicehub-provisioning-service-<version>.tar.gz`
-  - `dist-artifacts/devicehub-twin-service-<version>.tar.gz`
-  - `dist-artifacts/devicehub-registry-service-<version>.tar.gz`
-  - `dist-artifacts/devicehub-ui-<version>.tar.gz`
-  - CI also builds and uploads a packaged Node-RED example from `examples/nodered/`
 
 ### Notes
 
