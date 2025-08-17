@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build artifacts for each microservice and package as tar.gz under dist-artifacts/
-# Services covered: api, provisioning-service, twin-service, registry-service, core-service, ui
+# Build artifacts for each microservice and package as a single tar.gz under dist-artifacts/
+# Services covered: provisioning-service, twin-service, registry-service, core-service, ui
 # This script is CI-friendly and can be run locally.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,11 +48,26 @@ build_node_service() {
   npm prune --omit=dev || true
   popd >/dev/null
 
-  # Stage files into the combined artifact directory
+  # Stage files into the combined artifact directory (whitelist only runtime assets)
   mkdir -p "$COMBINED_STAGE/${svc}"
-  # Exclude node_modules to avoid cross-architecture incompatibilities; install on target
-  rsync -a --exclude ".git" --exclude "node_modules" --exclude "node_modules/.cache" \
-    "${dir}/" "$COMBINED_STAGE/${svc}/"
+  # Always include compiled output and package manifests
+  if [[ -d "${dir}/dist" ]]; then
+    rsync -a "${dir}/dist/" "$COMBINED_STAGE/${svc}/dist/"
+  fi
+  if [[ -f "${dir}/package.json" ]]; then
+    rsync -a "${dir}/package.json" "$COMBINED_STAGE/${svc}/package.json"
+  fi
+  if [[ -f "${dir}/package-lock.json" ]]; then
+    rsync -a "${dir}/package-lock.json" "$COMBINED_STAGE/${svc}/package-lock.json"
+  fi
+  # Optionally include service-local scripts needed at runtime (no source or data directories)
+  if [[ -d "${dir}/scripts" ]]; then
+    rsync -a "${dir}/scripts/" "$COMBINED_STAGE/${svc}/scripts/"
+  fi
+  # Include any environment files but do NOT copy source code
+  if compgen -G "${dir}/.env*" > /dev/null; then
+    rsync -a ${dir}/.env* "$COMBINED_STAGE/${svc}/" 2>/dev/null || true
+  fi
   # Ensure full config directory is included in the combined artifact once
   if [[ ! -d "$COMBINED_STAGE/config" ]]; then
     if [[ -d "${ROOT_DIR}/config" ]]; then
@@ -61,7 +76,7 @@ build_node_service() {
       rsync -a "${ROOT_DIR}/config/" "$COMBINED_STAGE/config/"
     fi
   fi
-  # Ensure scripts directory (including device_mqtt_test.sh) is included once
+  # Ensure root scripts directory (including device_mqtt_test.sh) is included once
   if [[ ! -d "$COMBINED_STAGE/scripts" ]]; then
     if [[ -d "${ROOT_DIR}/scripts" ]]; then
       mkdir -p "$COMBINED_STAGE/scripts"

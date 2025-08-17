@@ -91,7 +91,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
-
 // Serve static UI (built by Vite into UI_DIST). Place this before defining the
 // catch-all so that /api/* routes remain handled by API handlers above.
 try {
@@ -588,8 +587,25 @@ function getLastSeenMap(): Record<string,string> {
 }
 
 // GET /api/devices -> list known devices from provisioning DB
-app.get('/api/devices', (_req: Request, res: Response) => {
+app.get('/api/devices', (req: Request, res: Response) => {
   const list = getDevicesListSync();
+  // If unauthenticated (anonymous mode), strip UUIDs from payload
+  const s = getSession(req);
+  if (!s) {
+    const scrubbed = {
+      devices: (list.devices || []).map((d: any) => {
+        const copy: any = { ...d };
+        // Remove top-level uuid if present
+        if ('uuid' in copy) delete copy.uuid;
+        // Remove uuid keys recursively inside meta
+        if (copy.meta && typeof copy.meta === 'object') {
+          copy.meta = stripUuidsDeep(copy.meta);
+        }
+        return copy;
+      })
+    };
+    return res.json(scrubbed);
+  }
   res.json(list);
 });
 
@@ -656,6 +672,20 @@ function bufferToMaybeJson(b: any){
     const s = Buffer.isBuffer(b) ? b.toString('utf8') : (typeof b === 'string' ? b : String(b));
     try{ return JSON.parse(s); }catch{ return s; }
   }catch{ return b; }
+}
+
+// Remove any property named 'uuid' recursively from objects/arrays
+function stripUuidsDeep(input: any): any {
+  if (Array.isArray(input)) return input.map(stripUuidsDeep);
+  if (input && typeof input === 'object') {
+    const out: any = {};
+    for (const [k, v] of Object.entries(input)) {
+      if (k === 'uuid') continue;
+      out[k] = stripUuidsDeep(v as any);
+    }
+    return out;
+  }
+  return input;
 }
 
 // ===== Helpers reused by REST and WS =====
@@ -1395,7 +1425,7 @@ if (UI_READY) {
 }
 
 // --- WebSocket setup ---
-type ClientCtx = { ws: any; topics: Set<string>; logs?: Map<string, any> };
+type ClientCtx = { ws: any; topics: Set<string>; logs?: Map<string, any>; authed: boolean };
 const clients = new Set<ClientCtx>();
 
 function send(ws: any, msg: any){
@@ -1407,15 +1437,15 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/api/ws' });
 
 wss.on('connection', (ws: any, req: any) => {
-  // Auth via cookie
+  // Auth via cookie; if absent, permit anonymous with restricted topics (public metrics only)
+  let authed = false;
   try{
     const cookies = parseCookies(req.headers?.cookie || '');
     const token = cookies[SESSION_COOKIE];
-    if(!token){ ws.close(1008, 'unauthorized'); return; }
-    try{ jwt.verify(token, JWT_SECRET); }catch{ ws.close(1008, 'unauthorized'); return; }
-  }catch{ ws.close(1011, 'error'); return; }
+    if(token){ try{ jwt.verify(token, JWT_SECRET); authed = true; }catch{} }
+  }catch{}
 
-  const ctx: ClientCtx = { ws, topics: new Set(), logs: new Map() };
+  const ctx: ClientCtx = { ws, topics: new Set(), logs: new Map(), authed };
   clients.add(ctx);
 
   ws.on('message', (data: any) => {
@@ -1425,6 +1455,14 @@ wss.on('connection', (ws: any, req: any) => {
         for(const raw of msg.topics){ 
           const t = String(raw);
           if(typeof t !== 'string') continue;
+          // Anonymous clients: allow only public metrics topics
+          if(!ctx.authed){
+            if(t === 'metrics.history' || t === 'metrics.snapshots' || t === 'services.status' || t === 'devices.list.public'){
+              ctx.topics.add(t);
+            }
+            continue;
+          }
+          // Authenticated: allow full set
           ctx.topics.add(t);
           // Handle logs.stream:<unit>
           if(t.startsWith('logs.stream:')){
@@ -1432,19 +1470,25 @@ wss.on('connection', (ws: any, req: any) => {
             if(isSafeUnit(unit)) startLogStream(ctx, unit, t);
           }
         }
-        // Special case: metrics.history -> send current history snapshot immediately (default 24h)
+        // Send current history snapshot immediately (default 24h) for anyone subscribed
         if (ctx.topics.has('metrics.history')){
           const hours = 24;
           const cutoff = Date.now() - hours * 3600 * 1000;
           const samples = METRICS_HISTORY.filter(s => s.timestamp >= cutoff);
           send(ws, { type: 'metrics.history', data: { hours, samples } });
         }
-        // Send immediate snapshots for services and devices when subscribed
+        // Send immediate snapshots for services when subscribed (public allowed)
         if (ctx.topics.has('services.status')){
           getServicesSnapshot().then(svcs => send(ws, { type: 'services.status', data: svcs })).catch(()=>{});
         }
-        if (ctx.topics.has('devices.list')){
+        // Send devices list snapshot depending on topic
+        if (ctx.authed && ctx.topics.has('devices.list')){
           getDevicesList().then(list => send(ws, { type: 'devices.list', data: list })).catch(()=>{});
+        } else if (!ctx.authed && ctx.topics.has('devices.list.public')){
+          getDevicesList().then(list => {
+            const scrubbed = stripUuidsDeep(list);
+            send(ws, { type: 'devices.list.public', data: scrubbed });
+          }).catch(()=>{});
         }
       }else if(msg?.type === 'unsubscribe' && Array.isArray(msg.topics)){
         for(const raw of msg.topics){ 
@@ -1541,7 +1585,11 @@ setInterval(() => {
     const js = JSON.stringify(data);
     if(js !== _lastDevicesJson){
       _lastDevicesJson = js;
+      // Authenticated topic
       broadcast('devices.list', { type: 'devices.list', data });
+      // Public topic with UUIDs scrubbed
+      const publicData = stripUuidsDeep(data);
+      broadcast('devices.list.public', { type: 'devices.list.public', data: publicData });
     }
   }catch{}
 }, 10000);

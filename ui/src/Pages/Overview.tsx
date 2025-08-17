@@ -73,9 +73,10 @@ export default function Overview(props:{user:any}){
         setDevices(list);
       }catch{}
     };
-    wsSubscribe('devices.list', onDevices);
+    const topic = props.user ? 'devices.list' : 'devices.list.public';
+    wsSubscribe(topic, onDevices);
     (async()=>{ if(!wsIsConnected()){ try{ const d = await getDevices(); const list = Array.isArray(d?.devices) ? d.devices : (Array.isArray(d) ? d : []); if(mounted) setDevices(list); }catch{ if(mounted) setDevices([]); } } })();
-    return ()=>{ mounted = false; wsUnsubscribe('devices.list', onDevices); };
+    return ()=>{ mounted = false; wsUnsubscribe(topic, onDevices); };
   },[]);
 
   return (

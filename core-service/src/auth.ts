@@ -51,9 +51,15 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
   if (
     req.path === '/healthz' ||
     req.path === '/api/health' ||
+    req.path === '/api/status' ||
     req.path === '/api/metrics' ||
+    req.path === '/api/metrics/history' ||
     req.path === '/api/services'
   ) {
+    return next();
+  }
+  // Allow anonymous read-only access to the devices list. The handler will strip UUIDs when unauthenticated.
+  if (req.method === 'GET' && req.path === '/api/devices') {
     return next();
   }
   if (req.path.startsWith('/api/auth/')) return next();
