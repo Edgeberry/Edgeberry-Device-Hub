@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "description": "Node-RED nodes for Edgeberry Device Hub integration",
   "license": "GPL-3.0-or-later",
-  "keywords": ["node-red", "edgeberry", "device-hub", "iot", "node-red-contrib"],
+  "keywords": [
+    "node-red",
+    "edgeberry",
+    "device-hub",
+    "iot",
+    "node-red-contrib"
+  ],
   "main": "dist/edgeberry-device.js",
   "types": "dist/edgeberry-device.d.ts",
   "scripts": {
@@ -20,11 +26,11 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^20.12.7",
+    "@types/node": "^20.11.28",
     "@types/node-red": "^1.3.4",
     "nodemon": "^3.1.0",
     "npm-run-all": "^4.1.5",
     "rimraf": "^5.0.5",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.5"
   }
 }

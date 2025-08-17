@@ -10,8 +10,8 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.0",
-    "mqtt": "^4.3.7"
+    "better-sqlite3": "^9.6.0",
+    "mqtt": "^5.5.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.28",
