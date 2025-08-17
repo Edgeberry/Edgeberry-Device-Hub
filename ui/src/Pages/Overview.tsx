@@ -30,6 +30,39 @@ export default function Overview(props:{user:any}){
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [showCerts, setShowCerts] = useState(false);
   const [showWhitelist, setShowWhitelist] = useState(false);
+  // Re-render every second to update relative offline timers
+  const [now, setNow] = useState<number>(()=> Date.now());
+  useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
+
+  const formatOfflineSince = (last_seen?: string|null): string => {
+    if (!last_seen) return '';
+    const diffSec = Math.max(0, Math.floor((now - Date.parse(last_seen)) / 1000));
+    if (diffSec < 120) {
+      return `${diffSec} ${diffSec === 1 ? 'second' : 'seconds'}`;
+    }
+    const mins = Math.floor(diffSec / 60);
+    if (mins < 60) {
+      return `${mins} ${mins === 1 ? 'minute' : 'minutes'}`;
+    }
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) {
+      return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    }
+    const days = Math.floor(hours / 24);
+    if (days < 7) {
+      return `${days} ${days === 1 ? 'day' : 'days'}`;
+    }
+    const weeks = Math.floor(days / 7);
+    if (weeks < 5) {
+      return `${weeks} ${weeks === 1 ? 'week' : 'weeks'}`;
+    }
+    const months = Math.floor(days / 30);
+    if (months < 12) {
+      return `${months} ${months === 1 ? 'month' : 'months'}`;
+    }
+    const years = Math.floor(days / 365);
+    return `${years} ${years === 1 ? 'year' : 'years'}`;
+  };
 
   useEffect(()=>{ 
     let mounted = true;
@@ -121,10 +154,10 @@ export default function Overview(props:{user:any}){
                         <Badge bg="success">Online</Badge>
                       ) : (
                         <>
-                          <Badge bg="secondary">Offline</Badge>
-                          <div className="text-muted small mt-1">
-                            Last seen: {d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}
-                          </div>
+                          <Badge bg="secondary" className="me-2">Offline</Badge>
+                          {d.last_seen && (
+                            <span className="text-muted small align-middle">{formatOfflineSince(d.last_seen)}</span>
+                          )}
                         </>
                       )}
                     </td>
