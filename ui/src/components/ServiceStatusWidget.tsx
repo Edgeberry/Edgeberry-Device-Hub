@@ -282,10 +282,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                 <div>No services found.</div>
               ) : (
                 <Row className="g-3">
-                  {services
-                    // hide legacy/merged API tile
-                    .filter(s => s.unit !== 'devicehub-api.service' && prettyUnitName(s.unit).toLowerCase() !== 'api')
-                    .map((s) => {
+                  {services.map((s) => {
                     const variant = s.status === 'active' ? 'success' : (s.status === 'inactive' ? 'secondary' : 'warning');
                     return (
                       <Col key={s.unit} xs={12} sm={6} md={4} lg={3} xl={2}>

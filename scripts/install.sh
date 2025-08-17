@@ -252,7 +252,6 @@ install_systemd_units() {
   local unit
   for unit in \
     devicehub-core.service \
-    devicehub-api.service \
     devicehub-provisioning.service \
     devicehub-twin.service \
     devicehub-registry.service \
@@ -275,7 +274,6 @@ enable_services() {
   fi
   log "enabling services"
   systemctl_safe enable devicehub-core.service || true
-  systemctl_safe enable devicehub-api.service || true
   systemctl_safe enable devicehub-provisioning.service || true
   systemctl_safe enable devicehub-twin.service || true
   systemctl_safe enable devicehub-registry.service || true
@@ -291,7 +289,6 @@ start_services() {
   fi
   log "starting services"
   systemctl_safe restart devicehub-core.service || true
-  systemctl_safe restart devicehub-api.service || true
   systemctl_safe restart devicehub-provisioning.service || true
   systemctl_safe restart devicehub-twin.service || true
   systemctl_safe restart devicehub-registry.service || true

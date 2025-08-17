@@ -476,10 +476,7 @@ export default function SystemMetricsWidget(props:{ user: any | null }){
                   try{
                     const res:any = await getServices();
                     const list: any[] = Array.isArray(res?.services) ? res.services : [];
-                    // Exclude legacy/merged API unit
-                    const units = list
-                      .map((s:any)=> String(s.unit||''))
-                      .filter(u => u && u !== 'devicehub-api.service');
+                    const units = list.map((s:any)=> String(s.unit||'')).filter(u => !!u);
                     for(const u of units){
                       try{ await restartService(u); }catch(e:any){ /* accumulate but continue */ }
                     }
