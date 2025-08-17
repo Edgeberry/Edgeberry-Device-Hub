@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-16 21:24 CET
+**Last updated:** 2025-08-17 10:51 CEST
 
 ## Alignment Maintenance
 
@@ -526,14 +526,18 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 
 ### Core Components
 
-- `Navigationbar` (`ui/src/components/Navigationbar.tsx`) — top navigation; Overview is the root menu item
-- `HealthWidget` (`ui/src/components/HealthWidget.tsx`) — shows system health; tolerant to missing optional endpoints
-- `ServiceStatusWidget` (`ui/src/components/ServiceStatusWidget.tsx`) — shows microservice statuses from unified endpoint
-  - Service tiles open a modal with recent logs and Start/Restart/Stop controls. Actions are visible to everyone but disabled unless the user has the `admin` role.
-  - Display names hide the `devicehub-` prefix and `.service` suffix. The legacy `api` tile is removed (merged into core).
-- `Overview` page (`ui/src/Pages/Overview.tsx`) — contains `HealthWidget`, `ServiceStatusWidget`, and a simple devices table
-- `CertificateSettingsModal` (`ui/src/components/CertificateSettingsModal.tsx`) — admin-only modal to manage Root CA and provisioning certificates, opened from Overview
-- `WhitelistModal` (`ui/src/components/WhitelistModal.tsx`) — admin-only modal to manage provisioning UUID whitelist, opened from Overview
+ - `Navigationbar` (`ui/src/components/Navigationbar.tsx`) — top navigation; Overview is the root menu item
+ - `SystemMetricsWidget` (`ui/src/components/SystemMetricsWidget.tsx`) — primary widget shown first on Overview
+   - Shows CPU, Memory, Disk, and Network metrics with compact half-height tiles and sparklines
+   - Admin-only power menu in header (power icon) opens a modal with controls to Restart All Services, Reboot, or Shutdown
+   - Restart All Services performs sequential restarts in the UI for all managed units except the legacy `devicehub-api.service`
+ - `ServiceStatusWidget` (`ui/src/components/ServiceStatusWidget.tsx`) — shows microservice statuses from unified endpoint
+   - Service tiles open a modal with recent logs and Start/Restart/Stop controls. Actions are visible to everyone but disabled unless the user has the `admin` role.
+   - Display names hide the `devicehub-` prefix and `.service` suffix. The legacy `api` tile is removed (merged into core).
+ - `HealthWidget` (`ui/src/components/HealthWidget.tsx`) — shows system health; tolerant to missing optional endpoints
+ - `Overview` page (`ui/src/Pages/Overview.tsx`) — renders `SystemMetricsWidget` first, then `ServiceStatusWidget`, plus a simple devices table
+ - `CertificateSettingsModal` (`ui/src/components/CertificateSettingsModal.tsx`) — admin-only modal to manage Root CA and provisioning certificates, opened from Overview
+ - `WhitelistModal` (`ui/src/components/WhitelistModal.tsx`) — admin-only modal to manage provisioning UUID whitelist, opened from Overview
 
 ### API Contracts (UI dependencies)
 
@@ -547,6 +551,9 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
   - `GET /api/version`
   - `GET /api/config/public`
   - `POST /api/diagnostics/mqtt-test` — runs the MQTT mTLS sanity script on the host; returns `{ ok, exitCode, startedAt, durationMs, stdout, stderr }`
+  - Power actions (admin-only; currently stubbed in `core-service`):
+    - `POST /api/devices/:id/actions/reboot` → `{ ok: true, message }`
+    - `POST /api/devices/:id/actions/shutdown` → `{ ok: true, message }`
 - Devices (optional placeholder in MVP):
   - `GET /api/devices` — may return `[]` or `{ devices: [] }`; UI tolerates other shapes by falling back to an empty list
  - Service controls (best-effort; may require host privileges):
@@ -566,6 +573,7 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 - Caching controls: ETag disabled and strict no-cache headers applied for `/api/*` to avoid stale auth state (304) issues in the SPA.
 - Dev: `npm run dev` at repo root runs core-service and serves the UI build; set `DEV_MOSQUITTO=1` to include the broker.
  - `core-service` exposes a WebSocket endpoint at `/api/ws` for live updates (metrics, services, devices, logs).
+ - Offline assets: Font Awesome icons are bundled locally via `@fortawesome/fontawesome-free` and imported in `ui/src/main.tsx`; the CDN link was removed from `ui/index.html`.
 
 ### Device Registry & Provisioning (MVP)
 
