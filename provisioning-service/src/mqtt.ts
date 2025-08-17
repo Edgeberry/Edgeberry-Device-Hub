@@ -60,7 +60,16 @@ export function startMqtt(db: any): MqttClient {
       }
       const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
-      const meta = typeof body.meta === 'object' && body.meta ? (body.meta as Json) : undefined;
+      let meta = typeof body.meta === 'object' && body.meta ? (body.meta as Json) : undefined;
+      // Persist UUID inside device meta so it is available to admin UI; harmless for anonymous as UI won't render it
+      if (uuid) {
+        try {
+          const existing = (meta && typeof meta === 'object') ? (meta as any) : {};
+          meta = { ...existing, uuid } as Json;
+        } catch {
+          meta = { uuid } as Json;
+        }
+      }
       upsertDevice(db, deviceId, name, token, meta);
       if (ENFORCE_WHITELIST && uuid) {
         try { markWhitelistUsed(db, uuid); } catch {}

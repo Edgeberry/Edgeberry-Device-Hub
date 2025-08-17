@@ -12,7 +12,8 @@
  * Auth:
  *  - This route is protected by `RequireAuth` in `App.tsx`. `props.user` is the authenticated admin.
  */
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table } from 'react-bootstrap';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
 import SystemMetricsWidget from '../components/SystemMetricsWidget';
@@ -65,10 +66,10 @@ export default function Overview(props:{user:any}){
           <Table size="sm" responsive hover>
             <thead>
               <tr>
+                {props.user ? (<th>UUID</th>) : null}
                 <th>ID</th>
                 <th>Name</th>
                 <th>Status</th>
-                <th>Last seen</th>
                 <th style={{width:140}}>Actions</th>
               </tr>
             </thead>
@@ -76,7 +77,7 @@ export default function Overview(props:{user:any}){
               {(devices||[]).map((d:any)=> {
                 const id = d.id || d._id || d.name;
                 const open = () => setSelected(String(id));
-                const onKeyDown = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                const onKeyDown = (e: KeyboardEvent<HTMLTableRowElement>) => {
                   if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
                 };
                 const onDecommission = async (e: React.MouseEvent) => {
@@ -107,6 +108,9 @@ export default function Overview(props:{user:any}){
                       onClick={open}
                       onKeyDown={onKeyDown}
                       style={{ cursor:'pointer' }}>
+                    {props.user ? (
+                      <td>{(d.uuid || (d.meta && d.meta.uuid)) || '-'}</td>
+                    ) : null}
                     <td>
                       {/* Keep deep-link for optional navigation, but clicking row opens modal */}
                       <Link to={`/devices/${encodeURIComponent(id)}`} onClick={(e)=>{ e.preventDefault(); open(); }}>{id}</Link>
@@ -116,10 +120,14 @@ export default function Overview(props:{user:any}){
                       {d.online ? (
                         <Badge bg="success">Online</Badge>
                       ) : (
-                        <Badge bg="secondary">Offline</Badge>
+                        <>
+                          <Badge bg="secondary">Offline</Badge>
+                          <div className="text-muted small mt-1">
+                            Last seen: {d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}
+                          </div>
+                        </>
                       )}
                     </td>
-                    <td>{d.last_seen ? new Date(d.last_seen).toLocaleString() : '-'}</td>
                     <td>
                       <div className="d-flex gap-2">
                         <Button size="sm" variant="outline-danger" disabled={!props.user || actionBusy===String(id)} onClick={onDecommission}>
