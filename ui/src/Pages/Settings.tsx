@@ -127,22 +127,20 @@ export default function Settings(_props:{user:any}){
     } finally { setIssuing(false); }
   }
 
-  // Whitelist form state
-  const [wlDeviceId, setWlDeviceId] = useState('');
-  const [wlName, setWlName] = useState('');
-  const [wlNote, setWlNote] = useState('');
+  // Whitelist form state (UUID required)
   const [wlUuid, setWlUuid] = useState('');
+  const [wlNote, setWlNote] = useState('');
   const [wlBusy, setWlBusy] = useState(false);
 
   async function createWhitelistEntry(){
-    if (!wlDeviceId) { setError('Device ID is required'); return; }
+    if (!wlUuid) { setError('UUID is required'); return; }
     setWlBusy(true);
     try{
-      const body:any = { device_id: wlDeviceId };
-      if (wlName) body.name = wlName; if (wlNote) body.note = wlNote; if (wlUuid) body.uuid = wlUuid;
+      const body:any = { uuid: wlUuid };
+      if (wlNote && wlNote.trim()) body.note = wlNote.trim();
       const res = await fetch('/api/admin/uuid-whitelist', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
       const d = await res.json().catch(()=>({}));
-      if (res.ok){ setWlDeviceId(''); setWlName(''); setWlNote(''); setWlUuid(''); await loadAll(); }
+      if (res.ok){ setWlUuid(''); setWlNote(''); await loadAll(); }
       else { setError(d?.error || 'Failed to create whitelist entry'); }
     } finally { setWlBusy(false); }
   }
@@ -219,14 +217,10 @@ export default function Settings(_props:{user:any}){
         <Card.Body>
           <Form onSubmit={(e)=>{e.preventDefault(); createWhitelistEntry();}}>
             <Row className='g-2'>
-              <Col md={3}><Form.Label>Device ID</Form.Label>
-                <Form.Control value={wlDeviceId} onChange={e=>setWlDeviceId(e.target.value)} placeholder='device-123' /></Col>
-              <Col md={3}><Form.Label>Name (optional)</Form.Label>
-                <Form.Control value={wlName} onChange={e=>setWlName(e.target.value)} placeholder='Lab Unit' /></Col>
-              <Col md={3}><Form.Label>Note (optional)</Form.Label>
-                <Form.Control value={wlNote} onChange={e=>setWlNote(e.target.value)} placeholder='purpose or location' /></Col>
-              <Col md={3}><Form.Label>UUID (optional)</Form.Label>
-                <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='autogenerate if empty' /></Col>
+              <Col md={12}><Form.Label>UUID</Form.Label>
+                <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='required' /></Col>
+              <Col md={12}><Form.Label>Note (optional)</Form.Label>
+                <Form.Control value={wlNote} onChange={e=>setWlNote(e.target.value)} placeholder='e.g. device location or purpose' /></Col>
             </Row>
             <Button className='mt-2' disabled={wlBusy} onClick={createWhitelistEntry} variant='success'>
               {wlBusy? <Spinner animation='border' size='sm'/> : 'Create entry'}
@@ -240,8 +234,6 @@ export default function Settings(_props:{user:any}){
                   <thead>
                     <tr>
                       <th>UUID</th>
-                      <th>Device ID</th>
-                      <th>Name</th>
                       <th>Note</th>
                       <th>Created</th>
                       <th>Used</th>
@@ -250,12 +242,10 @@ export default function Settings(_props:{user:any}){
                   </thead>
                   <tbody>
                     {whitelist.length===0 ? (
-                      <tr><td colSpan={7} style={{color:'#666'}}>No whitelist entries.</td></tr>
+                      <tr><td colSpan={5} style={{color:'#666'}}>No whitelist entries.</td></tr>
                     ) : whitelist.map((w:any)=> (
                       <tr key={w.uuid}>
                         <td style={{fontFamily:'monospace'}}>{w.uuid}</td>
-                        <td>{w.device_id}</td>
-                        <td>{w.name || '-'}</td>
                         <td>{w.note || '-'}</td>
                         <td>{fmtDate(w.created_at)}</td>
                         <td>

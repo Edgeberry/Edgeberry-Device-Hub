@@ -540,12 +540,34 @@ function ensureProvisioningSchema(){
     db.prepare(
       'CREATE TABLE IF NOT EXISTS uuid_whitelist ('+
       ' uuid TEXT PRIMARY KEY,'+
-      ' device_id TEXT NOT NULL,'+
+      ' device_id TEXT,'+
       ' name TEXT,'+
       ' note TEXT,'+
       " created_at TEXT NOT NULL,"+
       ' used_at TEXT)'
     ).run();
+
+    // If an older schema exists with device_id NOT NULL, migrate to allow NULLs
+    try{
+      const cols: Array<{ name: string; notnull: number }>|undefined = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
+      const devCol = Array.isArray(cols) ? cols.find((c:any)=>c.name==='device_id') : undefined;
+      if (devCol && Number(devCol.notnull) === 1) {
+        db.exec('BEGIN');
+        db.prepare(
+          'CREATE TABLE IF NOT EXISTS uuid_whitelist_new ('+
+          ' uuid TEXT PRIMARY KEY,'+
+          ' device_id TEXT,'+
+          ' name TEXT,'+
+          ' note TEXT,'+
+          ' created_at TEXT NOT NULL,'+
+          ' used_at TEXT)'
+        ).run();
+        db.prepare('INSERT OR IGNORE INTO uuid_whitelist_new (uuid, device_id, name, note, created_at, used_at) SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist').run();
+        db.prepare('DROP TABLE uuid_whitelist').run();
+        db.prepare('ALTER TABLE uuid_whitelist_new RENAME TO uuid_whitelist').run();
+        db.exec('COMMIT');
+      }
+    }catch(e){ try{ db.exec('ROLLBACK'); }catch{} }
   }catch{
     // ignore; routes will handle errors if schema still unavailable
   }finally{
@@ -801,27 +823,28 @@ app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
   const db = openDb(PROVISIONING_DB);
   if(!db){ res.json({ entries: [] }); return; }
   try{
-    const rows = db.prepare('SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
+    // API contract: expose only uuid, note, created_at, used_at (device binding removed)
+    const rows = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
     res.json({ entries: rows });
   }catch{
     res.json({ entries: [] });
   }finally{ try{ db.close(); }catch{} }
 });
 
-// POST /api/admin/uuid-whitelist { device_id, name?, note?, uuid? }
+// POST /api/admin/uuid-whitelist { uuid?, note? }
 app.post('/api/admin/uuid-whitelist', (req: Request, res: Response) => {
-  const { device_id, name, note } = req.body || {};
-  let { uuid } = req.body || {};
-  if(!device_id || typeof device_id !== 'string') { res.status(400).json({ error: 'invalid_device_id' }); return; }
+  const { note } = req.body || {};
+  let { uuid } = req.body || {} as any;
   if(uuid && typeof uuid !== 'string'){ res.status(400).json({ error: 'invalid_uuid' }); return; }
   if(!uuid){ uuid = crypto.randomUUID(); }
   const db = openDb(PROVISIONING_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try{
     const now = new Date().toISOString();
-    db.prepare('INSERT INTO uuid_whitelist (uuid, device_id, name, note, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(uuid, device_id, (typeof name === 'string' ? name : null), (typeof note === 'string' ? note : null), now);
-    const row = db.prepare('SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid);
+    // Store uuid, optional note, and timestamps
+    db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at) VALUES (?, ?, ?)')
+      .run(uuid, (typeof note === 'string' && note.trim() ? String(note).trim() : null), now);
+    const row = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid);
     res.status(201).json(row);
   }catch(e:any){
     const msg = (e && e.message) || 'insert_failed';

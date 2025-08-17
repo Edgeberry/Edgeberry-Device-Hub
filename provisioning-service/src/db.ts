@@ -15,13 +15,34 @@ export function initDb(path: string) {
     );
     CREATE TABLE IF NOT EXISTS uuid_whitelist (
       uuid TEXT PRIMARY KEY,
-      device_id TEXT NOT NULL,
+      device_id TEXT,
       name TEXT,
       note TEXT,
       created_at TEXT NOT NULL,
       used_at TEXT
     );
   `);
+  // Migrate from older schema where device_id was NOT NULL
+  try{
+    const cols: Array<{ name: string; notnull: number }>|undefined = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
+    const devCol = Array.isArray(cols) ? cols.find((c:any)=>c.name==='device_id') : undefined;
+    if (devCol && Number(devCol.notnull) === 1) {
+      db.exec('BEGIN');
+      db.prepare(
+        'CREATE TABLE IF NOT EXISTS uuid_whitelist_new ('+
+        ' uuid TEXT PRIMARY KEY,'+
+        ' device_id TEXT,'+
+        ' name TEXT,'+
+        ' note TEXT,'+
+        ' created_at TEXT NOT NULL,'+
+        ' used_at TEXT)'
+      ).run();
+      db.prepare('INSERT OR IGNORE INTO uuid_whitelist_new (uuid, device_id, name, note, created_at, used_at) SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist').run();
+      db.prepare('DROP TABLE uuid_whitelist').run();
+      db.prepare('ALTER TABLE uuid_whitelist_new RENAME TO uuid_whitelist').run();
+      db.exec('COMMIT');
+    }
+  }catch(e){ try{ db.exec('ROLLBACK'); }catch{} }
   return db as any;
 }
 
@@ -36,7 +57,7 @@ export function upsertDevice(db: any, deviceId: string, name?: string, token?: s
 }
 
 export function getWhitelistByUuid(db: any, uuid: string){
-  const row = db.prepare('SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid);
+  const row = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid);
   return row || null;
 }
 
@@ -45,10 +66,10 @@ export function markWhitelistUsed(db: any, uuid: string){
   db.prepare('UPDATE uuid_whitelist SET used_at = ? WHERE uuid = ? AND used_at IS NULL').run(now, uuid);
 }
 
-export function insertWhitelist(db: any, uuid: string, deviceId: string, name?: string, note?: string){
+export function insertWhitelist(db: any, uuid: string, note?: string){
   const now = new Date().toISOString();
-  db.prepare('INSERT INTO uuid_whitelist (uuid, device_id, name, note, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(uuid, deviceId, name || null, note || null, now);
+  db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at) VALUES (?, ?, ?)')
+    .run(uuid, (typeof note === 'string' && note.trim() ? String(note).trim() : null), now);
 }
 
 export function deleteWhitelist(db: any, uuid: string){
@@ -56,7 +77,7 @@ export function deleteWhitelist(db: any, uuid: string){
 }
 
 export function listWhitelist(db: any){
-  return db.prepare('SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
+  return db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
 }
 
 export type DB = any;

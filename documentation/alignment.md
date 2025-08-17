@@ -664,8 +664,8 @@ UI behavior in Certificates modal:
 
 Whitelist & lifecycle (MVP additions):
 - Overview includes a Provisioning Whitelist modal:
-  - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, device_id, name, note, created_at, used_at }`.
-  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated).
+  - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, note, created_at, used_at }`.
+  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated) with optional `{ note }`.
   - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
  - Install & persistence rules:
     - Fresh installs MUST NOT populate the whitelist. The `uuid_whitelist` table is created empty on first run.
@@ -687,9 +687,9 @@ Data model additions (on `devices`):
 
 Admin onboarding:
 
-1. Admin whitelists a device UUID and binds it to a device row:
+1. Admin whitelists a device UUID (optional human note):
    - `POST /api/admin/uuid-whitelist` (role: admin)
-   - Body (MVP): `{ device_id, name?, note?, uuid? }` → returns `{ uuid, device_id, name, note, created_at, used_at }`.
+   - Body (MVP): `{ uuid?, note? }` → returns `{ uuid, note, created_at, used_at }`.
    - Production plan: store only salted hashes of UUIDs. MVP stores plaintext UUIDs in `provisioning.db` for simplicity.
 
 Bootstrap (device installer) — MQTT-only:
@@ -703,7 +703,7 @@ Production model:
 MVP/dev model (implemented):
 1. Device connects to the broker and publishes to `$devicehub/devices/{deviceId}/provision/request` with JSON `{ name?, token?, meta?, uuid? }`.
 2. Provisioning service validates the whitelist when `ENFORCE_WHITELIST=true`:
-   - Looks up `uuid` in `uuid_whitelist` and requires `device_id` match and `used_at` null.
+   - Looks up `uuid` in `uuid_whitelist` and requires `used_at` null.
    - On success, marks `used_at` and upserts the device row in `provisioning.db`.
 3. Service replies on `$devicehub/devices/{deviceId}/provision/accepted|rejected`.
 

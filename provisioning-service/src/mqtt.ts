@@ -56,7 +56,7 @@ export function startMqtt(db: any): MqttClient {
         const entry = getWhitelistByUuid((db as any), uuid);
         if (!entry) throw new Error('uuid_not_whitelisted');
         if (entry.used_at) throw new Error('uuid_already_used');
-        if (entry.device_id !== deviceId) throw new Error('uuid_device_mismatch');
+        // device_id is no longer enforced; whitelist is UUID-only
       }
       const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
