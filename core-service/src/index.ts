@@ -185,6 +185,114 @@ app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' })
 // GET /api/health
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
+// GET /api/config/public -> public configuration and environment info
+app.get('/api/config/public', async (_req: Request, res: Response) => {
+  try {
+    // Detect OS distribution
+    let osDistribution = os.type();
+    let deviceModel = '';
+    try {
+      // Try to read /etc/os-release for Linux distributions
+      if (process.platform === 'linux' && fs.existsSync('/etc/os-release')) {
+        const osRelease = fs.readFileSync('/etc/os-release', 'utf8');
+        const prettyName = osRelease.match(/PRETTY_NAME="([^"]+)"/);
+        const name = osRelease.match(/NAME="([^"]+)"/);
+        if (prettyName) {
+          osDistribution = prettyName[1];
+        } else if (name) {
+          osDistribution = name[1];
+        }
+      }
+      // Detect device model (Raspberry Pi etc.)
+      // /proc/device-tree/model exists on many ARM boards including Raspberry Pi
+      if (process.platform === 'linux'){
+        const modelPath = '/proc/device-tree/model';
+        if (fs.existsSync(modelPath)){
+          try { deviceModel = fs.readFileSync(modelPath, 'utf8').replace(/\u0000/g, '').trim(); } catch {}
+        } else {
+          // Fallback: parse /proc/cpuinfo for model string
+          try {
+            const cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
+            const m = cpuinfo.match(/^Model\s*:\s*(.+)$/mi);
+            if (m) deviceModel = m[1].trim();
+          } catch {}
+        }
+      }
+    } catch {
+      // Fallback to os.type() if reading os-release fails
+    }
+
+    const config = {
+      environment: `Node.js ${process.version}`,
+      platform: osDistribution,
+      systemInfo: `${osDistribution} ${os.arch()}`,
+      arch: os.arch(),
+      hostname: os.hostname(),
+      deviceModel: deviceModel || undefined,
+      nodeVersion: process.version,
+      nodeArch: process.arch,
+      nodePlatform: process.platform,
+      osType: os.type(),
+      osRelease: os.release(),
+      osDistribution,
+      env: process.env.NODE_ENV || 'development',
+      uptime: Math.floor(process.uptime()),
+      pid: process.pid
+    };
+    res.json(config);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to get config' });
+  }
+});
+
+// GET /api/status -> system status info  
+app.get('/api/status', (_req: Request, res: Response) => {
+  try {
+    const status = {
+      uptime: `${Math.floor(os.uptime() / 3600)}h ${Math.floor((os.uptime() % 3600) / 60)}m`,
+      uptimeSeconds: Math.floor(os.uptime()),
+      processUptime: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m`,
+      processUptimeSeconds: Math.floor(process.uptime()),
+      loadAverage: os.loadavg(),
+      totalMemory: os.totalmem(),
+      freeMemory: os.freemem()
+    };
+    res.json(status);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to get status' });
+  }
+});
+
+// GET /api/version -> service version info
+app.get('/api/version', (_req: Request, res: Response) => {
+  try {
+    // Try to read version from package.json
+    let version = 'unknown';
+    let name = 'Device Hub';
+    try {
+      const pkgPath = path.resolve(process.cwd(), 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        version = pkg.version || version;
+        name = pkg.name || name;
+      }
+    } catch {}
+    
+    const versionInfo = {
+      service: name,
+      version,
+      name,
+      git: version, // alias for compatibility
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch
+    };
+    res.json(versionInfo);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to get version' });
+  }
+});
+
 // === Diagnostics: device-side MQTT sanity test ===
 // POST /api/diagnostics/mqtt-test
 // Body: { deviceId?, mqttUrl?, ca?, cert?, key?, rejectUnauthorized?, timeoutSec? }

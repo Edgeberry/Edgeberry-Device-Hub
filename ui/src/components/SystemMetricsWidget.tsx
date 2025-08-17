@@ -4,7 +4,7 @@
  * Displays CPU, memory, disk and network metrics from the core-service `/metrics` endpoint.
  * Auto-refreshes every 10 seconds. Clicking a tile opens a modal with details.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Card, Col, Modal, Row, Spinner } from 'react-bootstrap';
 import { getMetrics, getMetricsHistory, getHealth, getStatus, getVersion, getPublicConfig, getServices, restartService } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
@@ -32,6 +32,77 @@ function percentColor(p?: number){
   if(p < 60) return 'success';
   if(p < 85) return 'warning';
   return 'danger';
+}
+
+function plural(n: number, s: string){
+  return `${n} ${s}${n===1?'':'s'}`;
+}
+
+function parseUptimeApprox(text?: string): number | undefined {
+  if(!text) return undefined;
+  try{
+    const s = String(text);
+    let total = 0;
+    const re = /(\d+)\s*(years?|yrs?|y|months?|mos?|mo|weeks?|w|days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)/gi;
+    let m: RegExpExecArray | null;
+    while((m = re.exec(s))){
+      const v = parseInt(m[1], 10);
+      const u = m[2].toLowerCase();
+      if(/^y/.test(u)) total += v * 365 * 24 * 3600;
+      else if(/^(months?|mos?|mo)$/.test(u)) total += v * 30 * 24 * 3600;
+      else if(/^w/.test(u)) total += v * 7 * 24 * 3600;
+      else if(/^d/.test(u)) total += v * 24 * 3600;
+      else if(/^h/.test(u)) total += v * 3600;
+      else if(/^(minutes?|mins?|m)$/.test(u)) total += v * 60;
+      else if(/^s/.test(u)) total += v;
+    }
+    if(total > 0) return total;
+  }catch{}
+  return undefined;
+}
+
+function formatDuration(seconds?: number): string {
+  if(seconds == null || !isFinite(seconds) || seconds < 0) return '-';
+  const s = Math.floor(seconds);
+  const minute = 60;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day; // approx
+  const year = 365 * day; // approx
+
+  if(s < day){
+    const h = Math.floor(s / hour);
+    const m = Math.floor((s % hour) / minute);
+    if(h > 0 && m > 0) return `${plural(h,'hour')} ${plural(m,'minute')}`;
+    if(h > 0) return plural(h,'hour');
+    return plural(m,'minute');
+  }
+  if(s < 14 * day){
+    const d = Math.floor(s / day);
+    const h = Math.floor((s % day) / hour);
+    return h > 0 ? `${plural(d,'day')} ${plural(h,'hour')}` : `${plural(d,'day')}`;
+  }
+  if(s < 8 * week){
+    const w = Math.floor(s / week);
+    const d = Math.floor((s % week) / day);
+    return d > 0 ? `${plural(w,'week')} ${plural(d,'day')}` : `${plural(w,'week')}`;
+  }
+  if(s < year){
+    const mo = Math.floor(s / month);
+    const d = Math.floor((s % month) / day);
+    return d > 0 ? `${plural(mo,'month')} ${plural(d,'day')}` : `${plural(mo,'month')}`;
+  }
+  const y = Math.floor(s / year);
+  const mo = Math.floor((s % year) / month);
+  return mo > 0 ? `${plural(y,'year')} ${plural(mo,'month')}` : `${plural(y,'year')}`;
+}
+
+function humanizedUptime(status: any, metrics: Metrics): string {
+  const sec = (typeof status?.uptimeSeconds === 'number') ? status.uptimeSeconds
+            : (typeof metrics?.uptimeSec === 'number') ? metrics.uptimeSec
+            : parseUptimeApprox(status?.uptime);
+  return formatDuration(sec);
 }
 
 export default function SystemMetricsWidget(props:{ user: any | null }){
@@ -327,7 +398,7 @@ export default function SystemMetricsWidget(props:{ user: any | null }){
               </Col>
               <Col md="3" sm="6" xs="12">
                 <div><strong>Uptime</strong></div>
-                <div>{(status && (status.uptime || status.uptimeSeconds)) || '-'}</div>
+                <div>{humanizedUptime(status, metrics)}</div>
               </Col>
               <Col md="3" sm="6" xs="12">
                 <div><strong>Version</strong></div>
@@ -335,7 +406,16 @@ export default function SystemMetricsWidget(props:{ user: any | null }){
               </Col>
               <Col md="3" sm="6" xs="12">
                 <div><strong>Environment</strong></div>
-                <div>{(config && (config.env || config.environment)) || '-'}</div>
+                <div>
+                  {config ? (
+                    <div>
+                      <div>{config.osDistribution || config.platform || 'Unknown OS'}</div>
+                      <div style={{fontSize: '0.85em', color: '#666'}}>
+                        {config.nodeVersion ? `Node.js ${config.nodeVersion}` : 'Node.js'}
+                      </div>
+                    </div>
+                  ) : '-'}
+                </div>
               </Col>
             </Row>
           )}
@@ -379,7 +459,7 @@ export default function SystemMetricsWidget(props:{ user: any | null }){
           <Modal.Body>
             {tiles.find(x=>x.key===selected)?.details}
             <div style={{marginTop:8, color:'#666', fontSize:12}}>Updated: {metrics.timestamp ? new Date(metrics.timestamp).toLocaleString() : '-'}</div>
-            <div style={{color:'#666', fontSize:12}}>Uptime: {metrics.uptimeSec ? `${Math.floor((metrics.uptimeSec||0)/3600)}h` : '-'}</div>
+            <div style={{color:'#666', fontSize:12}}>Uptime: {humanizedUptime(status, metrics)}</div>
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={()=>setSelected(null)}>Close</Button>

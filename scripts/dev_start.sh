@@ -167,6 +167,13 @@ build_ui_if_needed
 if [[ -d "$ROOT_DIR/ui/build" ]]; then
   export UI_DIST="$ROOT_DIR/ui/build"
 fi
+
+# Optionally watch and rebuild UI on changes (no HMR, just incremental build)
+# Enable by default; set DEV_UI_WATCH=0 to disable
+if [[ -d "$ROOT_DIR/ui" && "${DEV_UI_WATCH:-1}" = "1" ]]; then
+  log "starting UI build watcher (vite build --watch)"
+  run_prefixed ui-build bash -lc "cd \"$ROOT_DIR/ui\" && npm run build -- --watch"
+fi
 start_service core-service core-service
 start_service provisioning-service provisioning-service
 start_service twin-service twin-service
