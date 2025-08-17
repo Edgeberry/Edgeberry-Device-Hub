@@ -52,11 +52,15 @@ ensure_runtime_deps() {
   if ! have_cmd rsync; then need_pkgs+=(rsync); fi
   if ! have_cmd tar; then need_pkgs+=(tar); fi
   if ! have_cmd gzip; then need_pkgs+=(gzip); fi
+  # Build tools are required for native modules like better-sqlite3 on ARM (Raspberry Pi)
+  # Install a minimal toolchain if missing
+  if ! have_cmd make || ! have_cmd g++ ; then need_pkgs+=(build-essential); fi
+  if ! have_cmd python3; then need_pkgs+=(python3); fi
   if (( ${#need_pkgs[@]} > 0 )); then
     log "installing missing runtime dependencies: ${need_pkgs[*]}"
     apt_install "${need_pkgs[@]}"
     # Re-check and warn if still missing
-    for c in node npm rsync tar gzip; do
+    for c in node npm rsync tar gzip make g++ python3; do
       if ! have_cmd "$c"; then
         log "WARN: '$c' is not available after install; proceeding but related features may fail."
       fi
@@ -88,18 +92,28 @@ install_node_deps() {
     if [[ -f "${dir}/package.json" ]]; then
       log "npm install (prod) in ${dir}"
       pushd "${dir}" >/dev/null
-      # Prefer npm ci when lockfile exists
-      if [[ -f package-lock.json ]]; then
-        if [[ "${DEBUG:-}" == "1" ]]; then
-          npm ci --omit=dev || npm install --omit=dev || true
-        else
-          npm ci --omit=dev --silent || npm install --omit=dev --silent || true
-        fi
+      # Ensure node-gyp uses python3 and try to use prebuilt binaries when available
+      export npm_config_python="$(command -v python3 || echo python3)"
+      export npm_config_build_from_source="false"
+      # Limit parallelism to reduce memory consumption on small devices
+      export NPM_CONFIG_JOBS=1
+      # Reduce network noise and prefer cache if present
+      local NPM_FLAGS=(--omit=dev --no-fund --no-audit)
+      if [[ "${DEBUG:-}" != "1" ]]; then NPM_FLAGS+=(--silent); fi
+      # If node_modules exists, avoid wiping it on every deploy; prune and rebuild instead
+      if [[ -d node_modules ]]; then
+        log "node_modules exists; pruning prod deps and rebuilding native modules"
+        timeout 20m npm prune --omit=dev || true
+        timeout 20m npm rebuild --omit=dev || true
       else
-        if [[ "${DEBUG:-}" == "1" ]]; then
-          npm install --omit=dev || true
+        # Prefer npm ci when lockfile exists; fall back to install
+        if [[ -f package-lock.json ]]; then
+          if ! timeout 25m npm ci "${NPM_FLAGS[@]}"; then
+            log "WARN: npm ci timed out or failed; falling back to npm install"
+            timeout 25m npm install "${NPM_FLAGS[@]}" || true
+          fi
         else
-          npm install --omit=dev --silent || true
+          timeout 25m npm install "${NPM_FLAGS[@]}" || true
         fi
       fi
       popd >/dev/null

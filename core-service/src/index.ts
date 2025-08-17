@@ -188,39 +188,63 @@ app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }))
 // GET /api/config/public -> public configuration and environment info
 app.get('/api/config/public', async (_req: Request, res: Response) => {
   try {
-    // Detect OS distribution
-    let osDistribution = os.type();
-    let deviceModel = '';
-    try {
-      // Try to read /etc/os-release for Linux distributions
-      if (process.platform === 'linux' && fs.existsSync('/etc/os-release')) {
-        const osRelease = fs.readFileSync('/etc/os-release', 'utf8');
-        const prettyName = osRelease.match(/PRETTY_NAME="([^"]+)"/);
-        const name = osRelease.match(/NAME="([^"]+)"/);
-        if (prettyName) {
-          osDistribution = prettyName[1];
-        } else if (name) {
-          osDistribution = name[1];
+    // Helpers for robust OS + model detection
+    const safeRead = (p: string) => {
+      try { return fs.readFileSync(p, 'utf8'); } catch { return ''; }
+    };
+    const parseOsRelease = (): Record<string,string> => {
+      const txt = safeRead('/etc/os-release');
+      const out: Record<string,string> = {};
+      if (!txt) return out;
+      for (const line of txt.split(/\r?\n/)){
+        const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+        if(!m) continue;
+        const k = m[1];
+        let v = m[2];
+        if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1,-1);
+        out[k] = v;
+      }
+      return out;
+    };
+    const detectOsDistribution = (): string => {
+      if (process.platform !== 'linux') return `${os.type()} ${os.release()}`;
+      const rel = parseOsRelease();
+      if (rel.PRETTY_NAME) return rel.PRETTY_NAME;
+      const nameVer = [rel.NAME, rel.VERSION].filter(Boolean).join(' ');
+      if (nameVer) return nameVer;
+      // Raspberry Pi OS special cases
+      if (rel.ID === 'raspbian' || /raspberry/i.test(rel.NAME||'')){
+        const codename = rel.VERSION_CODENAME ? ` (${rel.VERSION_CODENAME})` : '';
+        const vid = rel.VERSION_ID ? ` ${rel.VERSION_ID}` : '';
+        return `Raspberry Pi OS${vid}${codename}`.trim();
+      }
+      // Other fallbacks
+      const rpiIssue = safeRead('/etc/rpi-issue').split(/\r?\n/)[0]?.trim();
+      if (rpiIssue) return rpiIssue;
+      const issue = safeRead('/etc/issue').split(/\r?\n/)[0]?.trim();
+      if (issue) return issue;
+      return `${os.type()} ${os.release()}`;
+    };
+    const detectDeviceModel = (): string => {
+      if (process.platform !== 'linux') return '';
+      const candidates = [
+        '/proc/device-tree/model',
+        '/sys/firmware/devicetree/base/model',
+      ];
+      for (const p of candidates){
+        if (fs.existsSync(p)){
+          const v = safeRead(p).replace(/\u0000/g, '').trim();
+          if (v) return v;
         }
       }
-      // Detect device model (Raspberry Pi etc.)
-      // /proc/device-tree/model exists on many ARM boards including Raspberry Pi
-      if (process.platform === 'linux'){
-        const modelPath = '/proc/device-tree/model';
-        if (fs.existsSync(modelPath)){
-          try { deviceModel = fs.readFileSync(modelPath, 'utf8').replace(/\u0000/g, '').trim(); } catch {}
-        } else {
-          // Fallback: parse /proc/cpuinfo for model string
-          try {
-            const cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
-            const m = cpuinfo.match(/^Model\s*:\s*(.+)$/mi);
-            if (m) deviceModel = m[1].trim();
-          } catch {}
-        }
-      }
-    } catch {
-      // Fallback to os.type() if reading os-release fails
-    }
+      const cpuinfo = safeRead('/proc/cpuinfo');
+      const m = cpuinfo.match(/^Model\s*:\s*(.+)$/mi);
+      if (m) return m[1].trim();
+      return '';
+    };
+
+    const osDistribution = detectOsDistribution();
+    const deviceModel = detectDeviceModel();
 
     const config = {
       environment: `Node.js ${process.version}`,

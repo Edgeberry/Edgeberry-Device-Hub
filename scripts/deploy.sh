@@ -151,8 +151,10 @@ main() {
   ART_FILES=("$ART_DIR"/devicehub-*.tar.gz)
   if (( rsync_ok )); then
     log "copying files via rsync..."
-    local RSYNC_OPTS; RSYNC_OPTS="-az"
-    (( VERBOSE )) && RSYNC_OPTS="-az --info=progress2"
+    # Use an array for options since IFS excludes space; avoid collapsing into a single arg
+    local RSYNC_OPTS
+    RSYNC_OPTS=(-az)
+    if (( VERBOSE )); then RSYNC_OPTS+=('--info=progress2'); fi
     # Build RSH command as a string for rsync
     local RSH_CMD="sshpass -p '$PASSWORD' ssh"
     local opt
@@ -160,9 +162,9 @@ main() {
       RSH_CMD="$RSH_CMD $opt"
     done
     [[ -n "${IDENTITY_FILE}" ]] && RSH_CMD="$RSH_CMD -i '$IDENTITY_FILE'"
-    rsync ${RSYNC_OPTS} --rsh "$RSH_CMD" "${ART_FILES[@]}" "${USER}@${HOST}:${REMOTE_STAGING}/dist-artifacts/"
-    rsync ${RSYNC_OPTS} --rsh "$RSH_CMD" -r "$ROOT_DIR/config/" "${USER}@${HOST}:${REMOTE_STAGING}/config/"
-    rsync ${RSYNC_OPTS} --rsh "$RSH_CMD" "$ROOT_DIR/scripts/install.sh" "${USER}@${HOST}:${REMOTE_STAGING}/scripts/install.sh"
+    rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" "${ART_FILES[@]}" "${USER}@${HOST}:${REMOTE_STAGING}/dist-artifacts/"
+    rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" -r "$ROOT_DIR/config/" "${USER}@${HOST}:${REMOTE_STAGING}/config/"
+    rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" "$ROOT_DIR/scripts/install.sh" "${USER}@${HOST}:${REMOTE_STAGING}/scripts/install.sh"
   else
     log "rsync not available on one side; falling back to scp..."
     ${SCP_BASE[@]} "${ART_FILES[@]}" "${USER}@${HOST}:${REMOTE_STAGING}/dist-artifacts/"
@@ -176,8 +178,10 @@ main() {
     ${SSH_BASE[@]} -tt "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' bash -c 'DEBUG=1 TMPDIR=\"${REMOTE_STAGING}\" bash \"${REMOTE_STAGING}/scripts/install.sh\" \"${REMOTE_STAGING}/dist-artifacts\"'"
   else
     if ! ${SSH_BASE[@]} -tt "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' bash -c 'TMPDIR=\"${REMOTE_STAGING}\" bash \"${REMOTE_STAGING}/scripts/install.sh\" \"${REMOTE_STAGING}/dist-artifacts\"'" 2>/tmp/deploy_error.log; then
-      echo "[deploy] Remote installer failed. Last error output:" >&2
-      ${SSH_BASE[@]} "${USER}@${HOST}" "tail -20 /var/log/syslog 2>/dev/null || echo 'Could not read syslog'" >&2 || true
+      echo "[deploy] Remote installer failed. Captured stderr (local):" >&2
+      sed -n '1,200p' /tmp/deploy_error.log >&2 || true
+      echo "[deploy] Attempting to fetch remote logs (journalctl/syslog)..." >&2
+      ${SSH_BASE[@]} "${USER}@${HOST}" "journalctl -xe -n 100 --no-pager 2>/dev/null | tail -n 100 || tail -n 100 /var/log/syslog 2>/dev/null || echo 'No journal/syslog available'" >&2 || true
       echo "[deploy] Try running with -v/--verbose for more details" >&2
       exit 1
     fi

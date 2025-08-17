@@ -50,6 +50,7 @@ build_node_service() {
 
   # Stage files into the combined artifact directory
   mkdir -p "$COMBINED_STAGE/${svc}"
+  # Exclude node_modules to avoid cross-architecture incompatibilities; install on target
   rsync -a --exclude ".git" --exclude "node_modules" --exclude "node_modules/.cache" \
     "${dir}/" "$COMBINED_STAGE/${svc}/"
   # Ensure full config directory is included in the combined artifact once

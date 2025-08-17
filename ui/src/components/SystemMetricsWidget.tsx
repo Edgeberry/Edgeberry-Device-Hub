@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Card, Col, Modal, Row, Spinner } from 'react-bootstrap';
-import { getMetrics, getMetricsHistory, getHealth, getStatus, getVersion, getPublicConfig, getServices, restartService } from '../api/devicehub';
+import { getMetrics, getMetricsHistory, getHealth, getStatus, getPublicConfig, getServices, restartService } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { direct_restartSystem, direct_shutdownSystem } from '../api/directMethods';
 
@@ -115,7 +115,6 @@ export default function SystemMetricsWidget(props:{ user: any | null }){
   // Health summary fields (integrated from HealthWidget)
   const [health, setHealth] = useState<any>(null);
   const [status, setStatus] = useState<any>(null);
-  const [version, setVersion] = useState<any>(null);
   const [config, setConfig] = useState<any>(null);
   // Power modal state
   const [showPower, setShowPower] = useState<boolean>(false);
@@ -136,7 +135,6 @@ export default function SystemMetricsWidget(props:{ user: any | null }){
       // Best-effort health info (these endpoints may not be available in all builds)
       try{ setHealth(await getHealth()); }catch{}
       try{ setStatus(await getStatus()); }catch{}
-      try{ setVersion(await getVersion()); }catch{}
       try{ setConfig(await getPublicConfig()); }catch{}
     }catch(e:any){
       setError(e?.message || 'Failed to load metrics');
@@ -390,21 +388,17 @@ export default function SystemMetricsWidget(props:{ user: any | null }){
             <Spinner animation="border" size="sm" />
           ) : (
             <Row>
-              <Col md="3" sm="6" xs="12">
+              <Col md="4" sm="6" xs="12">
                 <div><strong>Status</strong></div>
                 <Badge bg={(health?.health === 'ok' || health?.ok === true) ? 'success' : 'danger'}>
                   {(health?.health === 'ok' || health?.ok === true) ? 'Healthy' : 'Degraded'}
                 </Badge>
               </Col>
-              <Col md="3" sm="6" xs="12">
+              <Col md="4" sm="6" xs="12">
                 <div><strong>Uptime</strong></div>
                 <div>{humanizedUptime(status, metrics)}</div>
               </Col>
-              <Col md="3" sm="6" xs="12">
-                <div><strong>Version</strong></div>
-                <div>{`${(version && (version.service || version.name)) || 'Device Hub'} ${(version && (version.version || version.git)) || '-'}`}</div>
-              </Col>
-              <Col md="3" sm="6" xs="12">
+              <Col md="4" sm="6" xs="12">
                 <div><strong>Environment</strong></div>
                 <div>
                   {config ? (
