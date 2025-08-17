@@ -71,7 +71,7 @@ basic_connectivity() {
   # Give sub a moment to attach
   sleep 0.3
   # Publish
-  "${PUB[@]}" -t "${topic}" -m "${payload}" || fail "publish failed (ACL/connectivity)"
+  timeout "${TIMEOUT_SEC}" "${PUB[@]}" -t "${topic}" -m "${payload}" || fail "publish failed (ACL/connectivity)"
   wait ${sub_pid} || true
   if grep -q "${payload}" /tmp/mqtt_test_echo.$$; then
     ok "Echo received on ${topic}"
@@ -98,7 +98,7 @@ provisioning_test() {
   # Publish request
   local payload
   payload=$(jq -n --arg id "${DEVICE_ID}" --arg ts "$(date -Is)" '{name:"Test Device "+$id, meta:{ts:$ts}}' 2>/dev/null || echo '{"name":"Test Device","meta":{"ts":"'"$(date -Is)"'"}}')
-  "${PUB[@]}" -t "${req_t}" -m "${payload}" -q 1 || fail "publish provision request failed"
+  timeout "${TIMEOUT_SEC}" "${PUB[@]}" -t "${req_t}" -m "${payload}" -q 1 || fail "publish provision request failed"
 
   # Await response
   wait ${sub_pid} || true
@@ -129,11 +129,11 @@ twin_test() {
   sleep 0.3
 
   # Publish get
-  "${PUB[@]}" -t "${get_t}" -n -q 1 || fail "publish twin get failed"
+  timeout "${TIMEOUT_SEC}" "${PUB[@]}" -t "${get_t}" -n -q 1 || fail "publish twin get failed"
   # Publish update
   local desired
   desired=$(jq -n --arg ts "$(date -Is)" '{desired:{ping:$ts}}' 2>/dev/null || echo '{"desired":{"ping":"'"$(date -Is)"'"}}')
-  "${PUB[@]}" -t "${upd_t}" -m "${desired}" -q 1 || fail "publish twin update failed"
+  timeout "${TIMEOUT_SEC}" "${PUB[@]}" -t "${upd_t}" -m "${desired}" -q 1 || fail "publish twin update failed"
 
   wait ${sub_pid} || true
   if grep -q "${rej_t}" /tmp/mqtt_twin_resp.$$; then
@@ -158,7 +158,7 @@ telemetry_test() {
   local tele_t="devices/${DEVICE_ID}/telemetry"
   local m
   m=$(jq -n --arg ts "$(date +%s)" '{ts: ($ts|tonumber), temp: (20 + (now%5)) }' 2>/dev/null || echo '{"ts":'"$(date +%s)"',"temp":22.1}')
-  "${PUB[@]}" -t "${tele_t}" -m "${m}" || fail "telemetry publish failed"
+  timeout "${TIMEOUT_SEC}" "${PUB[@]}" -t "${tele_t}" -m "${m}" || fail "telemetry publish failed"
   ok "Telemetry published to ${tele_t}"
 }
 

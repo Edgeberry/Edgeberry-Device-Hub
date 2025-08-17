@@ -6,8 +6,9 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Card, Col, Modal, Row, Spinner } from 'react-bootstrap';
-import { getMetrics, getMetricsHistory } from '../api/devicehub';
+import { getMetrics, getMetricsHistory, getHealth, getStatus, getVersion, getPublicConfig, getServices, restartService } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
+import { direct_restartSystem, direct_shutdownSystem } from '../api/directMethods';
 
 type Metrics = {
   cpu?: { load1: number; load5: number; load15: number; cores: number; approxUsagePercent: number };
@@ -33,13 +34,27 @@ function percentColor(p?: number){
   return 'danger';
 }
 
-export default function SystemMetricsWidget(){
+export default function SystemMetricsWidget(props:{ user: any | null }){
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [metrics, setMetrics] = useState<Metrics>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [history, setHistory] = useState<{ hours: number; samples: Metrics[] }>({ hours: 24, samples: [] });
   const [wsOn, setWsOn] = useState<boolean>(false);
+  // Health summary fields (integrated from HealthWidget)
+  const [health, setHealth] = useState<any>(null);
+  const [status, setStatus] = useState<any>(null);
+  const [version, setVersion] = useState<any>(null);
+  const [config, setConfig] = useState<any>(null);
+  // Power modal state
+  const [showPower, setShowPower] = useState<boolean>(false);
+  const [powerBusy, setPowerBusy] = useState<boolean>(false);
+  const [powerMsg, setPowerMsg] = useState<string>('');
+  const [powerErr, setPowerErr] = useState<string>('');
+  const canControl = !!(props?.user && (
+    (Array.isArray(props.user.roles) && props.user.roles.includes('admin')) ||
+    (!Array.isArray(props.user.roles))
+  ));
 
   async function load(){
     try{
@@ -47,6 +62,11 @@ export default function SystemMetricsWidget(){
       setError('');
       const m = await getMetrics();
       setMetrics(m || {});
+      // Best-effort health info (these endpoints may not be available in all builds)
+      try{ setHealth(await getHealth()); }catch{}
+      try{ setStatus(await getStatus()); }catch{}
+      try{ setVersion(await getVersion()); }catch{}
+      try{ setConfig(await getPublicConfig()); }catch{}
     }catch(e:any){
       setError(e?.message || 'Failed to load metrics');
     }finally{
@@ -281,8 +301,50 @@ export default function SystemMetricsWidget(){
       <Card.Body>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h5 className="mb-0">System Metrics</h5>
-          <Button size="sm" variant="outline-secondary" onClick={load} disabled={loading}>Refresh</Button>
+          <div>
+            <Button
+              size="sm"
+              variant="outline-danger"
+              disabled={!canControl}
+              title={canControl ? 'Power options' : 'Admin only'}
+              onClick={()=>{ if(canControl) { setPowerErr(''); setPowerMsg(''); setShowPower(true); } }}
+            >
+              <i className="fa-solid fa-power-off" aria-hidden="true" />
+            </Button>
+          </div>
         </div>
+        {/* Integrated health strip */}
+        <div style={{ marginTop: 8 }}>
+          {loading ? (
+            <Spinner animation="border" size="sm" />
+          ) : (
+            <Row>
+              <Col md="3" sm="6" xs="12">
+                <div><strong>Status</strong></div>
+                <Badge bg={(health?.health === 'ok' || health?.ok === true) ? 'success' : 'danger'}>
+                  {(health?.health === 'ok' || health?.ok === true) ? 'Healthy' : 'Degraded'}
+                </Badge>
+              </Col>
+              <Col md="3" sm="6" xs="12">
+                <div><strong>Uptime</strong></div>
+                <div>{(status && (status.uptime || status.uptimeSeconds)) || '-'}</div>
+              </Col>
+              <Col md="3" sm="6" xs="12">
+                <div><strong>Version</strong></div>
+                <div>{`${(version && (version.service || version.name)) || 'Device Hub'} ${(version && (version.version || version.git)) || '-'}`}</div>
+              </Col>
+              <Col md="3" sm="6" xs="12">
+                <div><strong>Environment</strong></div>
+                <div>{(config && (config.env || config.environment)) || '-'}</div>
+              </Col>
+            </Row>
+          )}
+        </div>
+        {(powerErr || powerMsg) && (
+          <div style={{ marginTop: 8, color: powerErr ? '#c00' : '#060' }}>
+            {powerErr || powerMsg}
+          </div>
+        )}
         <div style={{ marginTop: 12 }}>
           {loading ? (
             <Spinner animation="border" size="sm" />
@@ -296,13 +358,13 @@ export default function SystemMetricsWidget(){
                       role="button"
                       onClick={() => setSelected(t.key)}
                       style={{
-                        border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, height: '100%',
+                        border: '1px solid #e0e0e0', borderRadius: 8, padding: 6, height: '100%',
                         boxShadow: '0 1px 2px rgba(0,0,0,0.05)', cursor: 'pointer',
-                        display:'flex', flexDirection:'column', minHeight: 110
+                        display:'flex', flexDirection:'column', minHeight: 28
                       }}
                     >
                       <div style={{ fontWeight: 600 }}>{t.title}</div>
-                      <div style={{ marginTop: 8, flex:1, display:'flex' }}>{t.badge}</div>
+                      <div style={{ marginTop: 2, flex:1, display:'flex' }}>{t.badge}</div>
                     </div>
                   </Col>
                 ))}
@@ -321,6 +383,85 @@ export default function SystemMetricsWidget(){
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={()=>setSelected(null)}>Close</Button>
+          </Modal.Footer>
+        </Modal>
+
+        {/* Power management modal */}
+        <Modal show={showPower} onHide={()=>{ if(!powerBusy) setShowPower(false); }} centered>
+          <Modal.Header closeButton>
+            <Modal.Title>Power Management</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <div className="d-grid gap-2">
+              <Button
+                variant="outline-primary"
+                disabled={powerBusy}
+                onClick={async ()=>{
+                  if(!confirm('Restart all services now?')) return;
+                  setPowerBusy(true); setPowerErr(''); setPowerMsg('');
+                  try{
+                    const res:any = await getServices();
+                    const list: any[] = Array.isArray(res?.services) ? res.services : [];
+                    // Exclude legacy/merged API unit
+                    const units = list
+                      .map((s:any)=> String(s.unit||''))
+                      .filter(u => u && u !== 'devicehub-api.service');
+                    for(const u of units){
+                      try{ await restartService(u); }catch(e:any){ /* accumulate but continue */ }
+                    }
+                    setPowerMsg(`Restarted ${units.length} services`);
+                  }catch(e:any){
+                    setPowerErr(e?.message || 'Failed to restart services');
+                  }finally{
+                    setPowerBusy(false);
+                  }
+                }}
+              >
+                {powerBusy ? (<><Spinner as="span" animation="border" size="sm" /> Restarting…</>) : 'Restart all services'}
+              </Button>
+              <Button
+                variant="outline-warning"
+                disabled={powerBusy}
+                onClick={async ()=>{
+                  if(!confirm('Reboot the server now? This will interrupt connectivity.')) return;
+                  setPowerBusy(true); setPowerErr(''); setPowerMsg('');
+                  try{
+                    const res:any = await direct_restartSystem('local');
+                    setPowerMsg(res?.message || 'Reboot requested');
+                  }catch(e:any){
+                    setPowerErr(e?.message || 'Failed to request reboot');
+                  }finally{
+                    setPowerBusy(false);
+                  }
+                }}
+              >
+                {powerBusy ? (<><Spinner as="span" animation="border" size="sm" /> Requesting…</>) : 'Reboot server'}
+              </Button>
+              <Button
+                variant="outline-danger"
+                disabled={powerBusy}
+                onClick={async ()=>{
+                  if(!confirm('Shutdown the server now? This will power off the device.')) return;
+                  setPowerBusy(true); setPowerErr(''); setPowerMsg('');
+                  try{
+                    const res:any = await direct_shutdownSystem('local');
+                    setPowerMsg(res?.message || 'Shutdown requested');
+                  }catch(e:any){
+                    setPowerErr(e?.message || 'Failed to request shutdown');
+                  }finally{
+                    setPowerBusy(false);
+                  }
+                }}
+              >
+                {powerBusy ? (<><Spinner as="span" animation="border" size="sm" /> Requesting…</>) : 'Shutdown server'}
+              </Button>
+            </div>
+            {(powerErr || powerMsg) && (
+              <div style={{ marginTop: 12, color: powerErr ? '#c00' : '#060' }}>{powerErr || powerMsg}</div>
+            )}
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={()=> setShowPower(false)} disabled={powerBusy}>Close</Button>
           </Modal.Footer>
         </Modal>
       </Card.Body>

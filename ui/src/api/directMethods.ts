@@ -21,6 +21,12 @@ export async function direct_restartSystem(deviceId: string){
   return jsonOrMessage(res);
 }
 
+export async function direct_shutdownSystem(deviceId: string){
+  const url = base()+`/devices/${encodeURIComponent(deviceId)}/actions/shutdown`;
+  const res = await fetch(url, { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}
+
 // Application
 export async function direct_restartApplication(deviceId: string){
   const url = base()+`/devices/${encodeURIComponent(deviceId)}/actions/application/restart`;

@@ -10,7 +10,7 @@ import { Card, Badge, Spinner, Button, Row, Col, Modal } from 'react-bootstrap';
 import { getServices, getServiceLogs, startService, stopService, restartService, runMqttSanityTest } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
-type ServiceItem = { unit: string; status: string };
+type ServiceItem = { unit: string; status: string; version?: string };
 
 type ServicesResponse = { services: ServiceItem[] } | { message?: string };
 
@@ -47,6 +47,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
   useEffect(() => {
     // prefer websocket updates if available; fallback to one-off HTTP
     let mounted = true;
+    let fallbackTimer: any = null;
     const onServices = (data: any) => {
       if(!mounted) return;
       try{
@@ -54,12 +55,15 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
         setServices(list);
         setLoading(false);
         setError('');
+        if (fallbackTimer) { try{ clearTimeout(fallbackTimer); }catch{} fallbackTimer = null; }
       }catch{}
     };
     wsSubscribe('services.status', onServices);
     // initial HTTP if WS not connected yet
     (async()=>{ if(!wsIsConnected()) await load(); })();
-    return ()=>{ mounted = false; wsUnsubscribe('services.status', onServices); };
+    // If WS is connected but no payload arrives promptly, fallback to HTTP after a short delay
+    fallbackTimer = setTimeout(() => { if (mounted && loading) { load().catch(()=>{}); } }, 2500);
+    return ()=>{ mounted = false; if (fallbackTimer) { try{ clearTimeout(fallbackTimer); }catch{} } wsUnsubscribe('services.status', onServices); };
   }, []);
 
   // Load logs whenever a selection opens the modal
@@ -67,6 +71,8 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
     if(!selected) return;
     (async ()=>{
       try{
+        // Reset any prior stream end notice for a new selection
+        setStreamEnded('');
         setLogsLoading(true);
         const res: any = await getServiceLogs(selected.unit, 200);
 
@@ -263,7 +269,6 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
             >
               {diagBusy ? (<><Spinner as="span" animation="border" size="sm" /> Running...</>) : 'Sanity Check'}
             </Button>
-            <Button size="sm" variant="outline-secondary" onClick={load} disabled={loading || wsIsConnected()}>Refresh</Button>
           </div>
         </div>
         <div style={{ marginTop: 12 }}>
@@ -296,7 +301,10 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                             cursor: 'pointer',
                           }}
                         >
-                          <div style={{ fontWeight: 600, wordBreak: 'break-all' }}>{prettyUnitName(s.unit)}</div>
+                          <div style={{ fontWeight: 600, wordBreak: 'break-all' }}>
+                            {prettyUnitName(s.unit)}{' '}
+                            {s.version ? <span style={{ fontWeight: 400, fontSize: 12, color:'#666' }}>v{s.version}</span> : null}
+                          </div>
                           <div style={{ marginTop: 8 }}>
                             <Badge bg={variant}>{s.status}</Badge>
                           </div>
@@ -314,6 +322,9 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                   {selected && (
                     <div>
                       <div style={{ marginBottom: 6 }}><strong>Service:</strong> {prettyUnitName(selected.unit)}</div>
+                      {selected.version ? (
+                        <div style={{ marginBottom: 6 }}><strong>Version:</strong> v{selected.version}</div>
+                      ) : null}
                       <div style={{ marginBottom: 6, opacity: 0.7 }}><small>Unit id: {selected.unit}</small></div>
                       <div style={{ marginBottom: 12 }}><strong>Status:</strong> <Badge bg={statusVariant(selected.status)}>{selected.status}</Badge></div>
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>

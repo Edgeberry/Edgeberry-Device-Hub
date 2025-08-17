@@ -14,7 +14,6 @@
  */
 import React, { useEffect, useState } from 'react';
 import { Badge, Button, Card, Table } from 'react-bootstrap';
-import HealthWidget from '../components/HealthWidget';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
 import SystemMetricsWidget from '../components/SystemMetricsWidget';
 import { getDevices, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
@@ -47,9 +46,8 @@ export default function Overview(props:{user:any}){
 
   return (
     <div>
-      <HealthWidget />
+      <SystemMetricsWidget user={props.user} />
       <ServiceStatusWidget user={props.user} />
-      <SystemMetricsWidget />
 
       <Card>
         <Card.Header className="d-flex justify-content-between align-items-center">

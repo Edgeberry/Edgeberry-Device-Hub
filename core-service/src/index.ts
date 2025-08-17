@@ -222,12 +222,27 @@ app.post('/api/diagnostics/mqtt-test', async (req: Request, res: Response) => {
     const proc = spawn('bash', [scriptPath], { env });
     let stdout = '';
     let stderr = '';
+    let responded = false;
+    const TIMEOUT_MS = Math.max(5_000, Math.min(120_000, Number((body && body.timeoutSec ? body.timeoutSec : 30)) * 1000));
+    const killTimer = setTimeout(() => {
+      if (responded) return;
+      responded = true;
+      try { proc.kill('SIGKILL'); } catch {}
+      res.status(504).json({ ok: false, error: 'diagnostics timed out', startedAt, durationMs: Date.now() - startedAt, stdout, stderr });
+    }, TIMEOUT_MS);
+
     proc.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
     proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
     proc.on('error', (e) => {
+      if (responded) return;
+      responded = true;
+      clearTimeout(killTimer);
       res.status(500).json({ ok: false, error: String(e), startedAt, durationMs: Date.now() - startedAt });
     });
     proc.on('close', (code) => {
+      if (responded) return;
+      responded = true;
+      clearTimeout(killTimer);
       const ok = code === 0;
       res.status(ok ? 200 : 500).json({ ok, exitCode: code, startedAt, durationMs: Date.now() - startedAt, stdout, stderr });
     });
@@ -490,8 +505,35 @@ function bufferToMaybeJson(b: any){
 }
 
 // ===== Helpers reused by REST and WS =====
-async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; status: string }> }> {
+async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; status: string; version?: string }> }> {
   const units = DEFAULT_LOG_UNITS;
+
+  function unitToPkgPath(u: string): string | null {
+    // Map systemd unit -> sibling service directory package.json
+    // devicehub-core.service -> ../core-service/package.json
+    // devicehub-provisioning.service -> ../provisioning-service/package.json
+    // devicehub-twin.service -> ../twin-service/package.json
+    // devicehub-registry.service -> ../registry-service/package.json
+    const map: Record<string, string> = {
+      'devicehub-core.service': path.resolve(process.cwd(), '..', 'core-service', 'package.json'),
+      'devicehub-provisioning.service': path.resolve(process.cwd(), '..', 'provisioning-service', 'package.json'),
+      'devicehub-twin.service': path.resolve(process.cwd(), '..', 'twin-service', 'package.json'),
+      'devicehub-registry.service': path.resolve(process.cwd(), '..', 'registry-service', 'package.json'),
+    };
+    return map[u] || null;
+  }
+
+  function readVersion(pkgPath: string | null): string | undefined {
+    if (!pkgPath) return undefined;
+    try {
+      if (!fs.existsSync(pkgPath)) return undefined;
+      const txt = fs.readFileSync(pkgPath, 'utf8');
+      const json = JSON.parse(txt);
+      const v = json && typeof json.version === 'string' ? json.version : undefined;
+      return v;
+    } catch { return undefined; }
+  }
+
   const checks = await Promise.all(units.map(async (u) => {
     try {
       const result = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
@@ -502,9 +544,11 @@ async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; 
         p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
         p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim(), err: err.join('') }));
       });
-      return { unit: u, status: result.out || 'unknown' };
+      const version = readVersion(unitToPkgPath(u));
+      return { unit: u, status: result.out || 'unknown', ...(version ? { version } : {}) } as any;
     } catch (e) {
-      return { unit: u, status: 'error' };
+      const version = readVersion(unitToPkgPath(u));
+      return { unit: u, status: 'error', ...(version ? { version } : {}) } as any;
     }
   }));
   return { services: checks };
@@ -548,6 +592,13 @@ app.post('/api/devices/:id/actions/reboot', (req: Request, res: Response) => {
   const { id } = req.params;
   if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
   res.json({ ok: true, message: `Reboot requested for device ${id}` });
+});
+
+// Shutdown device (stub)
+app.post('/api/devices/:id/actions/shutdown', (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
+  res.json({ ok: true, message: `Shutdown requested for device ${id}` });
 });
 
 // Application controls
