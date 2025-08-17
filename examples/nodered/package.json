@@ -1,10 +1,9 @@
 {
-  "name": "@edgeberry/examples-nodered-edgeberry-device",
+  "name": "node-red-contrib-edgeberry-hub",
   "version": "0.1.0",
-  "description": "Example Node-RED node: Edgeberry device (TypeScript)",
+  "description": "Node-RED nodes for Edgeberry Device Hub integration",
   "license": "GPL-3.0-or-later",
-  "private": true,
-  "keywords": ["node-red"],
+  "keywords": ["node-red", "edgeberry", "device-hub", "iot", "node-red-contrib"],
   "main": "dist/edgeberry-device.js",
   "types": "dist/edgeberry-device.d.ts",
   "scripts": {
