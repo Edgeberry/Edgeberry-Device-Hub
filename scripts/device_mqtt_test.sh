@@ -12,7 +12,7 @@ set -euo pipefail
 #   - Device certificate CN must equal DEVICE_ID for ACL patterns
 #
 # Config via env vars (override as needed):
-MQTT_URL="${MQTT_URL:-mqtts://localhost:8883}"
+MQTT_URL="${MQTT_URL:-mqtts://127.0.0.1:8883}"
 MQTT_TLS_CA="${MQTT_TLS_CA:-/etc/mosquitto/certs/ca.crt}"
 MQTT_TLS_CERT="${MQTT_TLS_CERT:-/etc/mosquitto/certs/my-device.crt}"
 MQTT_TLS_KEY="${MQTT_TLS_KEY:-/etc/mosquitto/certs/my-device.key}"

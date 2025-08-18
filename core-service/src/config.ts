@@ -26,7 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CANDIDATE_UI_DIST = path.resolve(__dirname, '../../ui/build');
 export const UI_DIST: string = process.env.UI_DIST || (fs.existsSync(CANDIDATE_UI_DIST) ? CANDIDATE_UI_DIST : '/opt/Edgeberry/devicehub/ui/build');
-export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://localhost:1883';
+export const MQTT_URL: string = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
 // SQLite DBs owned by worker services (MVP direct-read from core-service)
 // Persist provisioning DB under system data dir by default so whitelist survives reinstalls
 export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || (

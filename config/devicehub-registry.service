@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/Edgeberry/devicehub/registry-service
 Environment=NODE_ENV=production
-Environment=MQTT_URL=mqtts://localhost:8883
+Environment=MQTT_URL=mqtts://127.0.0.1:8883
 Environment=MQTT_TLS_CA=/opt/Edgeberry/devicehub/config/certs/ca.crt
 Environment=MQTT_TLS_CERT=/opt/Edgeberry/devicehub/config/certs/registry.crt
 Environment=MQTT_TLS_KEY=/opt/Edgeberry/devicehub/config/certs/registry.key

@@ -1,5 +1,5 @@
 export const SERVICE = 'twin-service';
-export const MQTT_URL: string = process.env.MQTT_URL || 'mqtts://localhost:8883';
+export const MQTT_URL: string = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
 export const MQTT_USERNAME: string | undefined = process.env.MQTT_USERNAME || undefined;
 export const MQTT_PASSWORD: string | undefined = process.env.MQTT_PASSWORD || undefined;
 export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA || undefined; // e.g., ../config/certs/ca.crt

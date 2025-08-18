@@ -9,7 +9,7 @@ import { spawnSync } from 'child_process';
 // 2) Sends provisioning request to $devicehub/devices/{deviceId}/provision/request
 // 3) On accepted, publishes periodic telemetry to devices/{deviceId}/telemetry
 
-const MQTT_URL = process.env.MQTT_URL || 'mqtts://localhost:8883';
+const MQTT_URL = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME;
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD;
 const MQTT_TLS_CA = process.env.MQTT_TLS_CA;

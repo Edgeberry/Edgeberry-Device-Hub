@@ -61,7 +61,10 @@ start_mosquitto() {
     return 0
   fi
   log "starting mosquitto with $conf"
-  run_prefixed mosquitto mosquitto -c "$conf" -v
+  # IMPORTANT: mosquitto resolves relative paths in the config file against the
+  # current working directory, not the config file location. Ensure CWD is the
+  # repo root so entries like "config/certs/ca.crt" resolve correctly.
+  run_prefixed mosquitto bash -lc "cd \"$ROOT_DIR\" && mosquitto -c \"$conf\" -v"
 }
 
 start_service() {
@@ -75,21 +78,21 @@ start_service() {
   local -a ENV_VARS=()
   case "$name" in
     provisioning-service)
-      ENV_VARS+=("MQTT_URL=mqtts://localhost:8883")
+      ENV_VARS+=("MQTT_URL=mqtts://127.0.0.1:8883")
       ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
       ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/provisioning.crt")
       ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/provisioning.key")
       ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
       ;;
     twin-service)
-      ENV_VARS+=("MQTT_URL=mqtts://localhost:8883")
+      ENV_VARS+=("MQTT_URL=mqtts://127.0.0.1:8883")
       ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
       ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/twin.crt")
       ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/twin.key")
       ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
       ;;
     registry-service)
-      ENV_VARS+=("MQTT_URL=mqtts://localhost:8883")
+      ENV_VARS+=("MQTT_URL=mqtts://127.0.0.1:8883")
       ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
       ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/registry.crt")
       ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/registry.key")

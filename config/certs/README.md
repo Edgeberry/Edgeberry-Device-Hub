@@ -27,7 +27,7 @@ openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 \
 openssl genrsa -out server.key 2048
 openssl req -new -key server.key -out server.csr -subj "/CN=localhost"
 
-# 3) Minimal server cert signed by CA (subjectAltName=DNS:localhost)
+# 3) Minimal server cert signed by CA (subjectAltName=DNS:localhost and IPv4 loopback)
 cat > server-ext.cnf <<EOF
 subjectAltName=DNS:localhost,IP:127.0.0.1
 extendedKeyUsage=serverAuth
@@ -58,18 +58,20 @@ openssl x509 -req -in my-device.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
 popd
 ```
 
-Subscribe and publish over TLS/mTLS:
+Subscribe and publish over TLS/mTLS (use IPv4 loopback to avoid IPv6 localhost pitfalls):
 
 ```bash
 # Terminal 1: subscribe as my-device
-mosquitto_sub -h localhost -p 8883 --cafile config/certs/ca.crt \
+mosquitto_sub -h 127.0.0.1 -p 8883 --cafile config/certs/ca.crt \
   --cert config/certs/my-device.crt --key config/certs/my-device.key \
   -t 'devices/my-device/#' -v
 
 # Terminal 2: publish as my-device
-mosquitto_pub -h localhost -p 8883 --cafile config/certs/ca.crt \
+mosquitto_pub -h 127.0.0.1 -p 8883 --cafile config/certs/ca.crt \
   --cert config/certs/my-device.crt --key config/certs/my-device.key \
   -t 'devices/my-device/test' -m 'hello'
 ```
 
-Services that connect should set their MQTT URL to `mqtts://localhost:8883` and pass TLS options (ca, cert, key).
+Services that connect should set their MQTT URL to `mqtts://127.0.0.1:8883` and pass TLS options (ca, cert, key).
+
+Note: On some systems, `localhost` resolves to IPv6 `::1`. If your Mosquitto config listens only on IPv4 (e.g., `listener 8883 0.0.0.0`), connecting to `localhost:8883` may result in `ECONNREFUSED ::1:8883`. Use `127.0.0.1` or configure an IPv6 listener (`listener 8883 ::`).

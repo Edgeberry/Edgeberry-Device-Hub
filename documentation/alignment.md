@@ -58,7 +58,7 @@ Minimal steps to run broker + services with mTLS locally:
 
 4) Environment for services (example)
 ```
-export MQTT_URL=mqtts://localhost:8883
+export MQTT_URL=mqtts://127.0.0.1:8883
 export MQTT_TLS_CA=./config/certs/ca.crt
 export MQTT_TLS_CERT=./config/certs/provisioning.crt
 export MQTT_TLS_KEY=./config/certs/provisioning.key
@@ -73,7 +73,7 @@ export MQTT_TLS_REJECT_UNAUTHORIZED=true
 - Device client cert CN must equal the deviceId (e.g., `my-device-01`).
 ```
 export DEVICE_ID=my-device-01
-export MQTT_URL=mqtts://localhost:8883
+export MQTT_URL=mqtts://127.0.0.1:8883
 export MQTT_TLS_CA=./config/certs/ca.crt
 export MQTT_TLS_CERT=./config/certs/my-device-01.crt
 export MQTT_TLS_KEY=./config/certs/my-device-01.key
@@ -82,13 +82,15 @@ export MQTT_TLS_KEY=./config/certs/my-device-01.key
 
 #### MQTT connection env vars (standardized)
 
-- `MQTT_URL` (default `mqtts://localhost:8883`)
+- `MQTT_URL` (default `mqtts://127.0.0.1:8883`)
 - `MQTT_USERNAME` (optional; with mTLS, CN is used as username)
 - `MQTT_PASSWORD` (optional)
 - `MQTT_TLS_CA` path to CA cert file
 - `MQTT_TLS_CERT` path to client cert file
 - `MQTT_TLS_KEY` path to client key file
 - `MQTT_TLS_REJECT_UNAUTHORIZED` boolean, default `true`
+
+Note: Some systems resolve `localhost` to IPv6 `::1`. If Mosquitto listens on IPv4 only (e.g., `listener 8883 0.0.0.0`), connecting to `mqtts://localhost:8883` will fail with ECONNREFUSED on `::1:8883`. Use `127.0.0.1` or configure an IPv6 listener (e.g., `listener 8883 ::`).
 
 #### Diagnostics: MQTT Sanity Test (mTLS)
 
