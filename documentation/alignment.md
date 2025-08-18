@@ -277,6 +277,12 @@ Internal modularity is an implementation detail and must not leak into the publi
 - **Authentication:** Via the `fh_session` JWT cookie on upgrade
 - **Features:** Topic-based subscribe/unsubscribe and server push updates
 
+Anonymous access (Observer mode):
+- Connections without a valid session cookie are accepted as anonymous.
+- On connect the server sends `{ type: "welcome", data: { authenticated: boolean } }` to indicate auth status.
+- Anonymous clients are read-only and may only subscribe to the public topics listed below.
+- Authenticated clients may subscribe to all topics documented in this section (subject to role-based UI gating where applicable).
+
 #### UI Routing (One-Page App)
 - The UI is a single Overview page; all routes redirect/resolve to `/`.
 - Anonymous mode is enabled: non-sensitive data is visible without login; admin-only actions are disabled.
@@ -491,23 +497,35 @@ Message envelope: JSON objects `{ type: string, data: any }`.
 
 Auth: WebSocket upgrade validates the `fh_session` JWT cookie (SameSite=Lax; Secure over HTTPS). On reconnect, the client auto-resubscribes.
 
+Anonymous vs authenticated topic access:
+- Public topics (anonymous allowed): `metrics.history`, `metrics.snapshots`, `services.status`, `devices.list.public`.
+- Auth-required topics: `devices.list`, `logs.stream:<unit>` and any future sensitive streams.
+
 Subscribe protocol: client sends `{ type: "subscribe", topics: string[] }` (or `{ type: "unsubscribe", topics: string[] }`).
 
 Topics implemented:
 
-- `metrics.history`
+- `metrics.history` (public)
   - On subscribe: server sends `{ type: "metrics.history", data: { hours, samples } }` (default 24h window).
   - Incremental updates may arrive as `{ type: "metrics.history.append", data: { sample } }` (UI normalizes to `metrics.history`).
 
-- `services.status`
+- `metrics.snapshots` (public)
+  - Current resource utilization snapshot: `{ cpu, mem, disk, net, ts }`.
+  - Broadcast on interval or when values change; also sent immediately on subscribe.
+
+- `services.status` (public)
   - Snapshot of systemd managed units: `{ services: [{ unit, status }] }`.
   - Broadcast every 5s only when payload changes; also sent immediately on subscribe.
 
-- `devices.list`
+- `devices.list` (auth-required)
   - Device registry list with computed presence: `{ devices: [{ id, name, last_seen, online, ... }] }`.
   - Broadcast every 10s only when payload changes; also sent immediately on subscribe.
 
-- `logs.stream:<unit>`
+- `devices.list.public` (public)
+  - Anonymized device list suitable for public dashboards. UUIDs and other sensitive identifiers are scrubbed/hashed; may include only non-sensitive fields.
+  - Broadcast cadence matches `devices.list`.
+
+- `logs.stream:<unit>` (auth-required)
   - Control topic. Subscribing starts a `journalctl -f` stream for `<unit>` (validated). Unsubscribing stops it. Initial HTTP logs snapshot remains available at `GET /api/logs`.
   - Lines are pushed as `{ type: "logs.line", data: { unit, entry } }` where `entry` is a journal JSON object. When the stream closes, server sends `{ type: "logs.stream.end", data: { unit, code } }`.
 
