@@ -50,6 +50,7 @@ export function startMqtt(db: any): MqttClient {
     const deviceId = parseDeviceId(topic, '/provision/request');
     if (!deviceId) return;
     try {
+      console.log(`[${SERVICE}] provision request received for deviceId=${deviceId}`);
       const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
       const uuid = typeof (body as any).uuid === 'string' ? String((body as any).uuid) : undefined;
       const csrPem = typeof (body as any).csrPem === 'string' ? String((body as any).csrPem) : undefined;
@@ -83,10 +84,12 @@ export function startMqtt(db: any): MqttClient {
             try { markWhitelistUsed(db, uuid); } catch {}
           }
           const respTopic = TOPICS.accepted(deviceId);
+          console.log(`[${SERVICE}] provision accepted for ${deviceId}; publishing ${respTopic}`);
           client.publish(respTopic, JSON.stringify({ deviceId, certPem, caChainPem }), { qos: 1 });
         })
         .catch((err) => {
           const rej = TOPICS.rejected(deviceId);
+          console.error(`[${SERVICE}] provision issue_failed for ${deviceId}:`, err?.message || err);
           client.publish(rej, JSON.stringify({ error: 'issue_failed', message: String(err?.message || err) }), { qos: 1 });
         });
     } catch (e) {
