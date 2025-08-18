@@ -1,8 +1,9 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync } from 'fs';
-import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED } from './config.js';
+import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
 import { upsertDevice, getWhitelistByUuid, markWhitelistUsed } from './db.js';
 import type { Json } from './types.js';
+import { issueDeviceCertFromCSR } from './certs.js';
 
 // Topic helpers
 const TOPICS = {
@@ -51,6 +52,7 @@ export function startMqtt(db: any): MqttClient {
     try {
       const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
       const uuid = typeof (body as any).uuid === 'string' ? String((body as any).uuid) : undefined;
+      const csrPem = typeof (body as any).csrPem === 'string' ? String((body as any).csrPem) : undefined;
       if (ENFORCE_WHITELIST) {
         if (!uuid) throw new Error('missing_uuid');
         const entry = getWhitelistByUuid((db as any), uuid);
@@ -70,12 +72,23 @@ export function startMqtt(db: any): MqttClient {
           meta = { uuid } as Json;
         }
       }
-      upsertDevice(db, deviceId, name, token, meta);
-      if (ENFORCE_WHITELIST && uuid) {
-        try { markWhitelistUsed(db, uuid); } catch {}
+      // If CSR provided, issue device certificate using Root CA
+      if (!csrPem) {
+        throw new Error('missing_csrPem');
       }
-      const respTopic = TOPICS.accepted(deviceId);
-      client.publish(respTopic, JSON.stringify({ deviceId, status: 'ok' }), { qos: 1 });
+      issueDeviceCertFromCSR(deviceId, csrPem, CERT_DAYS)
+        .then(({ certPem, caChainPem }) => {
+          upsertDevice(db, deviceId, name, token, meta);
+          if (ENFORCE_WHITELIST && uuid) {
+            try { markWhitelistUsed(db, uuid); } catch {}
+          }
+          const respTopic = TOPICS.accepted(deviceId);
+          client.publish(respTopic, JSON.stringify({ deviceId, certPem, caChainPem }), { qos: 1 });
+        })
+        .catch((err) => {
+          const rej = TOPICS.rejected(deviceId);
+          client.publish(rej, JSON.stringify({ error: 'issue_failed', message: String(err?.message || err) }), { qos: 1 });
+        });
     } catch (e) {
       console.error(`[${SERVICE}] error handling provision request`, e);
       const rej = TOPICS.rejected(deviceId);

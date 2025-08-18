@@ -608,8 +608,8 @@ Provisioning flow (MQTT-only):
 
 1. Device generates a keypair and CSR (CN = `deviceId`).
 2. Device connects to the broker using the claim/provisioning certificate (mTLS).
-3. Device publishes CSR to `$devicehub/certificates/create-from-csr` with `{ reqId, csrPem, deviceId }`.
-4. Provisioning worker validates CSR and issues a signed device certificate; replies on `$devicehub/certificates/create-from-csr/accepted` with `{ reqId, certPem, caChainPem }` (or `/rejected`).
+3. Device publishes CSR to `$devicehub/devices/{deviceId}/provision/request` with `{ csrPem, uuid?, name?, token?, meta? }`.
+4. Provisioning worker validates UUID (when enforced) and CSR, issues a signed device certificate; replies on `$devicehub/devices/{deviceId}/provision/accepted` with `{ deviceId, certPem, caChainPem }` (or `$devicehub/devices/{deviceId}/provision/rejected`).
 5. Device saves cert, reconnects using its own certificate.
 6. Server marks the device `active`, sets `enrolled_at`, and subsequent MQTT runtime updates `last_seen`/`updated_at`.
 
@@ -714,8 +714,8 @@ Bootstrap (device installer) — MQTT-only:
 
 Production model:
 1. Device connects to the broker using the fleet provisioning client certificate (mTLS at the broker).
-2. Device publishes a provisioning request to `$devicehub/certificates/create-from-csr` (CSR-based) including `reqId`, `uuid`, `deviceId`.
-3. Server validates the provisioning client and UUID whitelist (hash-based), issues a signed device certificate, and replies on `/accepted` or `/rejected`.
+2. Device publishes a provisioning request to `$devicehub/devices/{deviceId}/provision/request` (CSR-based) including `csrPem` and optionally `uuid`.
+3. Server validates the provisioning client and UUID whitelist (hash-based), issues a signed device certificate, and replies on `$devicehub/devices/{deviceId}/provision/accepted` or `/rejected`.
 4. Device installs the returned cert/key and reconnects using its per-device client certificate.
 
 MVP/dev model (implemented):
@@ -747,13 +747,13 @@ Goal: Devices start with a generic claim certificate, request a per-device certi
 
 - Generate a new private key and CSR (CN = deviceId/serial).
 - Connect to broker using the claim cert (mTLS).
-- Publish CSR to `$devicehub/certificates/create-from-csr` with payload `{ reqId, csrPem, deviceId }`.
+- Publish CSR to `$devicehub/devices/{deviceId}/provision/request` with payload `{ csrPem, uuid? }`.
 
 3) Provisioning service (worker)
 
-- Subscribes to `$devicehub/certificates/create-from-csr`.
+- Subscribes to `$devicehub/devices/+/provision/request`.
 - Validates CSR (structure, expected CN shape).
-- Signs CSR with the Intermediate CA and publishes reply to `$devicehub/certificates/create-from-csr/accepted` with `{ reqId, certPem, caChainPem }` (or `/rejected` with `{ reqId, error }`).
+- Signs CSR with the Root CA and publishes reply to `$devicehub/devices/{deviceId}/provision/accepted` with `{ certPem, caChainPem }` (or `/rejected` with `{ error }`).
 - Correlation is via `reqId` in payload; the claim client filters by `reqId`.
 
 4) Device after provisioning
@@ -766,7 +766,7 @@ Goal: Devices start with a generic claim certificate, request a per-device certi
 
 - `require_certificate true`, `use_subject_as_username true`.
 - ACL examples:
-  - Claim CN = `claim`: allow publish to `$devicehub/certificates/create-from-csr` and subscribe to `$devicehub/certificates/create-from-csr/+` (accepted/rejected).
+  - Claim CN = `claim`: allow publish/subscribe on `$devicehub/devices/+/provision/#` (bootstrap only) — authorization is enforced by UUID whitelist in the provisioning service.
   - Device CN = `<deviceId>`: allow publish to `devices/<deviceId>/#`, subscribe to `devices/<deviceId>/commands/#`, and twin topics `$devicehub/devices/<deviceId>/twin/#`.
 
 6) MVP rules (dev path)
@@ -782,11 +782,11 @@ Prefix: `$devicehub`
 
 Provisioning (bootstrap) — All payloads are JSON:
 
-- Request (CSR): `$devicehub/certificates/create-from-csr`
-  - Payload: `{ reqId, csrPem, uuid, deviceId, daysValid? }`
+- Request (CSR): `$devicehub/devices/{deviceId}/provision/request`
+  - Payload: `{ csrPem, uuid?, name?, token?, meta? }`
   - Responses:
-    - `$devicehub/certificates/create-from-csr/accepted`
-    - `$devicehub/certificates/create-from-csr/rejected`
+    - `$devicehub/devices/{deviceId}/provision/accepted`
+    - `$devicehub/devices/{deviceId}/provision/rejected`
 - Request (server keygen): `$devicehub/certificates/create`
   - Payload: `{ reqId, uuid, deviceId, daysValid? }`
   - Responses:
