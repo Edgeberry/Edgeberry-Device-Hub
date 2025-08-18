@@ -11,5 +11,8 @@
     "deploy": "bash scripts/deploy.sh -h 192.168.1.116 -u spuq",
     "sync-versions": "node scripts/sync-versions.js",
     "postversion": "node scripts/sync-versions.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
   }
 }

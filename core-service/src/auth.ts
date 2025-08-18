@@ -62,6 +62,10 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
   if (req.method === 'GET' && req.path === '/api/devices') {
     return next();
   }
+  // Allow WebSocket upgrades to /api/ws - authentication is handled in the WebSocket connection handler
+  if (req.path === '/api/ws' && req.headers.upgrade?.toLowerCase() === 'websocket') {
+    return next();
+  }
   if (req.path.startsWith('/api/auth/')) return next();
   const s = getSession(req);
   if (!s) {

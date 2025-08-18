@@ -123,7 +123,7 @@ try {
 } catch {}
 
 // GET /api/settings/certs/root/download -> download Root CA certificate (PEM)
-app.get('/api/settings/certs/root/download', async (_req: Request, res: Response) => {
+app.get('/api/settings/certs/root/download', authRequired, async (_req: Request, res: Response) => {
   try {
     if (!(await caExists())) { res.status(404).json({ error: 'root CA not found' }); return; }
     res.setHeader('Content-Type', 'application/x-pem-file');
@@ -137,7 +137,7 @@ app.get('/api/settings/certs/root/download', async (_req: Request, res: Response
 });
 
 // GET /api/settings/certs/provisioning/:name/download -> tar.gz bundle for device
-app.get('/api/settings/certs/provisioning/:name/download', async (req: Request, res: Response) => {
+app.get('/api/settings/certs/provisioning/:name/download', authRequired, async (req: Request, res: Response) => {
   try {
     const { name } = req.params;
     if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) { res.status(400).json({ error: 'invalid name' }); return; }
@@ -176,7 +176,15 @@ app.get('/api/settings/certs/provisioning/:name/download', async (req: Request, 
     res.status(500).json({ error: e?.message || 'failed to create bundle' });
   }
 });
-app.use(cors());
+// Apply CORS only to HTTP requests, not WebSocket upgrades
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Skip CORS for WebSocket upgrade requests
+  if (req.headers.upgrade?.toLowerCase() === 'websocket') {
+    return next();
+  }
+  // Apply CORS to regular HTTP requests
+  cors()(req, res, next);
+});
 app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' }));
 
@@ -320,7 +328,7 @@ app.get('/api/version', (_req: Request, res: Response) => {
 // POST /api/diagnostics/mqtt-test
 // Body: { deviceId?, mqttUrl?, ca?, cert?, key?, rejectUnauthorized?, timeoutSec? }
 // Runs scripts/device_mqtt_test.sh and returns stdout/stderr and exit code
-app.post('/api/diagnostics/mqtt-test', async (req: Request, res: Response) => {
+app.post('/api/diagnostics/mqtt-test', authRequired, async (req: Request, res: Response) => {
   try {
     const body = req.body || {};
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -507,8 +515,7 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
 });
 
 // Middleware moved to src/auth.ts
-
-app.use(authRequired);
+// Note: authRequired is now applied per-route instead of globally to avoid blocking WebSocket upgrades
 
 // ===== Devices & Events (read-only MVP) =====
 // Data sources:
@@ -629,7 +636,7 @@ app.get('/api/devices/:id', (req: Request, res: Response) => {
 });
 
 // DELETE /api/devices/:id -> decommission device (remove from provisioning DB)
-app.delete('/api/devices/:id', (req: Request, res: Response) => {
+app.delete('/api/devices/:id', authRequired, (req: Request, res: Response) => {
   const { id } = req.params;
   if (!id) { res.status(400).json({ error: 'invalid_device_id' }); return; }
   const db = openDb(PROVISIONING_DB);
@@ -766,13 +773,13 @@ async function getDevicesList(): Promise<{ devices: Array<{ id: string; name: st
 // ===== Device Actions (stub) =====
 // In future, wire these to MQTT/cloud connector to invoke direct methods on devices.
 // For now, return an ok message so the UI can integrate the flows.
-app.post('/api/devices/:id/actions/identify', (req: Request, res: Response) => {
+app.post('/api/devices/:id/actions/identify', authRequired, (req: Request, res: Response) => {
   const { id } = req.params;
   if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
   res.json({ ok: true, message: `Identifying device ${id}` });
 });
 
-app.post('/api/devices/:id/actions/reboot', (req: Request, res: Response) => {
+app.post('/api/devices/:id/actions/reboot', authRequired, (req: Request, res: Response) => {
   const { id } = req.params;
   if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
   res.json({ ok: true, message: `Reboot requested for device ${id}` });
@@ -1395,7 +1402,8 @@ if (!UI_READY) {
 
 // Serve built UI and SPA fallback only when UI is ready
 if (UI_READY) {
-  app.use(express.static(UI_DIST));
+  // Serve static assets but do NOT auto-serve index.html here; we inject headers and markup ourselves
+  app.use(express.static(UI_DIST, { index: false }));
   // Lightweight admin page available even when UI exists
   app.get('/admin/settings', (_req: Request, res: Response) => {
     res.redirect('/'); // In a future commit, this can serve a dedicated admin page within SPA
@@ -1404,6 +1412,8 @@ if (UI_READY) {
   // Inject an auth navbar and hide registration affordances when serving index.html
   function renderInjectedIndex(_req: Request, res: Response) {
     try {
+      // Ensure fresh index.html so clients don't cache stale SPA entry
+      res.setHeader('Cache-Control', 'no-store');
       let html = fs.readFileSync(UI_INDEX, 'utf8');
       const injectHead = ``;
       const injectBodyEnd = `\n<script>\n(async function(){\n  try{\n    const r = await fetch('/api/auth/me');\n    if(!r.ok) throw new Error();\n    const d = await r.json();\n     // Hide registration affordances (best-effort)\n     const hideSelectors = [\n       'a[href*="register"]', 'a[href*="signup"]', 'a[href*="sign-up"]',\n       '#register', '#signup', '.register', '.signup'\n     ];\n     for (const sel of hideSelectors){ document.querySelectorAll(sel).forEach(el => { (el).style.display = 'none'; }); }\n     // Hide by text content (case-insensitive contains)\n     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);\n     while (walker.nextNode()){\n       const el = walker.currentNode;\n       if (el && el.textContent && /register|sign\\s*up/i.test(el.textContent)){ try{ el.style.display='none'; }catch{} }\n     }\n   }catch(e){ /* not logged in: let auth middleware show login */ }\n})();\n</script>\n`;
@@ -1412,6 +1422,7 @@ if (UI_READY) {
       res.type('html').send(html);
     } catch (e) {
       // Fallback
+      res.setHeader('Cache-Control', 'no-store');
       res.sendFile(UI_INDEX);
     }
   }
@@ -1432,19 +1443,65 @@ function send(ws: any, msg: any){
   try{ ws.send(JSON.stringify(msg)); }catch{}
 }
 
-// Create HTTP server and attach both Express and WS
+// Create HTTP server with Express first
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/api/ws' });
+
+// Add upgrade event logging to debug WebSocket handshake
+server.on('upgrade', (request, socket, head) => {
+  console.log(`[HTTP] Upgrade request: ${request.method} ${request.url}`);
+  console.log(`[HTTP] Upgrade headers:`, request.headers);
+});
+
+// Create WebSocket server attached to the HTTP server
+const wss = new WebSocketServer({ 
+  server,
+  path: '/api/ws',
+  clientTracking: false,
+  perMessageDeflate: false,
+  maxPayload: 1024 * 1024
+});
 
 wss.on('connection', (ws: any, req: any) => {
-  // Auth via cookie; if absent, permit anonymous with restricted topics (public metrics only)
+  console.log(`[WS] Connection event fired, processing...`);
+  
+  // Check authentication via cookies (same as HTTP requests)
   let authed = false;
-  try{
-    const cookies = parseCookies(req.headers?.cookie || '');
+  try {
+    const cookies = parseCookies(req.headers.cookie);
     const token = cookies[SESSION_COOKIE];
-    if(token){ try{ jwt.verify(token, JWT_SECRET); authed = true; }catch{} }
-  }catch{}
-
+    if (token) {
+      const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string; iat?: number; exp?: number };
+      const user = payload.user || payload.sub;
+      if (user) {
+        authed = true;
+        console.log(`[WS] Authenticated connection for user: ${user}`);
+      }
+    }
+  } catch (error: any) {
+    console.log(`[WS] Authentication failed:`, error?.message || 'unknown error');
+  }
+  
+  if (!authed) {
+    console.log(`[WS] Anonymous connection established`);
+  }
+  
+  // Add error handler to catch any connection issues
+  ws.on('error', (error: any) => {
+    console.error(`[WS] Connection error:`, error);
+  });
+  
+  // Send immediate welcome message to confirm connection works
+  try {
+    ws.send(JSON.stringify({ 
+      type: 'welcome', 
+      message: 'WebSocket connected successfully',
+      authenticated: authed
+    }));
+    console.log(`[WS] Sent welcome message (authed=${authed})`);
+  } catch (error) {
+    console.error(`[WS] Failed to send welcome message:`, error);
+  }
+  
   const ctx: ClientCtx = { ws, topics: new Set(), logs: new Map(), authed };
   clients.add(ctx);
 
@@ -1459,9 +1516,12 @@ wss.on('connection', (ws: any, req: any) => {
           if(!ctx.authed){
             if(t === 'metrics.history' || t === 'metrics.snapshots' || t === 'services.status' || t === 'devices.list.public'){
               ctx.topics.add(t);
+              console.log(`[WS] Anonymous client subscribed to: ${t}`);
+            } else {
+              console.log(`[WS] Anonymous client denied subscription to: ${t}`);
             }
             continue;
-          }
+          }  
           // Authenticated: allow full set
           ctx.topics.add(t);
           // Handle logs.stream:<unit>
