@@ -42,6 +42,63 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
     return `${y}-${m}-${da} ${h}:${mi}:${s}`;
   }
 
+  // Parse a timestamp value into milliseconds since epoch, or NaN if unknown
+  function parseTimestampMs(raw: any): number {
+    try{
+      if(!raw && raw !== 0) return NaN;
+      const num = Number(raw);
+      if(Number.isFinite(num) && num > 0){
+        let ms: number;
+        if(num < 1e11) ms = num * 1000;            // seconds -> ms
+        else if(num < 1e14) ms = num;              // milliseconds
+        else if(num < 1e17) ms = Math.floor(num / 1e3); // microseconds -> ms
+        else ms = Math.floor(num / 1e6);           // nanoseconds -> ms
+        const d = new Date(ms);
+        return isNaN(d.getTime()) ? NaN : d.getTime();
+      }
+      const d = new Date(String(raw));
+      return isNaN(d.getTime()) ? NaN : d.getTime();
+    }catch{ return NaN; }
+  }
+
+  // Try to parse a leading timestamp from a log line into ms since epoch
+  function parseLeadingTimestampMs(line: string): number {
+    try{
+      const s = String(line);
+      const iso = s.match(/^\s*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/);
+      if(iso){ const d = new Date(iso[1]); return isNaN(d.getTime()) ? NaN : d.getTime(); }
+      const epoch = s.match(/^\s*(\d{10,19})/);
+      if(epoch){
+        const num = Number(epoch[1]);
+        if(Number.isFinite(num)){
+          let ms: number;
+          if(num < 1e11) ms = num * 1000;            // seconds -> ms
+          else if(num < 1e14) ms = num;              // milliseconds
+          else if(num < 1e17) ms = Math.floor(num / 1e3); // microseconds -> ms
+          else ms = Math.floor(num / 1e6);           // nanoseconds -> ms
+          const d = new Date(ms);
+          return isNaN(d.getTime()) ? NaN : d.getTime();
+        }
+      }
+      const m = s.match(/^\s*([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})/);
+      if(m){
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const mi = monthNames.indexOf(m[1]);
+        if(mi >= 0){
+          const now = new Date();
+          const year = now.getFullYear();
+          const day = Number(m[2]);
+          const h = Number(m[3]);
+          const min = Number(m[4]);
+          const sec = Number(m[5]);
+          const d = new Date(year, mi, day, h, min, sec);
+          return isNaN(d.getTime()) ? NaN : d.getTime();
+        }
+      }
+      return NaN;
+    }catch{ return NaN; }
+  }
+
   // Re-format a line that already contains a leading timestamp to 24h (YYYY-MM-DD HH:mm:ss)
   function formatLeadingTimestampLine(line: string): string {
     try{
@@ -205,36 +262,72 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
           try{
             const parsed = JSON.parse(res);
             if(parsed && Array.isArray(parsed.entries)){
-              const arr = [...parsed.entries].reverse();
-              txt = arr.map(fmtEntry).join('\n');
+              const arr = [...parsed.entries];
+              // Detect order using timestamps on first/last
+              const first = arr[0];
+              const last = arr[arr.length - 1];
+              const t0 = parseTimestampMs(first?.SYSLOG_TIMESTAMP || first?.__REALTIME_TIMESTAMP || first?._SOURCE_REALTIME_TIMESTAMP);
+              const tN = parseTimestampMs(last?.SYSLOG_TIMESTAMP || last?.__REALTIME_TIMESTAMP || last?._SOURCE_REALTIME_TIMESTAMP);
+              const needReverse = (Number.isFinite(t0) && Number.isFinite(tN)) ? (t0 > tN) : true;
+              const ordered = needReverse ? arr.reverse() : arr;
+              txt = ordered.map(fmtEntry).join('\n');
             } else {
               // Treat plain string logs as newest-first; normalize to oldest-first
               const lines = String(res).split(/\r?\n/).map(formatLeadingTimestampLine);
-              lines.reverse();
-              txt = lines.join('\n');
+              const rawLines = String(res).split(/\r?\n/);
+              const t0 = parseLeadingTimestampMs(rawLines[0] || '');
+              const tN = parseLeadingTimestampMs(rawLines[rawLines.length - 1] || '');
+              const needReverse = (Number.isFinite(t0) && Number.isFinite(tN)) ? (t0 > tN) : true;
+              const ordered = needReverse ? [...lines].reverse() : lines;
+              txt = ordered.join('\n');
             }
           }catch{
             const lines = String(res).split(/\r?\n/).map(formatLeadingTimestampLine);
-            lines.reverse();
-            txt = lines.join('\n');
+            const rawLines = String(res).split(/\r?\n/);
+            const t0 = parseLeadingTimestampMs(rawLines[0] || '');
+            const tN = parseLeadingTimestampMs(rawLines[rawLines.length - 1] || '');
+            const needReverse = (Number.isFinite(t0) && Number.isFinite(tN)) ? (t0 > tN) : true;
+            const ordered = needReverse ? [...lines].reverse() : lines;
+            txt = ordered.join('\n');
           }
         } else if(Array.isArray(res)){
           const arr = [...res];
-          const mapped = arr.map(x => (typeof x === 'object' && x) ? fmtEntry(x) : formatLeadingTimestampLine(String(x)));
-          mapped.reverse();
+          // Determine order using object timestamps if possible
+          const getTs = (x:any) => (typeof x === 'object' && x) ? (x.SYSLOG_TIMESTAMP || x.__REALTIME_TIMESTAMP || x._SOURCE_REALTIME_TIMESTAMP) : undefined;
+          const t0 = parseTimestampMs(getTs(arr[0]));
+          const tN = parseTimestampMs(getTs(arr[arr.length - 1]));
+          const needReverse = (Number.isFinite(t0) && Number.isFinite(tN)) ? (t0 > tN) : true;
+          const ordered = needReverse ? arr.reverse() : arr;
+          const mapped = ordered.map(x => (typeof x === 'object' && x) ? fmtEntry(x) : formatLeadingTimestampLine(String(x)));
           txt = mapped.join('\n');
         } else if(res && typeof res.logs === 'string'){
           const lines = String(res.logs).split(/\r?\n/).map(formatLeadingTimestampLine);
-          lines.reverse();
-          txt = lines.join('\n');
+          const rawLines = String(res.logs).split(/\r?\n/);
+          const t0 = parseLeadingTimestampMs(rawLines[0] || '');
+          const tN = parseLeadingTimestampMs(rawLines[rawLines.length - 1] || '');
+          const needReverse = (Number.isFinite(t0) && Number.isFinite(tN)) ? (t0 > tN) : true;
+          const ordered = needReverse ? [...lines].reverse() : lines;
+          txt = ordered.join('\n');
         } else if(res && Array.isArray(res.entries)){
-          const arr = [...res.entries].reverse();
-          txt = arr.map(fmtEntry).join('\n');
+          const arr = [...res.entries];
+          const first = arr[0];
+          const last = arr[arr.length - 1];
+          const t0 = parseTimestampMs(first?.SYSLOG_TIMESTAMP || first?.__REALTIME_TIMESTAMP || first?._SOURCE_REALTIME_TIMESTAMP);
+          const tN = parseTimestampMs(last?.SYSLOG_TIMESTAMP || last?.__REALTIME_TIMESTAMP || last?._SOURCE_REALTIME_TIMESTAMP);
+          const needReverse = (Number.isFinite(t0) && Number.isFinite(tN)) ? (t0 > tN) : true;
+          const ordered = needReverse ? arr.reverse() : arr;
+          txt = ordered.map(fmtEntry).join('\n');
         } else {
           const entries = findEntries(res);
           if(entries) {
-            const arr = [...entries].reverse();
-            txt = arr.map(fmtEntry).join('\n');
+            const arr = [...entries];
+            const first = arr[0];
+            const last = arr[arr.length - 1];
+            const t0 = parseTimestampMs(first?.SYSLOG_TIMESTAMP || first?.__REALTIME_TIMESTAMP || first?._SOURCE_REALTIME_TIMESTAMP);
+            const tN = parseTimestampMs(last?.SYSLOG_TIMESTAMP || last?.__REALTIME_TIMESTAMP || last?._SOURCE_REALTIME_TIMESTAMP);
+            const needReverse = (Number.isFinite(t0) && Number.isFinite(tN)) ? (t0 > tN) : true;
+            const ordered = needReverse ? arr.reverse() : arr;
+            txt = ordered.map(fmtEntry).join('\n');
           } else {
             txt = JSON.stringify(res);
           }

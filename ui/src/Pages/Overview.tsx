@@ -14,7 +14,7 @@
  */
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Badge, Button, Card, Table } from 'react-bootstrap';
+import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
 import ServiceStatusWidget from '../components/ServiceStatusWidget';
 import SystemMetricsWidget from '../components/SystemMetricsWidget';
 import { getDevices, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
@@ -23,6 +23,8 @@ import { Link } from 'react-router-dom';
 import DeviceDetailModal from '../components/DeviceDetailModal';
 import CertificateSettingsModal from '../components/CertificateSettingsModal';
 import WhitelistModal from '../components/WhitelistModal';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTrash, faRightLeft } from '@fortawesome/free-solid-svg-icons';
 
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
@@ -135,6 +137,11 @@ export default function Overview(props:{user:any}){
                     setActionBusy(null);
                   }
                 };
+                const onReplace = async (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  // Placeholder for device replacement flow (select another device to swap IDs/records)
+                  alert('Replace device: feature not yet implemented. This will allow selecting another device to replace this one.');
+                };
                 return (
                   <tr key={id}
                       tabIndex={0}
@@ -164,8 +171,29 @@ export default function Overview(props:{user:any}){
                     </td>
                     <td>
                       <div className="d-flex gap-2">
-                        <Button size="sm" variant="outline-danger" disabled={!props.user || actionBusy===String(id)} onClick={onDecommission}>
-                          {actionBusy===String(id) ? 'Working…' : 'Decommission'}
+                        <Button
+                          size="sm"
+                          variant="outline-danger"
+                          aria-label="Decommission device"
+                          title="Decommission device"
+                          disabled={!props.user || actionBusy===String(id)}
+                          onClick={onDecommission}
+                        >
+                          {actionBusy===String(id) ? (
+                            <Spinner as="span" animation="border" size="sm" />
+                          ) : (
+                            <FontAwesomeIcon icon={faTrash} />
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline-secondary"
+                          aria-label="Replace device"
+                          title="Replace device"
+                          disabled={!props.user}
+                          onClick={onReplace}
+                        >
+                          <FontAwesomeIcon icon={faRightLeft} />
                         </Button>
                       </div>
                     </td>
