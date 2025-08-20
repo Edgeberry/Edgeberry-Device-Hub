@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-17 10:51 CEST
+**Last updated:** 2025-08-20 10:47 CEST
 
 ## Alignment Maintenance
 
@@ -325,7 +325,7 @@ Anonymous access (Observer mode):
 
 - **`provisioning-service/`** — Long-running Node.js service
   - Subscribed to `$devicehub/#` topics for bootstrap flows
-  - Handles CSR processing, cert issuance, template provisioning
+  - Handles CSR processing, delegates certificate issuance to Core over D-Bus (CertificateService), template provisioning
   - No device twin responsibility
   - MVP adds simplified provisioning request/ack flow on `$devicehub/devices/{deviceId}/provision/request` for development
 
@@ -372,11 +372,16 @@ Anonymous access (Observer mode):
   - **MVP structure:** Flat directory (no subfolders)
   - **Example unit files:** `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`
 
+New/updated configs related to D-Bus WhitelistService & CertificateService (Core):
+- `config/dbus-io.edgeberry.devicehub.Core.service` — D-Bus service activation file for Core bus name `io.edgeberry.devicehub.Core`
+- `config/dbus-io.edgeberry.devicehub.Core.conf` — D-Bus policy granting access to the Core namespace
+- `config/devicehub-core.service` — systemd unit running the Core HTTP API and the D-Bus WhitelistService and CertificateService
+
 Responsibilities and boundaries:
 
 - `ui/` calls HTTP APIs served by `core-service` only. It should never talk to MQTT directly.
-- `core-service` is the single writer to the database and the HTTP surface area for external clients. It must enforce the permission model.
-- `provisioning-service/` owns MQTT bootstrap and certificate lifecycle. It may update DB via internal repositories shared with `api/` (from `shared/`). Exposes a D-Bus API for operations and emits signals for status.
+- `core-service` is the single writer to the database and the HTTP surface area for external clients. It exposes the D-Bus `WhitelistService` and `CertificateService` used by internal workers and must enforce the permission model.
+- `provisioning-service/` owns MQTT bootstrap and delegates certificate issuance to Core over D-Bus (`CertificateService`). It validates provisioning UUIDs by calling Core's D-Bus `WhitelistService` and no longer exposes its own whitelist API.
 - `twin-service/` maintains digital twins (desired/reported state, deltas, reconciliation). Subscribes/publishes to twin topics and updates the DB via shared repositories.
 - `mqtt-broker/` config enforces mTLS, maps cert subject → device identity, and defines ACLs per topic family.
     - Provisioning topics are open to any authenticated client (mTLS) at the broker layer; authorization is enforced by `provisioning-service` via whitelist UUID validation. This supports shared provisioning certificates.
@@ -420,16 +425,26 @@ Change policy:
 Bus: system bus in production.
 Common namespace: `io.edgeberry.devicehub.*`
 
+#### Core Whitelist Service
+
+- Object path: `/io/edgeberry/devicehub/WhitelistService`
+- Interface: `io.edgeberry.devicehub.WhitelistService`
+- Methods:
+  - `CheckUUID(s uuid) → (b ok, s note, s used_at, s error)`
+  - `MarkUsed(s uuid) → (b ok, s error)`
+
+#### Core Certificate Service
+
+- Object path: `/io/edgeberry/devicehub/CertificateService`
+- Interface: `io.edgeberry.devicehub.CertificateService`
+- Methods:
+  - `IssueFromCSR(s deviceId, s csrPem, u days) → (b ok, s certPem, s caChainPem, s error)`
+
 #### Provisioning Service
 
-- Object path: `/io/edgeberry/devicehub/ProvisioningService`
-- Interface: `io.edgeberry.devicehub.ProvisioningService`
-- Methods:
-  - `RequestCertificate(s reqId, s csrPem, s deviceId) → (b accepted, s certPem, s caChainPem, s error)`
-  - `GetStatus() → (s status)`
-- Signals:
-  - `CertificateIssued(s reqId, s deviceId)`
-  - `CertificateRejected(s reqId, s deviceId, s error)`
+- D-Bus interface: none (MVP)
+- Notes:
+  - Uses Core's `WhitelistService` and `CertificateService` over D-Bus.
 
 #### Device Twin Service
 
@@ -606,12 +621,12 @@ Registry fields on `devices`:
 - `created_at`, `updated_at`
 - Certificate metadata (see Security): `cert_subject`, `cert_fingerprint`, `cert_expires_at`
 
-Provisioning flow (MQTT-only):
+Provisioning flow (MQTT + internal D-Bus):
 
 1. Device generates a keypair and CSR (CN = `deviceId`).
 2. Device connects to the broker using the claim/provisioning certificate (mTLS).
 3. Device publishes CSR to `$devicehub/devices/{deviceId}/provision/request` with `{ csrPem, uuid?, name?, token?, meta? }`.
-4. Provisioning worker validates UUID (when enforced) and CSR, issues a signed device certificate; replies on `$devicehub/devices/{deviceId}/provision/accepted` with `{ deviceId, certPem, caChainPem }` (or `$devicehub/devices/{deviceId}/provision/rejected`).
+4. Provisioning worker validates the UUID via Core over D-Bus (`WhitelistService.CheckUUID`) when enforced, validates the CSR, requests certificate issuance from Core over D-Bus (`CertificateService.IssueFromCSR`); replies on `$devicehub/devices/{deviceId}/provision/accepted` with `{ deviceId, certPem, caChainPem }` (or `$devicehub/devices/{deviceId}/provision/rejected`). After a successful issuance, it marks the UUID as used via `WhitelistService.MarkUsed`.
 5. Device saves cert, reconnects using its own certificate.
 6. Server marks the device `active`, sets `enrolled_at`, and subsequent MQTT runtime updates `last_seen`/`updated_at`.
 

@@ -18,14 +18,25 @@ function openDb(file: string){
 }
 
 // Define the D-Bus interface with dbus-next high-level Interface
-class WhitelistInterface extends dbus.interface.Interface {
+// Note: cast Interface to any (same pattern as dbus-certs) to avoid runtime issues with TS decorator metadata
+class WhitelistInterface extends (dbus.interface.Interface as any) {
   constructor() {
     super(IFACE_NAME);
+    // Register methods imperatively to avoid decorator runtime issues
+    this.addMethod(
+      'CheckUUID',
+      { inSignature: 's', outSignature: 'bsss' },
+      (uuid: string) => this._CheckUUID(uuid)
+    );
+    this.addMethod(
+      'MarkUsed',
+      { inSignature: 's', outSignature: 'bs' },
+      (uuid: string) => this._MarkUsed(uuid)
+    );
   }
 
   // CheckUUID(s uuid) → (b ok, s note, s used_at, s error)
-  @dbus.interface.method({ inSignature: 's', outSignature: 'bsss' })
-  CheckUUID(uuid: string): [boolean, string, string, string] {
+  private _CheckUUID(uuid: string): [boolean, string, string, string] {
     try {
       const db = openDb(PROVISIONING_DB);
       if (!db) return [false, '', '', 'db_unavailable'];
@@ -43,8 +54,7 @@ class WhitelistInterface extends dbus.interface.Interface {
   }
 
   // MarkUsed(s uuid) → (b ok, s error)
-  @dbus.interface.method({ inSignature: 's', outSignature: 'bs' })
-  MarkUsed(uuid: string): [boolean, string] {
+  private _MarkUsed(uuid: string): [boolean, string] {
     try {
       const db = openDb(PROVISIONING_DB);
       if (!db) return [false, 'db_unavailable'];

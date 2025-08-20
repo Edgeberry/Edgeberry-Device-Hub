@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
 import { CA_CRT, CA_KEY, CERTS_DIR, PROV_DIR, ROOT_DIR } from './config.js';
+import os from 'os';
 
 export function ensureDirs() {
   for (const d of [CERTS_DIR, ROOT_DIR, PROV_DIR]) {
@@ -81,5 +82,59 @@ export async function issueProvisioningCert(name: string, days?: number): Promis
   try { fs.unlinkSync(csrPath); } catch {}
   try { fs.unlinkSync(extPath); } catch {}
   return { certPath: crtPath, keyPath };
+}
+
+
+// Issue a device certificate from a CSR PEM and return PEM strings for cert and CA chain
+export async function issueDeviceCertFromCSR(deviceId: string, csrPem: string, days?: number): Promise<{ certPem: string; caChainPem: string }>{
+  if (!(await caExists())) {
+    throw new Error('Root CA not found. Generate it first.');
+  }
+  if (!/-----BEGIN CERTIFICATE REQUEST-----[\s\S]+-----END CERTIFICATE REQUEST-----/.test(csrPem)) {
+    throw new Error('invalid_csr');
+  }
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edgeberry-csr-'));
+  const csrPath = path.join(tmpDir, `${deviceId}.csr`);
+  const crtPath = path.join(tmpDir, `${deviceId}.crt`);
+  const extPath = path.join(tmpDir, `${deviceId}.ext`);
+  fs.writeFileSync(csrPath, csrPem);
+  // Validate CSR CN equals deviceId because Mosquitto maps CN -> username for ACLs
+  // If mismatched, the device would authenticate under a different username than the topic deviceId
+  try {
+    const subj = await runCmd('openssl', ['req', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', csrPath]);
+    const line = (subj.out || '').toString().trim();
+    const m = line.match(/CN=([^,\/]+)/);
+    const cn = m ? m[1] : '';
+    if (!cn || cn !== deviceId) {
+      try { fs.unlinkSync(csrPath); } catch {}
+      throw new Error('csr_cn_mismatch');
+    }
+  } catch (e) {
+    // If openssl fails to parse, treat as invalid CSR
+    if ((e as Error).message === 'csr_cn_mismatch') throw e;
+    throw new Error('invalid_csr_subject');
+  }
+  const daysStr = String(days ?? 825);
+  const extContent = [
+    '[v3_client]',
+    'basicConstraints=CA:FALSE',
+    'keyUsage = digitalSignature, keyEncipherment',
+    'extendedKeyUsage = clientAuth',
+    'subjectKeyIdentifier = hash',
+    'authorityKeyIdentifier = keyid,issuer',
+    ''
+  ].join('\n');
+  try { fs.writeFileSync(extPath, extContent, { encoding: 'utf8' }); } catch (e) { throw new Error(`failed_writing_extfile: ${String((e as Error).message || e)}`); }
+  const res = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT, '-CAkey', CA_KEY, '-CAcreateserial', '-out', crtPath, '-days', daysStr, '-sha256', '-extfile', extPath, '-extensions', 'v3_client']);
+  try { fs.unlinkSync(csrPath); } catch {}
+  try { fs.unlinkSync(extPath); } catch {}
+  if (res.code !== 0) {
+    try { fs.unlinkSync(crtPath); } catch {}
+    throw new Error(`cert_issue_failed: ${res.err || res.out}`);
+  }
+  const certPem = fs.readFileSync(crtPath, 'utf8');
+  try { fs.unlinkSync(crtPath); } catch {}
+  const caChainPem = fs.readFileSync(CA_CRT, 'utf8');
+  return { certPem, caChainPem };
 }
 

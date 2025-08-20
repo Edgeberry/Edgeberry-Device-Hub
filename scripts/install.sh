@@ -343,6 +343,36 @@ install_systemd_units() {
   fi
 }
 
+stop_services() {
+  if ! have_systemd; then
+    log "NOTE: systemd not available; skipping service stop"
+    return 0
+  fi
+  log "stopping services prior to install"
+  systemctl_safe stop devicehub-core.service || true
+  systemctl_safe stop devicehub-provisioning.service || true
+  systemctl_safe stop devicehub-twin.service || true
+  systemctl_safe stop devicehub-registry.service || true
+}
+
+validate_compiled_no_decorators() {
+  local dbus_glob="$INSTALL_ROOT/core-service/dist/dbus-*.js"
+  shopt -s nullglob
+  local files=( $dbus_glob )
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    log "WARN: no dbus-*.js files found under core-service/dist; build may be incomplete"
+    return 0
+  fi
+  if grep -Hn "__decorate" ${files[@]} >/dev/null 2>&1; then
+    log "WARN: found TypeScript decorator emit ('__decorate') in compiled dbus files. This build may crash at runtime. Files:"
+    grep -Hn "__decorate" ${files[@]} || true
+    log "WARN: please ensure sources use imperative dbus method registration (this.addMethod) and rebuild artifacts."
+  else
+    log "validated: no '__decorate' references in core-service/dist/dbus-*.js"
+  fi
+}
+
 enable_services() {
   if ! have_systemd; then
     log "NOTE: systemd not available; skipping enable"
@@ -628,9 +658,13 @@ main() {
   mkdir -p "$ETC_DIR"
   ensure_runtime_deps
   ensure_system_deps
+  # Stop services before modifying install tree to avoid reading mixed versions
+  stop_services
   extract_artifacts
   ensure_data_dir_and_migrate_db
   install_node_deps
+  # Sanity-check compiled outputs for known hazards
+  validate_compiled_no_decorators
   install_systemd_units
   # Ensure provisioning service HTTP cert API is enabled for development convenience
   # Writes defaults into /etc/Edgeberry/devicehub/provisioning.env

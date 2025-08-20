@@ -68,6 +68,7 @@ import { ensureDirs, caExists, generateRootCA, readCertMeta, issueProvisioningCe
 import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 import { startWhitelistDbusServer } from './dbus-whitelist.js';
+import { startCertificateDbusServer } from './dbus-certs.js';
 
 const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
@@ -479,6 +480,8 @@ console.log('[core-service] hello from Device Hub core-service');
 try { ensureProvisioningSchema(); } catch {}
 // Start D-Bus WhitelistService (system bus)
 startWhitelistDbusServer().catch(() => {});
+// Start D-Bus CertificateService (system bus)
+startCertificateDbusServer().catch(() => {});
 
 // Unified logs: snapshot and streaming from systemd journal (journalctl)
 // Services are expected to be systemd units like devicehub-*.service

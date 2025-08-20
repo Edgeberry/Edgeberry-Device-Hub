@@ -3,9 +3,8 @@ import { readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
 import { upsertDevice } from './db.js';
-import { dbusCheckUUID, dbusMarkUsed } from './dbus.js';
+import { dbusCheckUUID, dbusMarkUsed, dbusIssueFromCSR } from './dbus.js';
 import type { Json } from './types.js';
-import { issueDeviceCertFromCSR } from './certs.js';
 
 // Topic helpers
 const TOPICS = {
@@ -95,8 +94,10 @@ export function startMqtt(db: any): MqttClient {
       if (!csrPem) {
         throw new Error('missing_csrPem');
       }
-      issueDeviceCertFromCSR(deviceId, csrPem, CERT_DAYS)
-        .then(async ({ certPem, caChainPem }) => {
+      dbusIssueFromCSR(deviceId, csrPem, CERT_DAYS)
+        .then(async (res) => {
+          if (!res.ok || !res.certPem || !res.caChainPem) throw new Error(res.error || 'issue_failed');
+          const { certPem, caChainPem } = res;
           upsertDevice(db, deviceId, name, token, meta);
           if (ENFORCE_WHITELIST && uuid) {
             try { await dbusMarkUsed(uuid); } catch {}
