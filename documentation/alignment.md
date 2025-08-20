@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-20 14:39 CEST
+**Last updated:** 2025-08-20 23:59 CEST
 
 ## Alignment Maintenance
 
@@ -82,7 +82,7 @@ export MQTT_TLS_KEY=./config/certs/my-device-01.key
 
 #### MQTT connection env vars (standardized)
 
-- `MQTT_URL` (default `mqtts://127.0.0.1:8883`)
+- `MQTT_URL` (default `mqtt://127.0.0.1:1883` for local services; set to `mqtts://...` when using mTLS)
 - `MQTT_USERNAME` (optional; with mTLS, CN is used as username)
 - `MQTT_PASSWORD` (optional)
 - `MQTT_TLS_CA` path to CA cert file
@@ -91,6 +91,36 @@ export MQTT_TLS_KEY=./config/certs/my-device-01.key
 - `MQTT_TLS_REJECT_UNAUTHORIZED` boolean, default `true`
 
 Note: Some systems resolve `localhost` to IPv6 `::1`. If Mosquitto listens on IPv4 only (e.g., `listener 8883 0.0.0.0`), connecting to `mqtts://localhost:8883` will fail with ECONNREFUSED on `::1:8883`. Use `127.0.0.1` or configure an IPv6 listener (e.g., `listener 8883 ::`).
+
+#### Local services without TLS (loopback listener)
+
+- Rationale: Allow same-host microservices to connect to Mosquitto without client TLS (mTLS) while keeping mTLS enforced for external clients.
+- Implementation: Dual-listener configuration
+  - mTLS listener: `8883` on `0.0.0.0` with `require_certificate true`, `use_subject_as_username true`
+  - Local listener: `1883` on `127.0.0.1` with `allow_anonymous true`; no TLS
+- Config files updated:
+  - Dev: `config/mosquitto-dev.conf` includes `per_listener_settings true`, mTLS on 8883, and a loopback `listener 1883 127.0.0.1` with `allow_anonymous true` and `acl_file config/mosquitto-local-unrestricted.acl`
+  - Base: `config/mosquitto.conf` mirrors the same for simple local runs
+  - Prod: `config/mosquitto-prod.conf` includes `per_listener_settings true`, mTLS on 8883, and a loopback `listener 1883 127.0.0.1` with `allow_anonymous true` and `acl_file /etc/mosquitto/acl.d/mosquitto-local-unrestricted.acl`
+- ACLs:
+  - mTLS listener uses `config/mosquitto.acl` for device/service topic permissions (CN → username).
+  - Local anonymous listener uses `config/mosquitto-local-unrestricted.acl`, granting full read/write on `$devicehub/#` for same-host services.
+
+No password files are required for the local anonymous listener.
+
+Service environment (no TLS, loopback):
+
+```
+export MQTT_URL=mqtt://127.0.0.1:1883
+# No username/password required
+# Unset TLS vars when using mqtt://
+unset MQTT_TLS_CA MQTT_TLS_CERT MQTT_TLS_KEY MQTT_TLS_REJECT_UNAUTHORIZED
+```
+
+Notes:
+- Only same-host processes can reach `127.0.0.1:1883`; devices and remote clients must use mTLS on `8883`.
+- With `mqtt://` the Node.js client ignores TLS options even if set, but prefer unsetting to keep logs clean.
+- External clients/devices remain protected by mTLS and ACLs on port 8883.
 
 #### Diagnostics: MQTT Sanity Test (mTLS)
 
@@ -267,6 +297,11 @@ Internal modularity is an implementation detail and must not leak into the publi
 - **Base URL:** Single hostname (e.g., `https://devicehub.edgeberry.io`)
 - **HTTP binding:** Only `core-service` binds public HTTP(S)
 - **UI entrypoint:** `/` serves the dashboard SPA from the `core-service` (static file server in production). The UI is a one-page app; all client routes resolve to `/`.
+
+##### Remote Development Server (Production Mode)
+- For the current remote device deployment, the development server runs the UI in production mode at:
+  - http://192.168.1.116:80
+- Use this URL for on-device validation after running `scripts/deploy.sh`.
 
 #### API Structure
 - **HTTP API prefix:** `/api` (versioning via headers or path TBD) — served directly by `core-service`

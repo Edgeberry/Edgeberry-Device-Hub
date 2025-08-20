@@ -20,6 +20,26 @@ require_root() {
   fi
 }
 
+# Ensure backend service envs are aligned with non-TLS loopback usage
+configure_service_envs() {
+  local ETC_DIR="/etc/Edgeberry/devicehub"
+  mkdir -p "$ETC_DIR"
+  # Force mqtt:// for provisioning and twin; remove TLS/auth keys that are no longer used
+  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env")
+  local f
+  for f in "${files[@]}"; do
+    # Create file if missing and set URL
+    ensure_env_kv "$f" "MQTT_URL" "mqtt://127.0.0.1:1883"
+    # Remove obsolete or conflicting keys
+    sed -i -E '/^\s*MQTT_TLS_CA\s*=.*/d' "$f" 2>/dev/null || true
+    sed -i -E '/^\s*MQTT_TLS_CERT\s*=.*/d' "$f" 2>/dev/null || true
+    sed -i -E '/^\s*MQTT_TLS_KEY\s*=.*/d' "$f" 2>/dev/null || true
+    sed -i -E '/^\s*MQTT_TLS_REJECT_UNAUTHORIZED\s*=.*/d' "$f" 2>/dev/null || true
+    sed -i -E '/^\s*MQTT_USERNAME\s*=.*/d' "$f" 2>/dev/null || true
+    sed -i -E '/^\s*MQTT_PASSWORD\s*=.*/d' "$f" 2>/dev/null || true
+  done
+}
+
 # Create or update key=value in an env file idempotently
 ensure_env_kv() {
   local file="$1"; local key="$2"; local val="$3"
@@ -34,47 +54,7 @@ ensure_env_kv() {
   fi
 }
 
-# Determine HTTP port for provisioning API (reads provisioning.env if present)
-get_prov_http_port() {
-  local env_file="$ETC_DIR/provisioning.env"
-  local port
-  if [[ -f "$env_file" ]]; then
-    port=$(awk -F '=' '/^\s*HTTP_PORT\s*=/{gsub(/\r/,"",$2); gsub(/\s+/,"",$2); print $2}' "$env_file" | tail -n1)
-  fi
-  if [[ -z "$port" ]]; then port=8081; fi
-  echo "$port"
-}
-
-# Wait for provisioning HTTP API to be reachable; restart service once if needed
-ensure_prov_http_ready() {
-  local port; port=$(get_prov_http_port)
-  local url="http://127.0.0.1:${port}/health"
-  local tries=0
-  local max_tries=20
-  local restarted=0
-  log "waiting for provisioning HTTP API on ${url}"
-  while (( tries < max_tries )); do
-    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
-      log "provisioning HTTP API is listening on 127.0.0.1:${port}"
-      return 0
-    fi
-    ((tries++))
-    # After a few attempts, try one restart if still not up
-    if (( tries == 8 && restarted == 0 )); then
-      log "provisioning HTTP API not responding yet; restarting service once"
-      systemctl_safe restart devicehub-provisioning.service || true
-      restarted=1
-    fi
-    sleep 0.5
-  done
-  log "WARN: provisioning HTTP API did not become ready on 127.0.0.1:${port}"
-  # Dump recent service logs to aid diagnostics
-  if have_systemd; then
-    log "recent devicehub-provisioning.service logs:"
-    journalctl -u devicehub-provisioning.service -n 80 --no-pager 2>/dev/null | tail -n 80 || true
-  fi
-  return 1
-}
+# (Removed) provisioning HTTP helper functions
 
 # --- Runtime dependency checks/install (node, npm, rsync) ---
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -464,39 +444,11 @@ EOF
     [[ -f "$SRC_KEY" ]] || log "WARN: missing server key: $SRC_KEY"
     [[ -f "$SRC_ACL" ]] || log "WARN: missing ACL file: $SRC_ACL"
 
-    # Auto-generate provisioning client cert/key if missing and CA is available
-    local SRC_PROV_CERT="$INSTALL_ROOT/config/certs/provisioning.crt"
-    local SRC_PROV_KEY="$INSTALL_ROOT/config/certs/provisioning.key"
-    if [[ ! -f "$SRC_PROV_CERT" || ! -f "$SRC_PROV_KEY" ]]; then
-      if [[ -f "$SRC_CA" && -f "$SRC_CA_KEY" ]]; then
-        log "provisioning client cert/key missing; generating signed client certificate (CN=provisioning)"
-        mkdir -p "$INSTALL_ROOT/config/certs"
-        pushd "$INSTALL_ROOT/config/certs" >/dev/null
-        # Generate client key
-        openssl genrsa -out provisioning.key 2048 >/dev/null 2>&1 || true
-        if [[ -f provisioning.key ]]; then
-          openssl req -new -key provisioning.key -subj "/CN=provisioning" -out provisioning.csr >/dev/null 2>&1 || true
-          cat > provisioning.ext <<EOF
-[v3_client]
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = clientAuth
-subjectKeyIdentifier = hash
-authorityKeyIdentifier = keyid,issuer
-EOF
-          if openssl x509 -req -in provisioning.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out provisioning.crt -days 825 -sha256 -extfile provisioning.ext -extensions v3_client >/dev/null 2>&1; then
-            log "generated provisioning client certificate (clientAuth)"
-          else
-            log "WARN: failed to sign provisioning client certificate"
-            rm -f provisioning.crt >/dev/null 2>&1 || true
-          fi
-          rm -f provisioning.csr provisioning.ext >/dev/null 2>&1 || true
-        fi
-        popd >/dev/null
-      else
-        log "WARN: cannot generate provisioning client cert: CA materials missing (expected $SRC_CA and $SRC_CA_KEY)"
-      fi
-    fi
+    # Skipped: do not generate provisioning client cert/key for on-server services
+    # We use mqtt:// on loopback (1883) for backend services; client TLS is unnecessary.
+
+    # Skipped: do not generate twin client cert/key for on-server services
+    # We use mqtt:// on loopback (1883) for backend services; client TLS is unnecessary.
 
     # Auto-generate server cert/key if missing and CA is available
     if [[ ! -f "$SRC_CERT" || ! -f "$SRC_KEY" ]]; then
@@ -551,6 +503,7 @@ EOF
     local ETC_CERT="/etc/mosquitto/certs/server.crt"
     local ETC_KEY="/etc/mosquitto/certs/server.key"
     local ETC_ACL="/etc/mosquitto/acl.d/edgeberry.acl"
+    local ETC_LOCAL_ACL="/etc/mosquitto/acl.d/edgeberry-local.acl"
 
     if [[ -f "$SRC_CA" ]]; then install -m 0640 "$SRC_CA" "$ETC_CA"; fi
     if [[ -f "$SRC_CERT" ]]; then install -m 0640 "$SRC_CERT" "$ETC_CERT"; fi
@@ -587,7 +540,17 @@ EOF
 
     # Write a dedicated conf.d file that references our installed paths (minimal to avoid dupes)
     cat > /etc/mosquitto/conf.d/edgeberry.conf <<EOF
-# Edgeberry Device Hub (installed) — mTLS listener
+# Edgeberry Device Hub (installed) — listeners
+
+# Use per-listener settings so we can have separate auth/ACLs
+per_listener_settings true
+
+# 1) Local backend listener (no TLS, localhost-only, anonymous allowed)
+listener 1883 127.0.0.1
+allow_anonymous true
+acl_file $ETC_LOCAL_ACL
+
+# 2) Device listener (mTLS on 8883)
 listener 8883 0.0.0.0
 allow_anonymous false
 
@@ -603,8 +566,14 @@ keyfile $ETC_KEY
 require_certificate true
 use_subject_as_username true
 
-# ACLs
+# ACLs for device listener
 acl_file $ETC_ACL
+EOF
+
+    # Write permissive local ACL for backend services
+    cat > "$ETC_LOCAL_ACL" <<'EOF'
+# Local backend ACL (localhost listener 1883)
+topic readwrite #
 EOF
 
     # Validate broker configuration (best-effort):
@@ -661,20 +630,10 @@ main() {
   # Sanity-check compiled outputs for known hazards
   validate_compiled_no_decorators
   install_systemd_units
-  # Ensure provisioning service HTTP cert API is enabled for development convenience
-  # Writes defaults into /etc/Edgeberry/devicehub/provisioning.env
-  local PROV_ENV_FILE="$ETC_DIR/provisioning.env"
-  log "configuring provisioning HTTP cert API (dev) via ${PROV_ENV_FILE}"
-  ensure_env_kv "$PROV_ENV_FILE" HTTP_ENABLE_CERT_API true
-  # Do not overwrite an existing custom port; set default only if missing
-  if ! grep -qE '^\s*HTTP_PORT=' "$PROV_ENV_FILE" 2>/dev/null; then
-    ensure_env_kv "$PROV_ENV_FILE" HTTP_PORT 8081
-  fi
+  configure_service_envs
   enable_services
   configure_mosquitto
   start_services
-  # Verify provisioning HTTP API is listening; attempt one restart if necessary
-  ensure_prov_http_ready || log "WARN: provisioning HTTP API may not be reachable yet; continuing"
   log "installation complete"
 }
 

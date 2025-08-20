@@ -6,14 +6,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/Edgeberry/devicehub/provisioning-service
-Environment=NODE_ENV=production
-Environment=MQTT_URL=mqtts://127.0.0.1:8883
-Environment=MQTT_TLS_CA=/opt/Edgeberry/devicehub/config/certs/ca.crt
-Environment=MQTT_TLS_CERT=/opt/Edgeberry/devicehub/config/certs/provisioning.crt
-Environment=MQTT_TLS_KEY=/opt/Edgeberry/devicehub/config/certs/provisioning.key
-Environment=MQTT_TLS_REJECT_UNAUTHORIZED=true
-Environment=PROVISIONING_DB=/var/lib/edgeberry/devicehub/provisioning.db
 EnvironmentFile=-/etc/Edgeberry/devicehub/provisioning.env
+Environment=NODE_ENV=production
+Environment=MQTT_URL=mqtt://127.0.0.1:1883
+Environment=PROVISIONING_DB=/var/lib/edgeberry/devicehub/provisioning.db
 ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/provisioning-service/dist/index.js
 Restart=on-failure
 RestartSec=3

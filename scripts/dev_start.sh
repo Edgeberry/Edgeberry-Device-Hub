@@ -78,18 +78,10 @@ start_service() {
   local -a ENV_VARS=()
   case "$name" in
     provisioning-service)
-      ENV_VARS+=("MQTT_URL=mqtts://127.0.0.1:8883")
-      ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
-      ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/provisioning.crt")
-      ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/provisioning.key")
-      ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
+      ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
       ;;
     twin-service)
-      ENV_VARS+=("MQTT_URL=mqtts://127.0.0.1:8883")
-      ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
-      ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/twin.crt")
-      ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/twin.key")
-      ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
+      ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
       ;;
     # registry-service removed
   esac

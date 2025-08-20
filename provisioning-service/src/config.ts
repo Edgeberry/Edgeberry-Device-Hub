@@ -1,14 +1,14 @@
 // Service configuration and typed environment access
 export const SERVICE = 'provisioning-service';
 
-export const MQTT_URL: string = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
+export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';
 export const MQTT_USERNAME: string | undefined = process.env.MQTT_USERNAME || undefined;
 export const MQTT_PASSWORD: string | undefined = process.env.MQTT_PASSWORD || undefined;
 // Optional TLS files; if set, clients will pass these to MQTT
-// Default to repo-level config/certs paths resolved relative to this file
-export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA || new URL('../../config/certs/ca.crt', import.meta.url).pathname;
-export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT || new URL('../../config/certs/provisioning.crt', import.meta.url).pathname;
-export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY || new URL('../../config/certs/provisioning.key', import.meta.url).pathname;
+// Defaults are undefined; set via env when using mqtts://
+export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA || undefined;
+export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT || undefined;
+export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY || undefined;
 export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
 // Root CA used to sign device certificates from CSRs (override via env in production)
 // Default to repo-level config/certs paths resolved relative to this file

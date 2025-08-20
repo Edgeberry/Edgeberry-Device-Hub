@@ -34,13 +34,14 @@ function shallowDelta(desired: Json, reported: Json): Json {
 }
 
 export function startMqtt(db: any): MqttClient {
-  // Load TLS materials only if the paths exist. We never ship certs with the build.
-  const ca = MQTT_TLS_CA && existsSync(MQTT_TLS_CA) ? readFileSync(MQTT_TLS_CA) : undefined;
-  if (MQTT_TLS_CA && !ca) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CA path set but file not found: ${MQTT_TLS_CA}`);
-  const cert = MQTT_TLS_CERT && existsSync(MQTT_TLS_CERT) ? readFileSync(MQTT_TLS_CERT) : undefined;
-  if (MQTT_TLS_CERT && !cert) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CERT path set but file not found: ${MQTT_TLS_CERT}`);
-  const key = MQTT_TLS_KEY && existsSync(MQTT_TLS_KEY) ? readFileSync(MQTT_TLS_KEY) : undefined;
-  if (MQTT_TLS_KEY && !key) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_KEY path set but file not found: ${MQTT_TLS_KEY}`);
+  // Only consider TLS materials when using mqtts:// to avoid accidental TLS on mqtt://
+  const usingTls = MQTT_URL.startsWith('mqtts://');
+  const ca = usingTls && MQTT_TLS_CA && existsSync(MQTT_TLS_CA) ? readFileSync(MQTT_TLS_CA) : undefined;
+  if (usingTls && MQTT_TLS_CA && !ca) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CA path set but file not found: ${MQTT_TLS_CA}`);
+  const cert = usingTls && MQTT_TLS_CERT && existsSync(MQTT_TLS_CERT) ? readFileSync(MQTT_TLS_CERT) : undefined;
+  if (usingTls && MQTT_TLS_CERT && !cert) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CERT path set but file not found: ${MQTT_TLS_CERT}`);
+  const key = usingTls && MQTT_TLS_KEY && existsSync(MQTT_TLS_KEY) ? readFileSync(MQTT_TLS_KEY) : undefined;
+  if (usingTls && MQTT_TLS_KEY && !key) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_KEY path set but file not found: ${MQTT_TLS_KEY}`);
 
   const options: IClientOptions = {
     username: MQTT_USERNAME,

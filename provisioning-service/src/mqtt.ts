@@ -1,18 +1,17 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
-import { readFileSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { readFileSync, existsSync } from 'fs';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
 import { dbusCheckUUID, dbusMarkUsed, dbusIssueFromCSR } from './dbus.js';
 import type { Json } from './types.js';
 
-// Topic helpers
+// Topic helpers and constants
 const TOPICS = {
   provisionRequest: '$devicehub/devices/+/provision/request',
   accepted: (deviceId: string) => `$devicehub/devices/${deviceId}/provision/accepted`,
   rejected: (deviceId: string) => `$devicehub/devices/${deviceId}/provision/rejected`,
 };
 
-function parseDeviceId(topic: string, suffix: string): string | null {
+function parseTopicDeviceId(topic: string, suffix: string): string | null {
   // $devicehub/devices/{deviceId}/provision/{suffix}
   const parts = topic.split('/');
   if (parts.length < 5) return null;
@@ -23,14 +22,52 @@ function parseDeviceId(topic: string, suffix: string): string | null {
 }
 
 export function startMqtt(): MqttClient {
-  const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
-  const cert = MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined;
-  const key = MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined;
+  const usingTls = MQTT_URL.startsWith('mqtts://');
+  // Only attempt to load TLS files when using mqtts://. Wrap reads to avoid crashes on missing files.
+  let ca: Buffer | undefined;
+  let cert: Buffer | undefined;
+  let key: Buffer | undefined;
+  if (usingTls) {
+    if (MQTT_TLS_CA) {
+      try {
+        if (existsSync(MQTT_TLS_CA)) ca = readFileSync(MQTT_TLS_CA);
+        else console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CA path set but file not found: ${MQTT_TLS_CA}`);
+      } catch (e) {
+        console.warn(`[${SERVICE}] WARNING: failed to read MQTT_TLS_CA (${MQTT_TLS_CA}): ${(e as Error).message}`);
+      }
+    }
+    if (MQTT_TLS_CERT) {
+      try {
+        if (existsSync(MQTT_TLS_CERT)) cert = readFileSync(MQTT_TLS_CERT);
+        else console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CERT path set but file not found: ${MQTT_TLS_CERT}`);
+      } catch (e) {
+        console.warn(`[${SERVICE}] WARNING: failed to read MQTT_TLS_CERT (${MQTT_TLS_CERT}): ${(e as Error).message}`);
+      }
+    }
+    if (MQTT_TLS_KEY) {
+      try {
+        if (existsSync(MQTT_TLS_KEY)) key = readFileSync(MQTT_TLS_KEY);
+        else console.warn(`[${SERVICE}] WARNING: MQTT_TLS_KEY path set but file not found: ${MQTT_TLS_KEY}`);
+      } catch (e) {
+        console.warn(`[${SERVICE}] WARNING: failed to read MQTT_TLS_KEY (${MQTT_TLS_KEY}): ${(e as Error).message}`);
+      }
+    }
+  }
+
+  // Only send credentials if both username and password are set. Some broker configs reject
+  // a CONNECT with username but empty password even when allow_anonymous is true.
+  const auth: Partial<IClientOptions> = {};
+  if (MQTT_USERNAME && MQTT_PASSWORD) {
+    auth.username = MQTT_USERNAME;
+    auth.password = MQTT_PASSWORD;
+  } else if (MQTT_USERNAME && !MQTT_PASSWORD) {
+    console.warn(`[${SERVICE}] WARNING: MQTT_USERNAME is set but MQTT_PASSWORD is missing; connecting without credentials`);
+  }
 
   const options: IClientOptions = {
-    username: MQTT_USERNAME,
-    password: MQTT_PASSWORD,
+    ...auth,
     reconnectPeriod: 2000,
+    // Mirror twin-service behavior: do not force protocol; mqtt.js will infer based on URL
     ca,
     cert,
     key,
@@ -40,19 +77,6 @@ export function startMqtt(): MqttClient {
   console.log(
     `[${SERVICE}] MQTT config: url=${MQTT_URL} ca=${MQTT_TLS_CA || 'unset'} cert=${MQTT_TLS_CERT || 'unset'} key=${MQTT_TLS_KEY || 'unset'} rejectUnauthorized=${MQTT_TLS_REJECT_UNAUTHORIZED}`
   );
-  // Attempt to log client certificate CN (username when broker uses use_subject_as_username)
-  if (MQTT_TLS_CERT) {
-    try {
-      const res = spawnSync('openssl', ['x509', '-in', MQTT_TLS_CERT, '-noout', '-subject'], { encoding: 'utf8' });
-      const subj = (res.stdout || '').trim();
-      const cnMatch = subj.match(/CN=([^,\/]+)/);
-      const cn = cnMatch ? cnMatch[1] : 'unknown';
-      console.log(`[${SERVICE}] client cert subject: ${subj || 'unavailable'} (CN=${cn})`);
-      if (cn !== 'provisioning') {
-        console.warn(`[${SERVICE}] WARNING: client cert CN is '${cn}', but ACL expects username 'provisioning'.`);
-      }
-    } catch {}
-  }
   const client: MqttClient = connect(MQTT_URL, options);
   client.on('connect', () => {
     console.log(`[${SERVICE}] connected to MQTT`);
@@ -61,10 +85,13 @@ export function startMqtt(): MqttClient {
     });
   });
   client.on('error', (err) => console.error(`[${SERVICE}] mqtt error`, err));
+  client.on('close', () => console.warn(`[${SERVICE}] mqtt connection closed`));
+  client.on('offline', () => console.warn(`[${SERVICE}] mqtt offline`));
+  client.on('reconnect', () => console.log(`[${SERVICE}] mqtt reconnecting...`));
 
   client.on('message', async (topic: string, payload: Buffer) => {
     if (!(topic.startsWith('$devicehub/devices/') && topic.endsWith('/provision/request'))) return;
-    const deviceId = parseDeviceId(topic, '/provision/request');
+    const deviceId = parseTopicDeviceId(topic, '/provision/request');
     if (!deviceId) return;
     try {
       console.log(`[${SERVICE}] provision request received for deviceId=${deviceId}`);

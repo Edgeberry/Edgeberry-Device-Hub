@@ -51,25 +51,13 @@ pattern read  $devicehub/devices/%u/twin/delta
 # These blocks apply when the service connects with a client cert whose CN
 # matches the username below (e.g., CN=registry, CN=twin, CN=provisioning).
 
-# Registry service: subscribes to devices/# to persist events
-user registry
-topic read devices/#
-
-# Twin service: handles twin get/update and responses
+# Twin service: full access for backend operations
 user twin
-# Subscribe to device twin requests
-topic read  $devicehub/devices/+/twin/get
-topic read  $devicehub/devices/+/twin/update
-# Publish responses and deltas
-topic write $devicehub/devices/+/twin/update/accepted
-topic write $devicehub/devices/+/twin/update/rejected
-topic write $devicehub/devices/+/twin/delta
+topic readwrite #
 
-# Provisioning service: handles provision requests and replies
+# Provisioning service: full access for backend operations
 user provisioning
-topic read  $devicehub/devices/+/provision/request
-topic write $devicehub/devices/+/provision/accepted
-topic write $devicehub/devices/+/provision/rejected
+topic readwrite #
 
 # ----------------------------------------------------------------------------
 # Keep service accounts least-privileged in production. Adjust above as needed.

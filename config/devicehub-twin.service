@@ -6,13 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/Edgeberry/devicehub/twin-service
-Environment=NODE_ENV=production
-Environment=MQTT_URL=mqtts://127.0.0.1:8883
-Environment=MQTT_TLS_CA=/opt/Edgeberry/devicehub/config/certs/ca.crt
-Environment=MQTT_TLS_CERT=/opt/Edgeberry/devicehub/config/certs/twin.crt
-Environment=MQTT_TLS_KEY=/opt/Edgeberry/devicehub/config/certs/twin.key
-Environment=MQTT_TLS_REJECT_UNAUTHORIZED=true
 EnvironmentFile=-/etc/Edgeberry/devicehub/twin.env
+Environment=NODE_ENV=production
+Environment=MQTT_URL=mqtt://127.0.0.1:1883
 ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/twin-service/dist/index.js
 Restart=on-failure
 RestartSec=3
