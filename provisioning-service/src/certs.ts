@@ -30,10 +30,23 @@ export async function issueDeviceCertFromCSR(deviceId: string, csrPem: string, d
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edgeberry-csr-'));
   const csrPath = path.join(tmpDir, `${deviceId}.csr`);
   const crtPath = path.join(tmpDir, `${deviceId}.crt`);
+  const extPath = path.join(tmpDir, `${deviceId}.ext`);
   fs.writeFileSync(csrPath, csrPem);
   const daysStr = String(days ?? 825);
-  const res = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT_PATH, '-CAkey', CA_KEY_PATH, '-CAcreateserial', '-out', crtPath, '-days', daysStr, '-sha256']);
+  // Minimal client certificate extensions
+  const extContent = [
+    '[v3_client]',
+    'basicConstraints=CA:FALSE',
+    'keyUsage = digitalSignature, keyEncipherment',
+    'extendedKeyUsage = clientAuth',
+    'subjectKeyIdentifier = hash',
+    'authorityKeyIdentifier = keyid,issuer',
+    ''
+  ].join('\n');
+  try { fs.writeFileSync(extPath, extContent, { encoding: 'utf8' }); } catch (e) { throw new Error(`failed_writing_extfile: ${String((e as Error).message || e)}`); }
+  const res = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT_PATH, '-CAkey', CA_KEY_PATH, '-CAcreateserial', '-out', crtPath, '-days', daysStr, '-sha256', '-extfile', extPath, '-extensions', 'v3_client']);
   try { fs.unlinkSync(csrPath); } catch {}
+  try { fs.unlinkSync(extPath); } catch {}
   if (res.code !== 0) {
     try { fs.unlinkSync(crtPath); } catch {}
     throw new Error(`cert_issue_failed: ${res.err || res.out}`);

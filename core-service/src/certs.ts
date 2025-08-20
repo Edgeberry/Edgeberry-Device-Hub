@@ -59,14 +59,27 @@ export async function issueProvisioningCert(name: string, days?: number): Promis
   const keyPath = path.join(PROV_DIR, `${base}.key`);
   const csrPath = path.join(PROV_DIR, `${base}.csr`);
   const crtPath = path.join(PROV_DIR, `${base}.crt`);
+  const extPath = path.join(PROV_DIR, `${base}.ext`);
   const daysStr = String(days ?? 825);
   let r = await runCmd('openssl', ['genrsa', '-out', keyPath, '2048']);
   if (r.code !== 0) throw new Error(`openssl genrsa failed: ${r.err || r.out}`);
   r = await runCmd('openssl', ['req', '-new', '-key', keyPath, '-subj', `/CN=${name}`,'-out', csrPath]);
   if (r.code !== 0) throw new Error(`openssl req -new failed: ${r.err || r.out}`);
-  r = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT, '-CAkey', CA_KEY, '-CAcreateserial', '-out', crtPath, '-days', daysStr, '-sha256']);
+  // Write minimal client certificate extensions
+  const extContent = [
+    '[v3_client]',
+    'basicConstraints=CA:FALSE',
+    'keyUsage = digitalSignature, keyEncipherment',
+    'extendedKeyUsage = clientAuth',
+    'subjectKeyIdentifier = hash',
+    'authorityKeyIdentifier = keyid,issuer',
+    ''
+  ].join('\n');
+  try { fs.writeFileSync(extPath, extContent, { encoding: 'utf8' }); } catch (e) { throw new Error(`failed_writing_extfile: ${String((e as Error).message || e)}`); }
+  r = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT, '-CAkey', CA_KEY, '-CAcreateserial', '-out', crtPath, '-days', daysStr, '-sha256', '-extfile', extPath, '-extensions', 'v3_client']);
   if (r.code !== 0) throw new Error(`openssl x509 -req failed: ${r.err || r.out}`);
   try { fs.unlinkSync(csrPath); } catch {}
+  try { fs.unlinkSync(extPath); } catch {}
   return { certPath: crtPath, keyPath };
 }
 

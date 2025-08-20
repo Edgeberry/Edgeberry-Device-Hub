@@ -31,17 +31,25 @@
  * - Do not log secrets (tokens). Broker should require client certs (mTLS) and ACLs per device.
  * - When `ENFORCE_WHITELIST=true`, the `uuid` acts as a one-time claim token and is marked used.
  */
-import { SERVICE, DB_PATH } from './config.js';
+import { SERVICE, DB_PATH, HTTP_PORT, HTTP_ENABLE_CERT_API } from './config.js';
 import { initDb } from './db.js';
 import { startMqtt } from './mqtt.js';
 import { registerShutdown } from './shutdown.js';
+import { startHttpServer } from './http.js';
 
 type Json = Record<string, unknown>;
 
 async function main() {
   console.log(`[${SERVICE}] starting...`);
+  console.log(`[${SERVICE}] http config: port=${HTTP_PORT} cert_api=${HTTP_ENABLE_CERT_API ? 'enabled' : 'disabled'}`);
   const db = initDb(DB_PATH);
   const client = startMqtt(db);
+  // Start lightweight HTTP server to expose CA and provisioning certs (dev convenience)
+  try {
+    startHttpServer({ host: '0.0.0.0', port: HTTP_PORT });
+  } catch (e: any) {
+    console.error(`[${SERVICE}] failed to start http server:`, e?.message || e);
+  }
   registerShutdown(db, client);
 }
 

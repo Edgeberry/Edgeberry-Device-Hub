@@ -3,6 +3,9 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import http from 'http';
+import https from 'https';
+import { URL as NodeUrl } from 'url';
 
 // Simple virtual device that:
 // 1) Connects to MQTT broker
@@ -12,13 +15,16 @@ import { spawnSync } from 'child_process';
 const MQTT_URL = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME;
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD;
-const MQTT_TLS_CA = process.env.MQTT_TLS_CA;
-const MQTT_TLS_CERT = process.env.MQTT_TLS_CERT; // Claim cert for bootstrap, or device cert for runtime
-const MQTT_TLS_KEY = process.env.MQTT_TLS_KEY;   // Claim key for bootstrap, or device key for runtime
+const CERTS_DIR = new URL('../certs/', import.meta.url).pathname;
+const MQTT_TLS_CA = process.env.MQTT_TLS_CA || path.join(CERTS_DIR, 'ca.crt');
+const MQTT_TLS_CERT = process.env.MQTT_TLS_CERT || path.join(CERTS_DIR, 'provisioning.crt'); // Claim cert for bootstrap, or device cert for runtime
+const MQTT_TLS_KEY = process.env.MQTT_TLS_KEY || path.join(CERTS_DIR, 'provisioning.key');   // Claim key for bootstrap, or device key for runtime
 const MQTT_TLS_REJECT_UNAUTHORIZED = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
 const DEVICE_ID = process.env.DEVICE_ID || `vd-${Math.random().toString(36).slice(2, 8)}`;
 const TELEMETRY_PERIOD_MS = Number(process.env.TELEMETRY_PERIOD_MS || 3000);
 const PROV_UUID = process.env.PROV_UUID || process.env.UUID;
+const PROV_API_BASE = process.env.PROV_API_BASE || '';
+const ALLOW_SELF_SIGNED: boolean = ((process.env.ALLOW_SELF_SIGNED ?? (PROV_API_BASE ? 'true' : 'false')) as string).toLowerCase() === 'true';
 
 // Optional override paths where we store generated device cert/key
 const DEVICE_CERT_OUT = process.env.DEVICE_CERT_OUT || '';
@@ -48,23 +54,67 @@ function writeIfPath(content: string, outPath?: string): string | undefined {
   return outPath;
 }
 
-function start() {
-  const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
-  const cert = MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined;
-  const key = MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined;
+async function httpGetBuffer(urlStr: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const u = new NodeUrl(urlStr);
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.get(u, (res) => {
+      if ((res.statusCode || 0) >= 400) { reject(new Error(`HTTP ${res.statusCode} for ${urlStr}`)); return; }
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+  });
+}
 
-  const opts: IClientOptions = {
+async function loadBootstrapTls(): Promise<{ ca?: Buffer; cert?: Buffer; key?: Buffer }> {
+  if (!PROV_API_BASE) return {};
+  const base = PROV_API_BASE.replace(/\/$/, '');
+  const ca = await httpGetBuffer(`${base}/certs/ca.crt`).catch(() => undefined);
+  const cert = await httpGetBuffer(`${base}/certs/provisioning.crt`).catch(() => undefined);
+  const key = await httpGetBuffer(`${base}/certs/provisioning.key`).catch(() => undefined);
+  return { ca, cert, key };
+}
+
+async function start() {
+  const fetched = await loadBootstrapTls();
+  const ca = fetched.ca || (MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined);
+  // Use API-provided cert/key only if both are present and match; otherwise fall back to local pair
+  let useApiPair = !!(fetched.cert && fetched.key);
+  if (useApiPair) {
+    try {
+      const tmp = mkdtempSync(path.join(tmpdir(), 'edgeberry-vd-pair-'));
+      const cPath = path.join(tmp, 'api.crt');
+      const kPath = path.join(tmp, 'api.key');
+      writeFileSync(cPath, fetched.cert!);
+      writeFileSync(kPath, fetched.key!);
+      const modC = openssl(['x509', '-noout', '-modulus', '-in', cPath]);
+      const modK = openssl(['rsa', '-noout', '-modulus', '-in', kPath]);
+      if (modC.code !== 0 || modK.code !== 0 || modC.out.trim() !== modK.out.trim()) {
+        console.warn('[virtual-device] WARNING: API cert/key do not match; falling back to file pair');
+        useApiPair = false;
+      }
+    } catch { useApiPair = false; }
+  }
+  const cert = useApiPair ? fetched.cert : (MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined);
+  const key = useApiPair ? fetched.key : (MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined);
+  console.log(`[virtual-device] TLS source: ca=${fetched.ca ? 'api' : (MQTT_TLS_CA ? 'file' : 'none')} certKey=${useApiPair ? 'api' : ((MQTT_TLS_CERT && MQTT_TLS_KEY) ? 'file' : 'none')}`);
+
+  const insecure = ALLOW_SELF_SIGNED || !ca;
+  const buildOpts = (insecureFlag: boolean): IClientOptions => ({
     username: MQTT_USERNAME,
     password: MQTT_PASSWORD,
     protocolVersion: 5,
     reconnectPeriod: 2000,
     clean: true,
-    ca,
+    ca: insecureFlag ? undefined : ca,
     cert,
     key,
-    rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
-  };
-  const client: MqttClient = connect(MQTT_URL, opts);
+    rejectUnauthorized: insecureFlag ? false : MQTT_TLS_REJECT_UNAUTHORIZED,
+  });
+
+  const client: MqttClient = connect(MQTT_URL, buildOpts(insecure));
 
   let provisioned = false;
   let telemetryTimer: NodeJS.Timeout | null = null;
@@ -125,7 +175,7 @@ function start() {
     }
   });
 
-  client.on('error', (err) => {
+  client.on('error', (err: any) => {
     console.error('[virtual-device] error', err);
   });
 
@@ -179,4 +229,4 @@ function startRuntime(deviceCertPath?: string, deviceKeyPath?: string) {
   process.on('SIGTERM', shutdown);
 }
 
-start();
+(async () => { await start(); })();

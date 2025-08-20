@@ -1,5 +1,6 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync } from 'fs';
+import { spawnSync } from 'child_process';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
 import { upsertDevice, getWhitelistByUuid, markWhitelistUsed } from './db.js';
 import type { Json } from './types.js';
@@ -36,6 +37,23 @@ export function startMqtt(db: any): MqttClient {
     key,
     rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
   };
+  // Log effective MQTT settings for diagnostics (avoid secrets)
+  console.log(
+    `[${SERVICE}] MQTT config: url=${MQTT_URL} ca=${MQTT_TLS_CA || 'unset'} cert=${MQTT_TLS_CERT || 'unset'} key=${MQTT_TLS_KEY || 'unset'} rejectUnauthorized=${MQTT_TLS_REJECT_UNAUTHORIZED}`
+  );
+  // Attempt to log client certificate CN (username when broker uses use_subject_as_username)
+  if (MQTT_TLS_CERT) {
+    try {
+      const res = spawnSync('openssl', ['x509', '-in', MQTT_TLS_CERT, '-noout', '-subject'], { encoding: 'utf8' });
+      const subj = (res.stdout || '').trim();
+      const cnMatch = subj.match(/CN=([^,\/]+)/);
+      const cn = cnMatch ? cnMatch[1] : 'unknown';
+      console.log(`[${SERVICE}] client cert subject: ${subj || 'unavailable'} (CN=${cn})`);
+      if (cn !== 'provisioning') {
+        console.warn(`[${SERVICE}] WARNING: client cert CN is '${cn}', but ACL expects username 'provisioning'.`);
+      }
+    } catch {}
+  }
   const client: MqttClient = connect(MQTT_URL, options);
   client.on('connect', () => {
     console.log(`[${SERVICE}] connected to MQTT`);

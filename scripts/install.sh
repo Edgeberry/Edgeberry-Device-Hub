@@ -20,6 +20,62 @@ require_root() {
   fi
 }
 
+# Create or update key=value in an env file idempotently
+ensure_env_kv() {
+  local file="$1"; local key="$2"; local val="$3"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  chmod 0644 "$file" || true
+  if grep -qE "^#?\s*${key}=.*$" "$file" 2>/dev/null; then
+    # Replace existing line
+    sed -i -E "s|^#?\s*${key}=.*$|${key}=${val}|" "$file"
+  else
+    echo "${key}=${val}" >> "$file"
+  fi
+}
+
+# Determine HTTP port for provisioning API (reads provisioning.env if present)
+get_prov_http_port() {
+  local env_file="$ETC_DIR/provisioning.env"
+  local port
+  if [[ -f "$env_file" ]]; then
+    port=$(awk -F '=' '/^\s*HTTP_PORT\s*=/{gsub(/\r/,"",$2); gsub(/\s+/,"",$2); print $2}' "$env_file" | tail -n1)
+  fi
+  if [[ -z "$port" ]]; then port=8081; fi
+  echo "$port"
+}
+
+# Wait for provisioning HTTP API to be reachable; restart service once if needed
+ensure_prov_http_ready() {
+  local port; port=$(get_prov_http_port)
+  local url="http://127.0.0.1:${port}/health"
+  local tries=0
+  local max_tries=20
+  local restarted=0
+  log "waiting for provisioning HTTP API on ${url}"
+  while (( tries < max_tries )); do
+    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+      log "provisioning HTTP API is listening on 127.0.0.1:${port}"
+      return 0
+    fi
+    ((tries++))
+    # After a few attempts, try one restart if still not up
+    if (( tries == 8 && restarted == 0 )); then
+      log "provisioning HTTP API not responding yet; restarting service once"
+      systemctl_safe restart devicehub-provisioning.service || true
+      restarted=1
+    fi
+    sleep 0.5
+  done
+  log "WARN: provisioning HTTP API did not become ready on 127.0.0.1:${port}"
+  # Dump recent service logs to aid diagnostics
+  if have_systemd; then
+    log "recent devicehub-provisioning.service logs:"
+    journalctl -u devicehub-provisioning.service -n 80 --no-pager 2>/dev/null | tail -n 80 || true
+  fi
+  return 1
+}
+
 # --- Runtime dependency checks/install (node, npm, rsync) ---
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
@@ -323,15 +379,125 @@ EOF
     mkdir -p /etc/mosquitto/conf.d
     # Source files packaged with the app
     local SRC_CA="$INSTALL_ROOT/config/certs/ca.crt"
+    local SRC_CA_KEY="$INSTALL_ROOT/config/certs/ca.key"
     local SRC_CERT="$INSTALL_ROOT/config/certs/server.crt"
     local SRC_KEY="$INSTALL_ROOT/config/certs/server.key"
     local SRC_ACL="$INSTALL_ROOT/config/mosquitto.acl"
 
-    # Warn if any are missing
+    # If packaged CA is missing, try to reuse an existing CA from core-service data (from previous runs)
+    local ALT_CA="$INSTALL_ROOT/core-service/data/certs/root/ca.crt"
+    local ALT_CA_KEY="$INSTALL_ROOT/core-service/data/certs/root/ca.key"
+    if [[ ! -f "$SRC_CA" && -f "$ALT_CA" && -f "$ALT_CA_KEY" ]]; then
+      log "found existing Root CA under core-service data; staging into config/certs"
+      mkdir -p "$INSTALL_ROOT/config/certs"
+      install -m 0640 "$ALT_CA" "$SRC_CA"
+      install -m 0640 "$ALT_CA_KEY" "$INSTALL_ROOT/config/certs/ca.key"
+    fi
+    # If still no CA, generate a new Root CA (first-time install convenience)
+    if [[ ! -f "$SRC_CA" && ! -f "$INSTALL_ROOT/config/certs/ca.key" ]]; then
+      log "no Root CA found; generating a new Root CA (CN=Edgeberry Device Hub Root CA)"
+      mkdir -p "$INSTALL_ROOT/config/certs"
+      pushd "$INSTALL_ROOT/config/certs" >/dev/null
+      if openssl genrsa -out ca.key 4096 >/dev/null 2>&1 && \
+         openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -subj "/CN=Edgeberry Device Hub Root CA" -out ca.crt >/dev/null 2>&1; then
+        log "generated Root CA at $INSTALL_ROOT/config/certs/ca.crt"
+      else
+        log "WARN: failed to generate Root CA"
+        rm -f ca.key ca.crt >/dev/null 2>&1 || true
+      fi
+      popd >/dev/null
+    fi
+    # Sync CA into core-service data dir for UI/backends to reference (idempotent)
+    if [[ -f "$SRC_CA" && -f "$INSTALL_ROOT/config/certs/ca.key" ]]; then
+      mkdir -p "$INSTALL_ROOT/core-service/data/certs/root"
+      install -m 0640 "$SRC_CA" "$INSTALL_ROOT/core-service/data/certs/root/ca.crt"
+      install -m 0640 "$INSTALL_ROOT/config/certs/ca.key" "$INSTALL_ROOT/core-service/data/certs/root/ca.key"
+    fi
+    # Warn if any are still missing
     [[ -f "$SRC_CA" ]] || log "WARN: missing CA file: $SRC_CA"
     [[ -f "$SRC_CERT" ]] || log "WARN: missing server cert: $SRC_CERT"
     [[ -f "$SRC_KEY" ]] || log "WARN: missing server key: $SRC_KEY"
     [[ -f "$SRC_ACL" ]] || log "WARN: missing ACL file: $SRC_ACL"
+
+    # Auto-generate provisioning client cert/key if missing and CA is available
+    local SRC_PROV_CERT="$INSTALL_ROOT/config/certs/provisioning.crt"
+    local SRC_PROV_KEY="$INSTALL_ROOT/config/certs/provisioning.key"
+    if [[ ! -f "$SRC_PROV_CERT" || ! -f "$SRC_PROV_KEY" ]]; then
+      if [[ -f "$SRC_CA" && -f "$SRC_CA_KEY" ]]; then
+        log "provisioning client cert/key missing; generating signed client certificate (CN=provisioning)"
+        mkdir -p "$INSTALL_ROOT/config/certs"
+        pushd "$INSTALL_ROOT/config/certs" >/dev/null
+        # Generate client key
+        openssl genrsa -out provisioning.key 2048 >/dev/null 2>&1 || true
+        if [[ -f provisioning.key ]]; then
+          openssl req -new -key provisioning.key -subj "/CN=provisioning" -out provisioning.csr >/dev/null 2>&1 || true
+          cat > provisioning.ext <<EOF
+[v3_client]
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+EOF
+          if openssl x509 -req -in provisioning.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out provisioning.crt -days 825 -sha256 -extfile provisioning.ext -extensions v3_client >/dev/null 2>&1; then
+            log "generated provisioning client certificate (clientAuth)"
+          else
+            log "WARN: failed to sign provisioning client certificate"
+            rm -f provisioning.crt >/dev/null 2>&1 || true
+          fi
+          rm -f provisioning.csr provisioning.ext >/dev/null 2>&1 || true
+        fi
+        popd >/dev/null
+      else
+        log "WARN: cannot generate provisioning client cert: CA materials missing (expected $SRC_CA and $SRC_CA_KEY)"
+      fi
+    fi
+
+    # Auto-generate server cert/key if missing and CA is available
+    if [[ ! -f "$SRC_CERT" || ! -f "$SRC_KEY" ]]; then
+      if [[ -f "$SRC_CA" && -f "$SRC_CA_KEY" ]]; then
+        log "server cert/key missing; generating a CA-signed server certificate"
+        mkdir -p "$INSTALL_ROOT/config/certs"
+        pushd "$INSTALL_ROOT/config/certs" >/dev/null
+        # Determine primary IP and FQDN for SANs
+        local PRIMARY_IP
+        PRIMARY_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+        if [[ -z "$PRIMARY_IP" ]]; then PRIMARY_IP="127.0.0.1"; fi
+        local FQDN
+        FQDN="$(hostname -f 2>/dev/null || echo localhost)"
+        # Generate private key
+        if ! openssl genrsa -out server.key 2048 >/dev/null 2>&1; then
+          log "WARN: failed to generate server.key"
+        fi
+        # CSR
+        if [[ -f server.key ]]; then
+          openssl req -new -key server.key -subj "/CN=edgeberry-mosquitto" -out server.csr >/dev/null 2>&1 || true
+        fi
+        # v3 extensions for server auth with SANs
+        cat > server.ext <<EOF
+[v3_server]
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+subjectAltName = IP:127.0.0.1,IP:${PRIMARY_IP},DNS:localhost,DNS:${FQDN}
+EOF
+        # Sign with our CA
+        if [[ -f server.csr ]]; then
+          if openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 825 -sha256 -extfile server.ext -extensions v3_server >/dev/null 2>&1; then
+            log "generated server certificate signed by deployed CA (SANs include 127.0.0.1 and ${PRIMARY_IP})"
+          else
+            log "WARN: failed to sign server certificate with deployed CA"
+            rm -f server.crt >/dev/null 2>&1 || true
+          fi
+        fi
+        rm -f server.csr server.ext >/dev/null 2>&1 || true
+        popd >/dev/null
+      else
+        log "WARN: cannot auto-generate server cert: CA materials missing (expected $SRC_CA and $SRC_CA_KEY)"
+      fi
+    fi
 
     # Install runtime copies under /etc/mosquitto (AppArmor allows access here)
     mkdir -p /etc/mosquitto/certs /etc/mosquitto/acl.d
@@ -347,11 +513,13 @@ EOF
     if [[ -f "$SRC_ACL" ]]; then install -m 0644 "$SRC_ACL" "$ETC_ACL"; fi
 
     mkdir -p "$ETC_CA_DIR"
+    # Ensure operator-provided CA trust directory exists
+    mkdir -p "$ETC_DIR/ca-trust"
     [[ -f "$SRC_CA" ]] && cp -f "$SRC_CA" "$ETC_CA_DIR/ca.crt" || true
-    # Copy any additional CA roots if present
-    if [[ -d "$INSTALL_ROOT/config/ca-trust" ]]; then
+    # Allow operator-provided CA roots from /etc/Edgeberry/devicehub/ca-trust
+    if [[ -d "$ETC_DIR/ca-trust" ]]; then
       shopt -s nullglob
-      for cert in "$INSTALL_ROOT/config/ca-trust"/*.crt; do
+      for cert in "$ETC_DIR/ca-trust"/*.crt; do
         [[ -f "$cert" ]] || continue
         cp -f "$cert" "$ETC_CA_DIR/"
       done
@@ -444,9 +612,20 @@ main() {
   ensure_data_dir_and_migrate_db
   install_node_deps
   install_systemd_units
+  # Ensure provisioning service HTTP cert API is enabled for development convenience
+  # Writes defaults into /etc/Edgeberry/devicehub/provisioning.env
+  local PROV_ENV_FILE="$ETC_DIR/provisioning.env"
+  log "configuring provisioning HTTP cert API (dev) via ${PROV_ENV_FILE}"
+  ensure_env_kv "$PROV_ENV_FILE" HTTP_ENABLE_CERT_API true
+  # Do not overwrite an existing custom port; set default only if missing
+  if ! grep -qE '^\s*HTTP_PORT=' "$PROV_ENV_FILE" 2>/dev/null; then
+    ensure_env_kv "$PROV_ENV_FILE" HTTP_PORT 8081
+  fi
   enable_services
   configure_mosquitto
   start_services
+  # Verify provisioning HTTP API is listening; attempt one restart if necessary
+  ensure_prov_http_ready || log "WARN: provisioning HTTP API may not be reachable yet; continuing"
   log "installation complete"
 }
 

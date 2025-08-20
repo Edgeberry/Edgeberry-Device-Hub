@@ -42,6 +42,8 @@ build_node_service() {
   fi
   # Build if script exists
   if npm run | grep -qE '^\s*build\s'; then
+    # Ensure a clean build to prevent stale dist/ from being packaged
+    rm -rf dist 2>/dev/null || true
     npm run build
   fi
   # Prune dev deps for artifact
