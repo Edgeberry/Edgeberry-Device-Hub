@@ -1,5 +1,5 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED } from './config.js';
 import { Json } from './types.js';
 import { getTwin, setDoc } from './db.js';
@@ -34,9 +34,13 @@ function shallowDelta(desired: Json, reported: Json): Json {
 }
 
 export function startMqtt(db: any): MqttClient {
-  const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
-  const cert = MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined;
-  const key = MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined;
+  // Load TLS materials only if the paths exist. We never ship certs with the build.
+  const ca = MQTT_TLS_CA && existsSync(MQTT_TLS_CA) ? readFileSync(MQTT_TLS_CA) : undefined;
+  if (MQTT_TLS_CA && !ca) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CA path set but file not found: ${MQTT_TLS_CA}`);
+  const cert = MQTT_TLS_CERT && existsSync(MQTT_TLS_CERT) ? readFileSync(MQTT_TLS_CERT) : undefined;
+  if (MQTT_TLS_CERT && !cert) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_CERT path set but file not found: ${MQTT_TLS_CERT}`);
+  const key = MQTT_TLS_KEY && existsSync(MQTT_TLS_KEY) ? readFileSync(MQTT_TLS_KEY) : undefined;
+  if (MQTT_TLS_KEY && !key) console.warn(`[${SERVICE}] WARNING: MQTT_TLS_KEY path set but file not found: ${MQTT_TLS_KEY}`);
 
   const options: IClientOptions = {
     username: MQTT_USERNAME,
@@ -47,6 +51,10 @@ export function startMqtt(db: any): MqttClient {
     key,
     rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
   };
+  // Log effective MQTT settings for diagnostics (avoid secrets)
+  console.log(
+    `[${SERVICE}] MQTT config: url=${MQTT_URL} ca=${MQTT_TLS_CA || 'unset'} cert=${MQTT_TLS_CERT || 'unset'} key=${MQTT_TLS_KEY || 'unset'} rejectUnauthorized=${MQTT_TLS_REJECT_UNAUTHORIZED}`
+  );
   const client: MqttClient = connect(MQTT_URL, options);
   client.on('connect', () => {
     console.log(`[${SERVICE}] connected to MQTT`);
