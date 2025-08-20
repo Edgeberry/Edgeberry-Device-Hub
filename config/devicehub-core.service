@@ -1,10 +1,11 @@
 [Unit]
 Description=Edgeberry Device Hub - Core Orchestrator Service
-After=network-online.target
-Wants=network-online.target
+After=network-online.target dbus.service
+Wants=network-online.target dbus.service
 
 [Service]
-Type=simple
+Type=dbus
+BusName=io.edgeberry.devicehub.Core
 WorkingDirectory=/opt/Edgeberry/devicehub/core-service
 Environment=NODE_ENV=production
 Environment=PORT=80

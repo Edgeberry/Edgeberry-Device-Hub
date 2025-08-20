@@ -321,6 +321,26 @@ install_systemd_units() {
     fi
   done
   systemctl_safe daemon-reload || true
+
+  # Install D-Bus system service and policy for Core (bus-activated primary service)
+  local DBUS_SERVICE_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.service"
+  local DBUS_POLICY_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.conf"
+  local DBUS_SYSTEM_SERVICES_DIR="/usr/share/dbus-1/system-services"
+  local DBUS_SYSTEM_POLICY_DIR="/etc/dbus-1/system.d"
+  if [[ -f "$DBUS_SERVICE_SRC" ]]; then
+    mkdir -p "$DBUS_SYSTEM_SERVICES_DIR"
+    install -m 0644 "$DBUS_SERVICE_SRC" "$DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Core.service"
+    log "installed D-Bus system service: $DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Core.service"
+  else
+    log "WARN: missing $DBUS_SERVICE_SRC"
+  fi
+  if [[ -f "$DBUS_POLICY_SRC" ]]; then
+    mkdir -p "$DBUS_SYSTEM_POLICY_DIR"
+    install -m 0644 "$DBUS_POLICY_SRC" "$DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Core.conf"
+    log "installed D-Bus policy: $DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Core.conf"
+  else
+    log "WARN: missing $DBUS_POLICY_SRC"
+  fi
 }
 
 enable_services() {

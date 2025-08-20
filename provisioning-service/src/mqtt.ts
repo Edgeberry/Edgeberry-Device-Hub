@@ -2,7 +2,8 @@ import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
-import { upsertDevice, getWhitelistByUuid, markWhitelistUsed } from './db.js';
+import { upsertDevice } from './db.js';
+import { dbusCheckUUID, dbusMarkUsed } from './dbus.js';
 import type { Json } from './types.js';
 import { issueDeviceCertFromCSR } from './certs.js';
 
@@ -63,7 +64,7 @@ export function startMqtt(db: any): MqttClient {
   });
   client.on('error', (err) => console.error(`[${SERVICE}] mqtt error`, err));
 
-  client.on('message', (topic: string, payload: Buffer) => {
+  client.on('message', async (topic: string, payload: Buffer) => {
     if (!(topic.startsWith('$devicehub/devices/') && topic.endsWith('/provision/request'))) return;
     const deviceId = parseDeviceId(topic, '/provision/request');
     if (!deviceId) return;
@@ -74,10 +75,9 @@ export function startMqtt(db: any): MqttClient {
       const csrPem = typeof (body as any).csrPem === 'string' ? String((body as any).csrPem) : undefined;
       if (ENFORCE_WHITELIST) {
         if (!uuid) throw new Error('missing_uuid');
-        const entry = getWhitelistByUuid((db as any), uuid);
-        if (!entry) throw new Error('uuid_not_whitelisted');
-        if (entry.used_at) throw new Error('uuid_already_used');
-        // device_id is no longer enforced; whitelist is UUID-only
+        // Ask Core over D-Bus
+        const res = await dbusCheckUUID(uuid);
+        if (!res.ok) throw new Error(res.error || 'uuid_not_whitelisted');
       }
       const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
@@ -96,10 +96,10 @@ export function startMqtt(db: any): MqttClient {
         throw new Error('missing_csrPem');
       }
       issueDeviceCertFromCSR(deviceId, csrPem, CERT_DAYS)
-        .then(({ certPem, caChainPem }) => {
+        .then(async ({ certPem, caChainPem }) => {
           upsertDevice(db, deviceId, name, token, meta);
           if (ENFORCE_WHITELIST && uuid) {
-            try { markWhitelistUsed(db, uuid); } catch {}
+            try { await dbusMarkUsed(uuid); } catch {}
           }
           const respTopic = TOPICS.accepted(deviceId);
           console.log(`[${SERVICE}] provision accepted for ${deviceId}; publishing ${respTopic}`);

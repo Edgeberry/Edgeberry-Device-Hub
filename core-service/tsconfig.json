@@ -10,6 +10,7 @@
     "strict": true,
     "skipLibCheck": true,
     "sourceMap": true,
+    "experimentalDecorators": true,
     "types": ["node"]
   },
   "include": ["src"]
