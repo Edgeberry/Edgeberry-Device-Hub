@@ -16,6 +16,9 @@ Microservice architecture seperates the responsibilities. Each service is a sepa
 - **Core Service**
   - The main entry point that serves the web dashboard and handles all HTTP requests. Think of it as the "front desk" that coordinates everything behind the scenes.
   - Manages user authentication, system configuration, and provides the REST API that powers the web interface.
+  - Owns the public D-Bus name `io.edgeberry.devicehub.Core` and exposes Core D-Bus interfaces (Whitelist, Certificate, Twin) to internal workers and tools.
+  - Proxies device twin operations to `twin-service` over D-Bus so there is a single public API surface.
+  - Owns device registry/inventory data and exposes the public HTTP endpoints for devices. No standalone registry microservice exists.
 
 - **Provisioning Service**
   - Handles device onboarding and security certificates. When a new Edgeberry device wants to join your network, this service validates it and issues the proper credentials.
@@ -24,14 +27,14 @@ Microservice architecture seperates the responsibilities. Each service is a sepa
 - **Device Twin Service**
   - Maintains a "digital twin" for each device - a real-time mirror of its current state and desired configuration.
   - Tracks what you want each device to do (desired state) versus what it's actually doing (reported state), automatically syncing changes between your dashboard and devices.
+  - Exposes an internal D-Bus interface `io.edgeberry.devicehub.Twin1` under bus `io.edgeberry.devicehub.Twin` for Core to call. Not directly exposed to external clients.
 
-- **Device Registry Service**
-  - Your device inventory system that keeps track of all connected Edgeberry devices. Like a phonebook for your IoT fleet.
-  - Records device information, connection history, and operational status so you always know what's connected and when it was last seen.
+See `documentation/alignment.md` for architecture and interface details, including D-Bus contracts.
 
-See `documentation/alignment.md` for architecture and interface details.
+### HTTP API Note (Twin)
+- New endpoint in Core: `GET /api/devices/:id/twin` — returns desired/reported docs by calling Twin over D-Bus.
 
-## MQTT API
+## Internal MQTT (twin-service)
 
 | Topic | Direction | Description |
 | --- | --- | --- |
@@ -41,11 +44,13 @@ See `documentation/alignment.md` for architecture and interface details.
 | `$devicehub/devices/{deviceId}/provision/request` | Inbound | Request a new device to be provisioned |
 | `$devicehub/devices/{deviceId}/provision/accepted` | Outbound | Device has been provisioned |
 | `$devicehub/devices/{deviceId}/provision/rejected` | Outbound | Device provisioning rejected |
-| `$devicehub/devices/{deviceId}/twin/get` | Inbound | Request device twin state |
-| `$devicehub/devices/{deviceId}/twin/update` | Inbound | Update device twin state |
+| `$devicehub/devices/{deviceId}/twin/get` | Inbound | Request device twin state (handled by twin-service) |
+| `$devicehub/devices/{deviceId}/twin/update` | Inbound | Update device twin state (handled by twin-service) |
 | `$devicehub/devices/{deviceId}/twin/update/accepted` | Outbound | Twin update accepted |
 | `$devicehub/devices/{deviceId}/twin/update/rejected` | Outbound | Twin update rejected |
 | `$devicehub/devices/{deviceId}/twin/update/delta` | Outbound | Twin state delta notification |
+
+Note: Core no longer ingests MQTT directly. All device twin access for external clients goes through Core HTTP/D-Bus.
 
 ## License & Collaboration
 **Copyright 2025 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.

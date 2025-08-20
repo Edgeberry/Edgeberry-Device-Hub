@@ -59,16 +59,21 @@ import {
   CA_KEY,
   CA_CRT,
   UI_DIST,
-  MQTT_URL,
   PROVISIONING_DB,
   REGISTRY_DB,
   ONLINE_THRESHOLD_SECONDS,
+  SERVICE,
+  PROVISIONING_CERT_PATH,
+  PROVISIONING_KEY_PATH,
+  PROVISIONING_HTTP_ENABLE_CERT_API,
 } from './config.js';
 import { ensureDirs, caExists, generateRootCA, readCertMeta, issueProvisioningCert } from './certs.js';
 import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 import { startWhitelistDbusServer } from './dbus-whitelist.js';
 import { startCertificateDbusServer } from './dbus-certs.js';
+import { startCoreTwinDbusServer } from './dbus-twin.js';
+import { twinGetTwin } from './dbus-twin-client.js';
 
 const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
@@ -93,10 +98,69 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
+
+// ===== Merged Provisioning HTTP API (migrated from provisioning-service) =====
+// GET /api/provisioning/health -> simple health check
+app.get('/api/provisioning/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok' });
+});
+
+// GET /api/provisioning/certs/ca.crt -> download Root CA certificate (PEM)
+app.get('/api/provisioning/certs/ca.crt', async (_req: Request, res: Response) => {
+  try {
+    if (!(await caExists())) { res.status(404).end('not found'); return; }
+    res.setHeader('Content-Type', 'application/x-pem-file');
+    res.setHeader('Content-Disposition', 'attachment; filename="ca.crt"');
+    const s = fs.createReadStream(CA_CRT);
+    s.on('error', () => res.status(500).end());
+    s.pipe(res);
+  } catch {
+    res.status(500).end('server error');
+  }
+});
+
+// GET /api/provisioning/certs/provisioning.crt -> serve provisioning client cert (dev convenience)
+app.get('/api/provisioning/certs/provisioning.crt', authRequired, async (_req: Request, res: Response) => {
+  try {
+    if (!PROVISIONING_HTTP_ENABLE_CERT_API) { res.status(403).end('forbidden'); return; }
+    if (!PROVISIONING_CERT_PATH || !fs.existsSync(PROVISIONING_CERT_PATH)) { res.status(404).end('not found'); return; }
+    res.setHeader('Content-Type', 'application/x-pem-file');
+    res.setHeader('Content-Disposition', 'attachment; filename="provisioning.crt"');
+    const s = fs.createReadStream(PROVISIONING_CERT_PATH);
+    s.on('error', () => res.status(500).end());
+    s.pipe(res);
+  } catch {
+    res.status(500).end('server error');
+  }
+});
+
+// GET /api/provisioning/certs/provisioning.key -> serve provisioning client key (dev convenience)
+app.get('/api/provisioning/certs/provisioning.key', authRequired, async (_req: Request, res: Response) => {
+  try {
+    if (!PROVISIONING_HTTP_ENABLE_CERT_API) { res.status(403).end('forbidden'); return; }
+    if (!PROVISIONING_KEY_PATH || !fs.existsSync(PROVISIONING_KEY_PATH)) { res.status(404).end('not found'); return; }
+    res.setHeader('Content-Type', 'application/x-pem-file');
+    res.setHeader('Content-Disposition', 'attachment; filename="provisioning.key"');
+    const s = fs.createReadStream(PROVISIONING_KEY_PATH);
+    s.on('error', () => res.status(500).end());
+    s.pipe(res);
+  } catch {
+    res.status(500).end('server error');
+  }
+});
 // Serve static UI (built by Vite into UI_DIST). Place this before defining the
 // catch-all so that /api/* routes remain handled by API handlers above.
 try {
   if (fs.existsSync(UI_DIST)) {
+    // Log which UI directory will be served and basic index.html info to aid deployments
+    try {
+      console.log('[core-service] UI_DIST:', UI_DIST);
+      const uiIndexPath = path.join(UI_DIST, 'index.html');
+      const st = fs.statSync(uiIndexPath);
+      console.log('[core-service] UI index.html:', uiIndexPath, 'mtime=', st.mtime.toISOString(), 'size=', st.size);
+    } catch {
+      console.log('[core-service] UI index.html not found under UI_DIST:', path.join(UI_DIST, 'index.html'));
+    }
     // Long-cache assets folder (Vite hashed filenames)
     app.use('/assets', express.static(path.join(UI_DIST, 'assets'), {
       setHeaders: (res: Response) => {
@@ -160,8 +224,7 @@ app.get('/api/settings/certs/provisioning/:name/download', authRequired, async (
     fs.copyFileSync(crtPath, certOut);
     fs.copyFileSync(keyPath, keyOut);
 
-    const mqttUrl = MQTT_URL;
-    const cfg = { mqttUrl, caCert: 'ca.crt', cert: `${name}.crt`, key: `${name}.key` };
+    const cfg = { caCert: 'ca.crt', cert: `${name}.crt`, key: `${name}.key` };
     fs.writeFileSync(path.join(bundleDir, 'config.json'), JSON.stringify(cfg, null, 2));
 
     // Stream tar.gz
@@ -193,6 +256,23 @@ app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' })
 // Core-service owns the public HTTP(S) surface: define API routes here.
 // GET /api/health
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }));
+
+// GET /api/devices/:id/twin -> fetch twin from Twin service via D-Bus
+app.get('/api/devices/:id/twin', authRequired, async (req: Request, res: Response) => {
+  try {
+    const deviceId = String(req.params.id || '').trim();
+    if (!deviceId) { res.status(400).json({ error: 'invalid device id' }); return; }
+    const [desiredJson, desiredVersion, reportedJson, err] = await twinGetTwin(deviceId);
+    if (err) { res.status(502).json({ error: 'twin_error', detail: err }); return; }
+    res.json({
+      deviceId,
+      desired: { version: desiredVersion >>> 0, doc: desiredJson ? JSON.parse(desiredJson) : {} },
+      reported: { doc: reportedJson ? JSON.parse(reportedJson) : {} }
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to fetch twin' });
+  }
+});
 
 // GET /api/config/public -> public configuration and environment info
 app.get('/api/config/public', async (_req: Request, res: Response) => {
@@ -482,6 +562,8 @@ try { ensureProvisioningSchema(); } catch {}
 startWhitelistDbusServer().catch(() => {});
 // Start D-Bus CertificateService (system bus)
 startCertificateDbusServer().catch(() => {});
+// Start D-Bus TwinService (system bus) — Core as primary interface
+startCoreTwinDbusServer().catch(() => {});
 
 // Unified logs: snapshot and streaming from systemd journal (journalctl)
 // Services are expected to be systemd units like devicehub-*.service
@@ -705,19 +787,19 @@ function stripUuidsDeep(input: any): any {
 
 // ===== Helpers reused by REST and WS =====
 async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; status: string; version?: string }> }> {
-  const units = DEFAULT_LOG_UNITS;
+  // Defensive guard: exclude any units that contain 'registry' regardless of source
+  // This ensures stale builds/configs cannot surface a registry tile in the UI.
+  const units = DEFAULT_LOG_UNITS.filter(u => !String(u || '').toLowerCase().includes('registry'));
 
   function unitToPkgPath(u: string): string | null {
     // Map systemd unit -> sibling service directory package.json
     // devicehub-core.service -> ../core-service/package.json
     // devicehub-provisioning.service -> ../provisioning-service/package.json
     // devicehub-twin.service -> ../twin-service/package.json
-    // devicehub-registry.service -> ../registry-service/package.json
     const map: Record<string, string> = {
       'devicehub-core.service': path.resolve(process.cwd(), '..', 'core-service', 'package.json'),
       'devicehub-provisioning.service': path.resolve(process.cwd(), '..', 'provisioning-service', 'package.json'),
       'devicehub-twin.service': path.resolve(process.cwd(), '..', 'twin-service', 'package.json'),
-      'devicehub-registry.service': path.resolve(process.cwd(), '..', 'registry-service', 'package.json'),
     };
     return map[u] || null;
   }
@@ -1661,6 +1743,19 @@ setInterval(() => {
     }
   }catch{}
 }, 10000);
+
+// Graceful shutdown
+function setupShutdown(){
+  const onSig = (sig: string) => () => {
+    try{ console.log(`[${SERVICE}] received ${sig}, shutting down`); }catch{}
+    try{ server.close(() => { process.exit(0); }); }catch{ try{ process.exit(0); }catch{} }
+    // Fallback exit if close hangs
+    setTimeout(() => { try{ process.exit(0); }catch{} }, 3000);
+  };
+  process.on('SIGINT', onSig('SIGINT'));
+  process.on('SIGTERM', onSig('SIGTERM'));
+}
+setupShutdown();
 
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console

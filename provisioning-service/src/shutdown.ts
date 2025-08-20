@@ -1,11 +1,10 @@
 import type { MqttClient } from 'mqtt';
 import { SERVICE } from './config.js';
 
-export function registerShutdown(db: any, client: MqttClient){
+export function registerShutdown(client: MqttClient){
   const shutdown = () => {
     console.log(`[${SERVICE}] shutting down...`);
     try { client.end(true); } catch {}
-    try { (db as any).close?.(); } catch {}
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

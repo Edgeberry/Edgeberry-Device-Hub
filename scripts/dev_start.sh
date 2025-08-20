@@ -91,13 +91,7 @@ start_service() {
       ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/twin.key")
       ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
       ;;
-    registry-service)
-      ENV_VARS+=("MQTT_URL=mqtts://127.0.0.1:8883")
-      ENV_VARS+=("MQTT_TLS_CA=$ROOT_DIR/config/certs/ca.crt")
-      ENV_VARS+=("MQTT_TLS_CERT=$ROOT_DIR/config/certs/registry.crt")
-      ENV_VARS+=("MQTT_TLS_KEY=$ROOT_DIR/config/certs/registry.key")
-      ENV_VARS+=("MQTT_TLS_REJECT_UNAUTHORIZED=true")
-      ;;
+    # registry-service removed
   esac
   local cmd
   if has_npm_script "$dir" dev; then
@@ -137,7 +131,7 @@ ensure_deps() {
 ensure_deps "$ROOT_DIR/core-service"
 ensure_deps "$ROOT_DIR/provisioning-service"
 ensure_deps "$ROOT_DIR/twin-service"
-ensure_deps "$ROOT_DIR/registry-service"
+# registry-service removed
 
 if [[ "${DEV_MOSQUITTO:-0}" = "1" ]]; then
   start_mosquitto
@@ -180,7 +174,7 @@ fi
 start_service core-service core-service
 start_service provisioning-service provisioning-service
 start_service twin-service twin-service
-start_service registry-service registry-service
+# registry-service removed
 
 log "all dev processes started (PIDs: ${PIDS[*]-}). Core-service listening on http://localhost:8080. Press Ctrl-C to stop."
 

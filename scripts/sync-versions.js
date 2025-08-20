@@ -12,7 +12,6 @@ const targetVersion = rootPackage.version;
 const packagePaths = [
   'core-service/package.json',
   'provisioning-service/package.json',
-  'registry-service/package.json',
   'twin-service/package.json',
   'ui/package.json',
   'examples/nodered/package.json',

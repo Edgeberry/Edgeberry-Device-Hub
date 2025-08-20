@@ -2,7 +2,6 @@ import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
-import { upsertDevice } from './db.js';
 import { dbusCheckUUID, dbusMarkUsed, dbusIssueFromCSR } from './dbus.js';
 import type { Json } from './types.js';
 
@@ -23,7 +22,7 @@ function parseDeviceId(topic: string, suffix: string): string | null {
   return parts[2];
 }
 
-export function startMqtt(db: any): MqttClient {
+export function startMqtt(): MqttClient {
   const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
   const cert = MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined;
   const key = MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined;
@@ -98,7 +97,6 @@ export function startMqtt(db: any): MqttClient {
         .then(async (res) => {
           if (!res.ok || !res.certPem || !res.caChainPem) throw new Error(res.error || 'issue_failed');
           const { certPem, caChainPem } = res;
-          upsertDevice(db, deviceId, name, token, meta);
           if (ENFORCE_WHITELIST && uuid) {
             try { await dbusMarkUsed(uuid); } catch {}
           }

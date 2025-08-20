@@ -141,7 +141,7 @@ ensure_system_deps() {
 
 # Install Node.js production dependencies for each microservice
 install_node_deps() {
-  local services=(core-service provisioning-service twin-service registry-service)
+  local services=(core-service provisioning-service twin-service)
   local svc dir
   for svc in "${services[@]}"; do
     dir="${INSTALL_ROOT}/${svc}"
@@ -193,7 +193,6 @@ ALLOWED_NAMES=(
   core-service
   provisioning-service
   twin-service
-  registry-service
   config
   scripts
 )
@@ -310,7 +309,6 @@ install_systemd_units() {
     devicehub-core.service \
     devicehub-provisioning.service \
     devicehub-twin.service \
-    devicehub-registry.service \
     edgeberry-ca-rehash.service \
     edgeberry-ca-rehash.path; do
     if [[ -f "${ROOT_DIR}/config/${unit}" ]]; then
@@ -352,7 +350,6 @@ stop_services() {
   systemctl_safe stop devicehub-core.service || true
   systemctl_safe stop devicehub-provisioning.service || true
   systemctl_safe stop devicehub-twin.service || true
-  systemctl_safe stop devicehub-registry.service || true
 }
 
 validate_compiled_no_decorators() {
@@ -382,7 +379,6 @@ enable_services() {
   systemctl_safe enable devicehub-core.service || true
   systemctl_safe enable devicehub-provisioning.service || true
   systemctl_safe enable devicehub-twin.service || true
-  systemctl_safe enable devicehub-registry.service || true
   # Enable CA rehash path (auto-reload broker when CA dir changes)
   systemctl_safe enable edgeberry-ca-rehash.path || true
   systemctl_safe enable edgeberry-ca-rehash.service || true
@@ -397,7 +393,6 @@ start_services() {
   systemctl_safe restart devicehub-core.service || true
   systemctl_safe restart devicehub-provisioning.service || true
   systemctl_safe restart devicehub-twin.service || true
-  systemctl_safe restart devicehub-registry.service || true
   # Start path unit to monitor CA directory changes
   if ! systemctl_safe start edgeberry-ca-rehash.path; then
     log "WARN: failed to start edgeberry-ca-rehash.path; dumping recent logs"

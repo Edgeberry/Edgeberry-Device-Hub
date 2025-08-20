@@ -10,7 +10,6 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "better-sqlite3": "9.4.0",
     "dbus-next": "^0.10.2",
     "mqtt": "^5.5.0"
   },

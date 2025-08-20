@@ -26,7 +26,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CANDIDATE_UI_DIST = path.resolve(__dirname, '../../ui/build');
 export const UI_DIST: string = process.env.UI_DIST || (fs.existsSync(CANDIDATE_UI_DIST) ? CANDIDATE_UI_DIST : '/opt/Edgeberry/devicehub/ui/build');
-export const MQTT_URL: string = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
 // SQLite DBs owned by worker services (MVP direct-read from core-service)
 // Persist provisioning DB under system data dir by default so whitelist survives reinstalls
 export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || (
@@ -34,7 +33,11 @@ export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || (
     ? '/var/lib/edgeberry/devicehub/provisioning.db'
     : path.resolve(process.cwd(), 'data', 'provisioning.db')
 );
-export const REGISTRY_DB: string = process.env.REGISTRY_DB || path.resolve(process.cwd(), '..', 'registry-service', 'registry.db');
+export const REGISTRY_DB: string = process.env.REGISTRY_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/registry.db'
+    : path.resolve(process.cwd(), 'data', 'registry.db')
+);
 // Consider a device online if we've seen an event within this window (seconds)
 export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);
 
@@ -42,8 +45,15 @@ export const DEFAULT_LOG_UNITS: string[] = [
   'devicehub-core.service',
   'devicehub-provisioning.service',
   'devicehub-twin.service',
-  'devicehub-registry.service',
   // Infra dependencies
   'dbus.service',
   'mosquitto.service',
 ];
+
+// Provisioning HTTP cert API (migrated to core-service)
+// Allow overriding provisioning cert/key paths via env for compatibility
+export const PROVISIONING_CERT_PATH: string = process.env.PROVISIONING_CERT_PATH || path.join(CERTS_DIR, 'provisioning.crt');
+export const PROVISIONING_KEY_PATH: string = process.env.PROVISIONING_KEY_PATH || path.join(CERTS_DIR, 'provisioning.key');
+// Explicit flag to allow serving provisioning cert/key over HTTP (development-only)
+export const PROVISIONING_HTTP_ENABLE_CERT_API: boolean = (process.env.PROVISIONING_HTTP_ENABLE_CERT_API || '').toLowerCase() === 'true';
+

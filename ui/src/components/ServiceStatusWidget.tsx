@@ -35,7 +35,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
       setLoading(true);
       const res: ServicesResponse = await getServices();
       if ((res as any).message) throw new Error((res as any).message);
-      const list = (res as any).services || [];
+      const list = ((res as any).services || []).filter((s: ServiceItem)=> !String(s?.unit||'').toLowerCase().includes('registry'));
       setServices(list);
     } catch (e: any) {
       setError(e?.message || 'Failed to load services');
@@ -51,7 +51,10 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
     const onServices = (data: any) => {
       if(!mounted) return;
       try{
-        const list = Array.isArray(data?.services) ? data.services : [];
+        const raw = (Array.isArray(data?.services) ? data.services : []);
+        // Debug incoming services
+        try{ console.debug('[ServiceStatusWidget] services payload units:', raw.map((x:any)=>x?.unit)); }catch{}
+        const list = raw.filter((s: ServiceItem)=> !String(s?.unit||'').toLowerCase().includes('registry'));
         setServices(list);
         setLoading(false);
         setError('');

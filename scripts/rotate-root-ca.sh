@@ -62,7 +62,7 @@ if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
   log "reloading mosquitto"
   systemctl reload mosquitto || systemctl restart mosquitto || true
   log "restarting services"
-  systemctl restart devicehub-core.service devicehub-provisioning.service devicehub-twin.service devicehub-registry.service || true
+  systemctl restart devicehub-core.service devicehub-provisioning.service devicehub-twin.service || true
 else
   service mosquitto reload || service mosquitto restart || true
 fi

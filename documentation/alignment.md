@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-20 10:47 CEST
+**Last updated:** 2025-08-20 14:39 CEST
 
 ## Alignment Maintenance
 
@@ -53,8 +53,9 @@ Minimal steps to run broker + services with mTLS locally:
 - Dev/prod configs enforce mTLS and set `use_subject_as_username true` (CN → username for ACLs).
 
 3) Service client certs
-- Create client certs with CNs matching service usernames: `provisioning`, `registry`, `twin`.
+- Create client certs with CNs matching service usernames: `provisioning`, `twin`.
 - CN mapping is required for ACLs (see `config/mosquitto.acl`).
+  - Note: If a client certificate has an unknown/empty CN, services will log a warning indicating the expected CN (e.g., `provisioning`).
 
 4) Environment for services (example)
 ```
@@ -66,7 +67,6 @@ export MQTT_TLS_REJECT_UNAUTHORIZED=true
 ```
 - Run per service (adjust CERT/KEY per service):
   - `npm --prefix provisioning-service run dev`
-  - `npm --prefix registry-service run dev`
   - `npm --prefix twin-service run dev`
 
 5) Virtual device example
@@ -133,11 +133,10 @@ Installer & artifact notes (remote installs):
     - Helper scripts:
       - `scripts/update-broker-ca.sh` — installs an additional CA PEM into `edgeberry-ca.d`, rehashes, and reloads the broker.
       - `scripts/rotate-root-ca.sh` — replaces all prior trust with a new Root CA (and optionally rotates broker server cert/key), restarts services.
-- Data persistence (provisioning DB):
-  - Persistent data directory: `/var/lib/edgeberry/devicehub/` (created with 0750 perms).
-  - Default provisioning DB path: `/var/lib/edgeberry/devicehub/provisioning.db` (configurable via `PROVISIONING_DB`).
-  - The installer NEVER seeds whitelist entries. It will not create the DB file; the service initializes schema on first run if absent.
-  - Re-install/update behavior: existing `provisioning.db` is preserved. If a legacy DB is found under the install tree, the installer migrates it to the persistent path once.
+- Provisioning data model:
+  - Provisioning-service does not maintain a local database.
+  - Whitelist management and certificate issuance are owned by Core via D-Bus (`WhitelistService`, `CertificateService`).
+  - The provisioning workflow is MQTT-driven only; authorization is enforced by calling Core.
 
 Operational tips:
 - For remote production nodes, run the sanity check from the UI Services widget. If it fails:
@@ -298,7 +297,7 @@ Anonymous access (Observer mode):
 
 #### Service Runtime
 - **Process model:** Each microservice runs independently as a `systemd` service (units per component)
-- **Internal communication:** D-Bus (method calls + signals). No internal HTTP between microservices
+- **Internal communication:** D-Bus (method calls + signals). No internal HTTP between microservices. The Core service holds the primary D-Bus name and proxies worker capabilities as needed to keep a single public surface.
 - **Device communication:** Remains via MQTT; D-Bus is only for server-internal coordination
 
 #### Configuration Management
@@ -370,7 +369,7 @@ Anonymous access (Observer mode):
   - D-Bus service/policy files
   - Mosquitto broker configs (dev/prod variants)
   - **MVP structure:** Flat directory (no subfolders)
-  - **Example unit files:** `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`
+  - **Example unit files:** `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`
 
 New/updated configs related to D-Bus WhitelistService & CertificateService (Core):
 - `config/dbus-io.edgeberry.devicehub.Core.service` — D-Bus service activation file for Core bus name `io.edgeberry.devicehub.Core`
@@ -389,10 +388,10 @@ Responsibilities and boundaries:
 
 Interfaces (high level):
 
-- UI → Core Service: REST endpoints like `/devices`, `/devices/:id/events`, `/config/public`, `/status`, plus operational endpoints `/api/services`, `/api/logs`, and service control under `/api/services/:unit/{start|stop|restart}`.
+- UI → Core Service: REST endpoints like `/devices`, `/devices/:id/events`, `/config/public`, `/status`, plus operational endpoints `/api/services`, `/api/logs`, and service control under `/api/services/:unit/{start|stop|restart}`. For device twins, Core exposes `GET /api/devices/:id/twin` which proxies to Twin over D-Bus.
 - Core Service ↔ DB: SQLite via a thin data access layer in `shared/` (e.g., `shared/db` with query builders and schema migrations).
 - Core Service ↔ Workers over D-Bus: `core-service` invokes worker methods and subscribes to worker signals using well-defined D-Bus interfaces.
-- Services (provisioning-service, twin-service, registry-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
+- Services (provisioning-service, twin-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
 
 Local development:
 
@@ -448,36 +447,38 @@ Common namespace: `io.edgeberry.devicehub.*`
 
 #### Device Twin Service
 
-- Object path: `/io/edgeberry/devicehub/TwinService`
-- Interface: `io.edgeberry.devicehub.TwinService`
-- Methods:
-  - `GetDesired(s deviceId) → (u version, s docJson)`
-  - `GetReported(s deviceId) → (u version, s docJson)`
-  - `UpdateDesired(s deviceId, u baseVersion, s patchJson) → (u newVersion)`
-  - `ForceDelta(s deviceId) → ()`
-- Signals:
-  - `DesiredUpdated(s deviceId, u version)`
-  - `ReportedUpdated(s deviceId, u version)`
+- Core public proxy (primary surface)
+  - Object path: `/io/edgeberry/devicehub/TwinService`
+  - Interface: `io.edgeberry.devicehub.TwinService`
+  - Methods:
+    - `GetTwin(s deviceId) → (s desiredJson, u desiredVersion, s reportedJson, s error)`
+    - `SetDesired(s deviceId, s desiredJson) → (b ok, u newVersion, s error)`
+    - `SetReported(s deviceId, s reportedJson) → (b ok, u newVersion, s error)`
+    - `ListDevices() → (as deviceIds)`
 
-#### Device Registry Service
+- Twin worker (internal)
+  - Bus name: `io.edgeberry.devicehub.Twin`
+  - Object path: `/io/edgeberry/devicehub/Twin`
+  - Interface: `io.edgeberry.devicehub.Twin1`
+  - Methods:
+    - `GetTwin(s deviceId) → (s desiredJson, u desiredVersion, s reportedJson, s error)`
+    - `SetDesired(s deviceId, s desiredJson) → (u newVersion)`
+    - `SetReported(s deviceId, s reportedJson) → (u newVersion)`
+    - `ListDevices() → (as deviceIds)`
 
-- Object path: `/io/edgeberry/devicehub/DeviceRegistryService`
-- Interface: `io.edgeberry.devicehub.DeviceRegistryService`
-- Methods:
-  - `GetDevice(s deviceId) → (s deviceJson)`
-  - `ListDevices(s filterJson) → (s devicesJson)`
-  - `UpdateStatus(s deviceId, s status) → (b ok, s error)`
-  - `GetCertificateMeta(s deviceId) → (s subject, s fingerprint, s expiresAt)`
-  - `BindManufacturerUUIDHash(s deviceId, s uuidHash) → (b ok, s error)`
-- Signals:
-  - `DeviceUpdated(s deviceId)`
-  - `DeviceAdded(s deviceId)`
-  - `DeviceRemoved(s deviceId)`
+#### Device Registry (owned by Core)
+
+- Core owns the device registry/inventory data and exposes any required HTTP endpoints under `/api`.
+- Twin-related device views are proxied via Twin over D-Bus as documented above. No standalone registry microservice exists.
 
 CI and releases:
 
 - Lint, typecheck, test per project. Alignment checks run at repo root and fail if sections here drift from code.
-- Versioning per project package; releases tagged at the repo root with affected packages noted in changelog.
+- Centralized version management:
+  - `versions.json` holds the unified project version and pinned dependency versions.
+  - `scripts/sync-versions.js` updates all `package.json` files across the monorepo.
+  - Root script: `npm run sync-versions`.
+  - Applies to: root, `core-service`, `provisioning-service`, `registry-service` (if present), `twin-service`, `ui`, `examples/nodered`, `examples/virtual-device`.
 - Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
 
@@ -578,8 +579,8 @@ The Web UI is a single-page app served by `core-service` and uses React + TypeSc
 
 - Required:
   - `GET /api/health` — returns `{ healthy: boolean, ... }`
-  - `GET /api/services` — returns array or object of systemd unit statuses (includes `devicehub-registry.service`)
-  - Default monitored units include Device Hub services and key dependencies: `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `devicehub-registry.service`, `dbus.service`, `mosquitto.service`.
+  - `GET /api/services` — returns array or object of systemd unit statuses
+  - Default monitored units include Device Hub services and key dependencies: `devicehub-core.service`, `devicehub-provisioning.service`, `devicehub-twin.service`, `dbus.service`, `mosquitto.service`.
   - `GET /api/logs` — recent logs snapshot. Accepts `units` (comma-separated) or `unit` (single) and `lines`. For live updates, the server provides `GET /api/logs/stream` (SSE).
 - Optional (UI handles absence gracefully; fields display as "-"):
   - `GET /api/status`
@@ -874,22 +875,6 @@ Non-goals (MVP):
 - Certificate issuance/validation (covered by bootstrap model above).
 - Complex templates or workflows.
 
-## Registry Service (MVP)
-
-The `registry-service` ingests runtime device events for operational visibility.
-
-Responsibilities:
-
-- Subscribe to `devices/#` to capture all device-published topics.
-- Persist events into SQLite `device_events` with fields: `device_id`, `topic`, `payload` (BLOB), `ts`.
-
-Storage (MVP):
-
-- SQLite table `device_events`.
-
-Non-goals (MVP):
-
-- Semantic parsing of payloads or aggregations (can be added later).
 
 ## Device Registry
 
