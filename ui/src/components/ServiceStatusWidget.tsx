@@ -30,6 +30,87 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
   const [diagData, setDiagData] = useState<any>(null);
   const logsRef = useRef<HTMLDivElement|null>(null);
 
+  // Shared helpers: 24h timestamp formatting (YYYY-MM-DD HH:mm:ss)
+  function pad2(n: number){ return n < 10 ? `0${n}` : String(n); }
+  function formatDate24(d: Date): string {
+    const y = d.getFullYear();
+    const m = pad2(d.getMonth()+1);
+    const da = pad2(d.getDate());
+    const h = pad2(d.getHours());
+    const mi = pad2(d.getMinutes());
+    const s = pad2(d.getSeconds());
+    return `${y}-${m}-${da} ${h}:${mi}:${s}`;
+  }
+
+  // Re-format a line that already contains a leading timestamp to 24h (YYYY-MM-DD HH:mm:ss)
+  function formatLeadingTimestampLine(line: string): string {
+    try{
+      const s = String(line);
+      // ISO-like at start
+      const iso = s.match(/^\s*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)(.*)$/);
+      if(iso){
+        const d = new Date(iso[1]);
+        if(!isNaN(d.getTime())) return `${formatDate24(d)}${iso[2]}`;
+      }
+      // Epoch at start (seconds/ms/us/ns)
+      const epoch = s.match(/^\s*(\d{10,19})(.*)$/);
+      if(epoch){
+        const num = Number(epoch[1]);
+        if(Number.isFinite(num)){
+          // Unit detection ranges:
+          //  - <1e11: seconds
+          //  - <1e14: milliseconds
+          //  - <1e17: microseconds
+          //  - else:  nanoseconds
+          let ms: number;
+          if(num < 1e11) ms = num * 1000;            // seconds -> ms
+          else if(num < 1e14) ms = num;              // milliseconds
+          else if(num < 1e17) ms = Math.floor(num / 1e3); // microseconds -> ms
+          else ms = Math.floor(num / 1e6);           // nanoseconds -> ms
+          const d = new Date(ms);
+          if(!isNaN(d.getTime())) return `${formatDate24(d)}${epoch[2]}`;
+        }
+      }
+      // syslog-style: "Aug 20 14:59:36 ..." (no year)
+      const m = s.match(/^\s*([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})(.*)$/);
+      if(m){
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const mi = monthNames.indexOf(m[1]);
+        if(mi >= 0){
+          const now = new Date();
+          const year = now.getFullYear();
+          const day = Number(m[2]);
+          const h = Number(m[3]);
+          const min = Number(m[4]);
+          const sec = Number(m[5]);
+          const d = new Date(year, mi, day, h, min, sec);
+          if(!isNaN(d.getTime())) return `${formatDate24(d)}${m[6]}`;
+        }
+      }
+      return s;
+    }catch{ return String(line ?? ''); }
+  }
+  function formatTimestamp(raw: any): string {
+    try{
+      if(!raw && raw !== 0) return '';
+      const num = Number(raw);
+      if(Number.isFinite(num) && num > 0){
+        // Unit detection ranges consistent with formatLeadingTimestampLine
+        let ms: number;
+        if(num < 1e11) ms = num * 1000;            // seconds -> ms
+        else if(num < 1e14) ms = num;              // milliseconds
+        else if(num < 1e17) ms = Math.floor(num / 1e3); // microseconds -> ms
+        else ms = Math.floor(num / 1e6);           // nanoseconds -> ms
+        const d = new Date(ms);
+        if(!isNaN(d.getTime())) return formatDate24(d);
+      }
+      const d = new Date(String(raw));
+      if(!isNaN(d.getTime())) return formatDate24(d);
+      // Fallback: return as-is
+      return String(raw);
+    }catch{ return String(raw ?? ''); }
+  }
+
   async function load() {
     try {
       setLoading(true);
@@ -81,7 +162,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
 
         function fmtEntry(e: any): string {
           try{
-            const ts = e.SYSLOG_TIMESTAMP || e.__REALTIME_TIMESTAMP || e._SOURCE_REALTIME_TIMESTAMP || '';
+            const ts = formatTimestamp(e.SYSLOG_TIMESTAMP || e.__REALTIME_TIMESTAMP || e._SOURCE_REALTIME_TIMESTAMP || '');
             const ident = e.SYSLOG_IDENTIFIER || e._COMM || e._SYSTEMD_UNIT || '';
             const pid = e._PID ? `[${e._PID}]` : '';
             const msg = e.MESSAGE ?? JSON.stringify(e);
@@ -127,18 +208,25 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
               const arr = [...parsed.entries].reverse();
               txt = arr.map(fmtEntry).join('\n');
             } else {
-              txt = res;
+              // Treat plain string logs as newest-first; normalize to oldest-first
+              const lines = String(res).split(/\r?\n/).map(formatLeadingTimestampLine);
+              lines.reverse();
+              txt = lines.join('\n');
             }
           }catch{
-            txt = res;
+            const lines = String(res).split(/\r?\n/).map(formatLeadingTimestampLine);
+            lines.reverse();
+            txt = lines.join('\n');
           }
         } else if(Array.isArray(res)){
           const arr = [...res];
-          const mapped = arr.map(x => (typeof x === 'object' && x) ? fmtEntry(x) : String(x));
+          const mapped = arr.map(x => (typeof x === 'object' && x) ? fmtEntry(x) : formatLeadingTimestampLine(String(x)));
           mapped.reverse();
           txt = mapped.join('\n');
         } else if(res && typeof res.logs === 'string'){
-          txt = res.logs;
+          const lines = String(res.logs).split(/\r?\n/).map(formatLeadingTimestampLine);
+          lines.reverse();
+          txt = lines.join('\n');
         } else if(res && Array.isArray(res.entries)){
           const arr = [...res.entries].reverse();
           txt = arr.map(fmtEntry).join('\n');
@@ -172,14 +260,19 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
         const d = payload;
         if(!d || d.unit !== unit) return;
         const e = d.entry;
-        const ts = e?.SYSLOG_TIMESTAMP || e?.__REALTIME_TIMESTAMP || e?._SOURCE_REALTIME_TIMESTAMP || '';
+        const ts = (function(){
+          try{
+            const raw = e?.SYSLOG_TIMESTAMP || e?.__REALTIME_TIMESTAMP || e?._SOURCE_REALTIME_TIMESTAMP || '';
+            return formatTimestamp(raw);
+          }catch{ return ''; }
+        })();
         const ident = e?.SYSLOG_IDENTIFIER || e?._COMM || e?._SYSTEMD_UNIT || '';
         const pid = e?._PID ? `[${e._PID}]` : '';
         const msg = e?.MESSAGE ?? (typeof e === 'string' ? e : JSON.stringify(e));
         const line = `${ts} ${ident}${pid} ${msg}`.trim();
         setLogs(prev => {
           const next = (prev ? `${prev}\n${line}` : line);
-          // keep last 1000 lines to avoid unbounded growth
+          // keep last 1000 lines to avoid unbounded growth (oldest-first, keep last MAX)
           const arr = next.split('\n');
           const MAX = 1000;
           return arr.length > MAX ? arr.slice(arr.length - MAX).join('\n') : next;
@@ -198,7 +291,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
     return () => { mounted = false; wsUnsubscribe('logs.stream.end', onEnd); wsUnsubscribe('logs.line', onLine); wsUnsubscribe(topicStream, noop); };
   }, [selected]);
 
-  // Scroll to bottom (latest entry) whenever logs load or change
+  // Scroll to bottom (latest entry at bottom) whenever logs load or change
   useEffect(()=>{
     if(!logsRef.current) return;
     try{
@@ -365,7 +458,7 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                         {logsLoading ? (
                           <Spinner animation="border" size="sm" />
                         ) : (
-                          <pre style={{ margin: 0, whiteSpace: 'pre' }}>{logs}</pre>
+                          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{logs}</pre>
                         )}
                       </div>
                     </div>
@@ -399,11 +492,11 @@ export default function ServiceStatusWidget(props:{user:any|null}) {
                           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                             <div>
                               <div style={{ fontWeight:600, marginBottom:4 }}>STDOUT</div>
-                              <pre style={{ background:'#0b0b10', color:'#e0e6f0', borderRadius:8, padding:8, maxHeight:240, overflow:'auto' }}>{diagData.stdout || ''}</pre>
+                              <pre style={{ background:'#0b0b10', color:'#e0e6f0', borderRadius:8, padding:8, maxHeight:240, overflow:'auto', whiteSpace:'pre-wrap', overflowWrap:'anywhere', wordBreak:'break-word' }}>{diagData.stdout || ''}</pre>
                             </div>
                             <div>
                               <div style={{ fontWeight:600, marginBottom:4 }}>STDERR</div>
-                              <pre style={{ background:'#0b0b10', color:'#e0e6f0', borderRadius:8, padding:8, maxHeight:240, overflow:'auto' }}>{diagData.stderr || ''}</pre>
+                              <pre style={{ background:'#0b0b10', color:'#e0e6f0', borderRadius:8, padding:8, maxHeight:240, overflow:'auto', whiteSpace:'pre-wrap', overflowWrap:'anywhere', wordBreak:'break-word' }}>{diagData.stderr || ''}</pre>
                             </div>
                           </div>
                         </div>
