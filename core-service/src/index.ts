@@ -108,6 +108,7 @@ app.get('/api/provisioning/health', (_req: Request, res: Response) => {
 // GET /api/provisioning/certs/ca.crt -> download Root CA certificate (PEM)
 app.get('/api/provisioning/certs/ca.crt', async (_req: Request, res: Response) => {
   try {
+    console.log('[core-service] HIT /api/provisioning/certs/ca.crt');
     if (!(await caExists())) { res.status(404).end('not found'); return; }
     res.setHeader('Content-Type', 'application/x-pem-file');
     res.setHeader('Content-Disposition', 'attachment; filename="ca.crt"');
@@ -119,10 +120,10 @@ app.get('/api/provisioning/certs/ca.crt', async (_req: Request, res: Response) =
   }
 });
 
-// GET /api/provisioning/certs/provisioning.crt -> serve provisioning client cert (dev convenience)
-app.get('/api/provisioning/certs/provisioning.crt', authRequired, async (_req: Request, res: Response) => {
+// GET /api/provisioning/certs/provisioning.crt -> serve provisioning client cert (MVP: public)
+app.get('/api/provisioning/certs/provisioning.crt', async (_req: Request, res: Response) => {
   try {
-    if (!PROVISIONING_HTTP_ENABLE_CERT_API) { res.status(403).end('forbidden'); return; }
+    console.log('[core-service] HIT /api/provisioning/certs/provisioning.crt');
     if (!PROVISIONING_CERT_PATH || !fs.existsSync(PROVISIONING_CERT_PATH)) { res.status(404).end('not found'); return; }
     res.setHeader('Content-Type', 'application/x-pem-file');
     res.setHeader('Content-Disposition', 'attachment; filename="provisioning.crt"');
@@ -134,10 +135,12 @@ app.get('/api/provisioning/certs/provisioning.crt', authRequired, async (_req: R
   }
 });
 
-// GET /api/provisioning/certs/provisioning.key -> serve provisioning client key (dev convenience)
-app.get('/api/provisioning/certs/provisioning.key', authRequired, async (_req: Request, res: Response) => {
+// NOTE: Public alias without /api removed (policy: all API under /api)
+
+// GET /api/provisioning/certs/provisioning.key -> serve provisioning client key (MVP: public)
+app.get('/api/provisioning/certs/provisioning.key', async (_req: Request, res: Response) => {
   try {
-    if (!PROVISIONING_HTTP_ENABLE_CERT_API) { res.status(403).end('forbidden'); return; }
+    console.log('[core-service] HIT /api/provisioning/certs/provisioning.key');
     if (!PROVISIONING_KEY_PATH || !fs.existsSync(PROVISIONING_KEY_PATH)) { res.status(404).end('not found'); return; }
     res.setHeader('Content-Type', 'application/x-pem-file');
     res.setHeader('Content-Disposition', 'attachment; filename="provisioning.key"');
@@ -148,6 +151,8 @@ app.get('/api/provisioning/certs/provisioning.key', authRequired, async (_req: R
     res.status(500).end('server error');
   }
 });
+
+// NOTE: Public alias without /api removed (policy: all API under /api)
 // Serve static UI (built by Vite into UI_DIST). Place this before defining the
 // catch-all so that /api/* routes remain handled by API handlers above.
 try {
@@ -178,9 +183,9 @@ try {
         }
       }
     } as any));
-    // SPA fallback: send index.html for non-API GETs
+    // SPA fallback: send index.html for non-API and non-provisioning GETs
     app.get('*', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/api/')) return next();
+      if (req.path.startsWith('/api/') || req.path.startsWith('/provisioning/')) return next();
       const indexPath = path.join(UI_DIST, 'index.html');
       if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
       return res.status(404).send('UI not found');

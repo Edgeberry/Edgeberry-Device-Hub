@@ -58,6 +58,16 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
   ) {
     return next();
   }
+  // Explicitly allow provisioning bootstrap endpoints to be public (device bootstrap)
+  // These must be accessible without authentication for virtual devices to fetch bootstrap certs.
+  if (
+    req.path === '/api/provisioning/health' ||
+    req.path === '/api/provisioning/certs/ca.crt' ||
+    req.path === '/api/provisioning/certs/provisioning.crt' ||
+    req.path === '/api/provisioning/certs/provisioning.key'
+  ) {
+    return next();
+  }
   // Allow anonymous read-only access to the devices list. The handler will strip UUIDs when unauthenticated.
   if (req.method === 'GET' && req.path === '/api/devices') {
     return next();

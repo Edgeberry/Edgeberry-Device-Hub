@@ -2,7 +2,7 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-20 23:59 CEST
+**Last updated:** 2025-08-21 16:13 CEST
 
 ## Alignment Maintenance
 
@@ -15,6 +15,12 @@ This file defines the foundational philosophy, design intent, and system archite
   - System boundaries
 - **Required sections to keep accurate:** All
 - **Prefer clarity over completeness:** Link to detailed docs when necessary, but ensure intent and scope live here
+
+## Repository Type
+
+- The project is a monorepo containing multiple packages/services under a single root.
+- Commands and scripts at the root orchestrate builds, dev, and deploy across subprojects (e.g., `core-service/`, `provisioning-service/`, `twin-service/`, `ui/`, `examples/`).
+- CI and local workflows should assume per-package `package.json` plus coordinating root scripts.
 
 ## Purpose
 
@@ -117,10 +123,28 @@ export MQTT_URL=mqtt://127.0.0.1:1883
 unset MQTT_TLS_CA MQTT_TLS_CERT MQTT_TLS_KEY MQTT_TLS_REJECT_UNAUTHORIZED
 ```
 
-Notes:
-- Only same-host processes can reach `127.0.0.1:1883`; devices and remote clients must use mTLS on `8883`.
-- With `mqtt://` the Node.js client ignores TLS options even if set, but prefer unsetting to keep logs clean.
-- External clients/devices remain protected by mTLS and ACLs on port 8883.
+ Notes:
+ - Only same-host processes can reach `127.0.0.1:1883`; devices and remote clients must use mTLS on `8883`.
+ - With `mqtt://` the Node.js client ignores TLS options even if set, but prefer unsetting to keep logs clean.
+ - External clients/devices remain protected by mTLS and ACLs on port 8883.
+
+##### Provisioning Cert API (MVP)
+
+- For developer experience during MVP, the provisioning certificate HTTP endpoints served by `core-service` are always enabled and do not require authentication.
+- Endpoints (public):
+  - `GET /api/provisioning/certs/ca.crt` — Root CA PEM
+  - `GET /api/provisioning/certs/provisioning.crt` — Provisioning client certificate PEM
+  - `GET /api/provisioning/certs/provisioning.key` — Provisioning client key PEM
+- Notes:
+  - This trades off security for ease of testing on private/dev networks. Post-MVP we will reintroduce authentication/authorization and/or time-bound tokens.
+  - Other sensitive HTTP APIs remain behind admin authentication.
+
+#### Security Posture (MVP, same-host services)
+
+- Minimum security for inter-service messaging on the same host via loopback `127.0.0.1:1883`.
+- ACLs: the local anonymous listener uses `config/mosquitto-local-unrestricted.acl` to allow full read/write on `$devicehub/#` for same-host services only.
+- External connections must use mTLS on `8883` with ACLs enforced by `config/mosquitto.acl` (CN mapped to username).
+- This is a deliberate MVP trade-off to optimize developer experience; we will tighten local authentication/authorization post-MVP (e.g., per-service credentials or local-only auth).
 
 #### Diagnostics: MQTT Sanity Test (mTLS)
 

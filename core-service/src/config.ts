@@ -54,6 +54,6 @@ export const DEFAULT_LOG_UNITS: string[] = [
 // Allow overriding provisioning cert/key paths via env for compatibility
 export const PROVISIONING_CERT_PATH: string = process.env.PROVISIONING_CERT_PATH || path.join(CERTS_DIR, 'provisioning.crt');
 export const PROVISIONING_KEY_PATH: string = process.env.PROVISIONING_KEY_PATH || path.join(CERTS_DIR, 'provisioning.key');
-// Explicit flag to allow serving provisioning cert/key over HTTP (development-only)
-export const PROVISIONING_HTTP_ENABLE_CERT_API: boolean = (process.env.PROVISIONING_HTTP_ENABLE_CERT_API || '').toLowerCase() === 'true';
+// MVP: Always enable serving provisioning cert/key over HTTP
+export const PROVISIONING_HTTP_ENABLE_CERT_API: boolean = true;
 

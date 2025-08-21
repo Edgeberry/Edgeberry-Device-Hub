@@ -24,6 +24,10 @@ const DEVICE_ID = process.env.DEVICE_ID || `vd-${Math.random().toString(36).slic
 const TELEMETRY_PERIOD_MS = Number(process.env.TELEMETRY_PERIOD_MS || 3000);
 const PROV_UUID = process.env.PROV_UUID || process.env.UUID;
 const PROV_API_BASE = process.env.PROV_API_BASE || '';
+// Optional headers/cookie to access authenticated endpoints (e.g., provisioning cert/key)
+// PROV_API_HEADERS may contain a JSON object string of headers, PROV_API_COOKIE sets Cookie header directly
+const PROV_API_HEADERS = process.env.PROV_API_HEADERS || '';
+const PROV_API_COOKIE = process.env.PROV_API_COOKIE || '';
 const ALLOW_SELF_SIGNED: boolean = ((process.env.ALLOW_SELF_SIGNED ?? (PROV_API_BASE ? 'true' : 'false')) as string).toLowerCase() === 'true';
 
 // Optional override paths where we store generated device cert/key
@@ -54,11 +58,12 @@ function writeIfPath(content: string, outPath?: string): string | undefined {
   return outPath;
 }
 
-async function httpGetBuffer(urlStr: string): Promise<Buffer> {
+async function httpGetBuffer(urlStr: string, headers?: Record<string, string>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const u = new NodeUrl(urlStr);
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, (res) => {
+    const options: any = { headers: headers || {} };
+    const req = lib.get(u, options, (res) => {
       if ((res.statusCode || 0) >= 400) { reject(new Error(`HTTP ${res.statusCode} for ${urlStr}`)); return; }
       const chunks: Buffer[] = [];
       res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
@@ -68,13 +73,56 @@ async function httpGetBuffer(urlStr: string): Promise<Buffer> {
   });
 }
 
+async function fetchText(url: string, opts?: RequestInit): Promise<string> {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+  return await r.text();
+}
+
+// Fetch a provisioning file with fallback: try /api path first, on 401 retry alias without /api
+async function fetchProvisioningFile(base: string, filename: 'ca.crt' | 'provisioning.crt' | 'provisioning.key'): Promise<string> {
+  const primary = `${base.replace(/\/$/, '')}/api/provisioning/certs/${filename}`;
+  const fallback = `${base.replace(/\/$/, '')}/provisioning/certs/${filename}`;
+  try {
+    const r = await fetch(primary, { credentials: 'include' as RequestCredentials });
+    if (r.ok) return await r.text();
+    if (r.status === 401) {
+      const r2 = await fetch(fallback);
+      if (r2.ok) return await r2.text();
+      throw new Error(`HTTP ${r2.status} for ${fallback}`);
+    }
+    throw new Error(`HTTP ${r.status} for ${primary}`);
+  } catch (e) {
+    // last resort try fallback if network error occurred on primary
+    try {
+      const r2 = await fetch(fallback);
+      if (r2.ok) return await r2.text();
+      throw new Error(`HTTP ${r2.status} for ${fallback}`);
+    } catch (e2) {
+      throw e2;
+    }
+  }
+}
+
 async function loadBootstrapTls(): Promise<{ ca?: Buffer; cert?: Buffer; key?: Buffer }> {
   if (!PROV_API_BASE) return {};
   const base = PROV_API_BASE.replace(/\/$/, '');
-  const ca = await httpGetBuffer(`${base}/certs/ca.crt`).catch(() => undefined);
-  const cert = await httpGetBuffer(`${base}/certs/provisioning.crt`).catch(() => undefined);
-  const key = await httpGetBuffer(`${base}/certs/provisioning.key`).catch(() => undefined);
-  return { ca, cert, key };
+  // Build headers from env
+  let hdrs: Record<string, string> = {};
+  if (PROV_API_HEADERS) {
+    try { hdrs = { ...hdrs, ...JSON.parse(PROV_API_HEADERS) }; } catch {}
+  }
+  if (PROV_API_COOKIE) hdrs['Cookie'] = PROV_API_COOKIE;
+  // 1) Fetch bootstrap provisioning certs (CA + provisioning client cert/key) with fallback aliases
+  const caTxt = await fetchProvisioningFile(PROV_API_BASE, 'ca.crt');
+  const certTxt = await fetchProvisioningFile(PROV_API_BASE, 'provisioning.crt');
+  const keyTxt = await fetchProvisioningFile(PROV_API_BASE, 'provisioning.key');
+  // Basic validation to avoid HTML fallback or proxy pages
+  const isPem = (s: string) => /-----BEGIN [A-Z ]+-----/.test(s);
+  if (!isPem(caTxt)) throw new Error('Invalid CA file received (not PEM)');
+  if (!isPem(certTxt)) throw new Error('Invalid provisioning.crt received (not PEM)');
+  if (!isPem(keyTxt)) throw new Error('Invalid provisioning.key received (not PEM)');
+  return { ca: Buffer.from(caTxt), cert: Buffer.from(certTxt), key: Buffer.from(keyTxt) };
 }
 
 async function start() {
