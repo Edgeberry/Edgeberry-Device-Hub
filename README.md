@@ -41,9 +41,9 @@ See `documentation/alignment.md` for architecture and interface details, includi
 | `$devicehub/certificates/create-from-csr` | Inbound | Create a new certificate from a CSR |
 | `$devicehub/certificates/create-from-csr/accepted` | Outbound | Certificate created successfully |
 | `$devicehub/certificates/create-from-csr/rejected` | Outbound | Certificate creation failed |
-| `$devicehub/devices/{deviceId}/provision/request` | Inbound | Request a new device to be provisioned |
-| `$devicehub/devices/{deviceId}/provision/accepted` | Outbound | Device has been provisioned |
-| `$devicehub/devices/{deviceId}/provision/rejected` | Outbound | Device provisioning rejected |
+| `$devicehub/devices/{uuid}/provision/request` | Inbound | Request a new device to be provisioned (uuid = whitelist/claim UUID) |
+| `$devicehub/devices/{uuid}/provision/accepted` | Outbound | Device has been provisioned |
+| `$devicehub/devices/{uuid}/provision/rejected` | Outbound | Device provisioning rejected |
 | `$devicehub/devices/{deviceId}/twin/get` | Inbound | Request device twin state (handled by twin-service) |
 | `$devicehub/devices/{deviceId}/twin/update` | Inbound | Update device twin state (handled by twin-service) |
 | `$devicehub/devices/{deviceId}/twin/update/accepted` | Outbound | Twin update accepted |

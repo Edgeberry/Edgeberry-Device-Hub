@@ -7,12 +7,12 @@ import type { Json } from './types.js';
 // Topic helpers and constants
 const TOPICS = {
   provisionRequest: '$devicehub/devices/+/provision/request',
-  accepted: (deviceId: string) => `$devicehub/devices/${deviceId}/provision/accepted`,
-  rejected: (deviceId: string) => `$devicehub/devices/${deviceId}/provision/rejected`,
+  accepted: (uuid: string) => `$devicehub/devices/${uuid}/provision/accepted`,
+  rejected: (uuid: string) => `$devicehub/devices/${uuid}/provision/rejected`,
 };
 
-function parseTopicDeviceId(topic: string, suffix: string): string | null {
-  // $devicehub/devices/{deviceId}/provision/{suffix}
+function parseTopicUuid(topic: string, suffix: string): string | null {
+  // $devicehub/devices/{uuid}/provision/{suffix}
   const parts = topic.split('/');
   if (parts.length < 5) return null;
   if (parts[0] !== '$devicehub' || parts[1] !== 'devices') return null;
@@ -91,12 +91,12 @@ export function startMqtt(): MqttClient {
 
   client.on('message', async (topic: string, payload: Buffer) => {
     if (!(topic.startsWith('$devicehub/devices/') && topic.endsWith('/provision/request'))) return;
-    const deviceId = parseTopicDeviceId(topic, '/provision/request');
-    if (!deviceId) return;
+    const uuidFromTopic = parseTopicUuid(topic, '/provision/request');
+    if (!uuidFromTopic) return;
     try {
-      console.log(`[${SERVICE}] provision request received for deviceId=${deviceId}`);
+      console.log(`[${SERVICE}] provision request received for uuid=${uuidFromTopic}`);
       const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
-      const uuid = typeof (body as any).uuid === 'string' ? String((body as any).uuid) : undefined;
+      const uuid = typeof (body as any).uuid === 'string' ? String((body as any).uuid) : uuidFromTopic;
       const csrPem = typeof (body as any).csrPem === 'string' ? String((body as any).csrPem) : undefined;
       if (ENFORCE_WHITELIST) {
         if (!uuid) throw new Error('missing_uuid');
@@ -120,25 +120,26 @@ export function startMqtt(): MqttClient {
       if (!csrPem) {
         throw new Error('missing_csrPem');
       }
-      dbusIssueFromCSR(deviceId, csrPem, CERT_DAYS)
+      // Use uuid as deviceId for certificate issuance (device identity equals UUID)
+      dbusIssueFromCSR(uuid, csrPem, CERT_DAYS)
         .then(async (res) => {
           if (!res.ok || !res.certPem || !res.caChainPem) throw new Error(res.error || 'issue_failed');
           const { certPem, caChainPem } = res;
           if (ENFORCE_WHITELIST && uuid) {
             try { await dbusMarkUsed(uuid); } catch {}
           }
-          const respTopic = TOPICS.accepted(deviceId);
-          console.log(`[${SERVICE}] provision accepted for ${deviceId}; publishing ${respTopic}`);
-          client.publish(respTopic, JSON.stringify({ deviceId, certPem, caChainPem }), { qos: 1 });
+          const respTopic = TOPICS.accepted(uuid);
+          console.log(`[${SERVICE}] provision accepted for uuid=${uuid}; publishing ${respTopic}`);
+          client.publish(respTopic, JSON.stringify({ deviceId: uuid, certPem, caChainPem }), { qos: 1 });
         })
         .catch((err) => {
-          const rej = TOPICS.rejected(deviceId);
-          console.error(`[${SERVICE}] provision issue_failed for ${deviceId}:`, err?.message || err);
+          const rej = TOPICS.rejected(uuidFromTopic);
+          console.error(`[${SERVICE}] provision issue_failed for uuid=${uuidFromTopic}:`, err?.message || err);
           client.publish(rej, JSON.stringify({ error: 'issue_failed', message: String(err?.message || err) }), { qos: 1 });
         });
     } catch (e) {
       console.error(`[${SERVICE}] error handling provision request`, e);
-      const rej = TOPICS.rejected(deviceId);
+      const rej = TOPICS.rejected(uuidFromTopic);
       client.publish(rej, JSON.stringify({ error: 'bad_request', message: (e as Error).message }), { qos: 1 });
     }
   });

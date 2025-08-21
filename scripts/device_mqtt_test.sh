@@ -18,6 +18,7 @@ MQTT_TLS_CERT="${MQTT_TLS_CERT:-/etc/mosquitto/certs/my-device.crt}"
 MQTT_TLS_KEY="${MQTT_TLS_KEY:-/etc/mosquitto/certs/my-device.key}"
 MQTT_TLS_REJECT_UNAUTHORIZED="${MQTT_TLS_REJECT_UNAUTHORIZED:-true}"
 DEVICE_ID="${DEVICE_ID:-}"
+PROV_UUID="${PROV_UUID:-${UUID:-}}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-10}"
 
 # If DEVICE_ID is not provided, try to read CN from the client cert
@@ -81,14 +82,17 @@ basic_connectivity() {
   rm -f /tmp/mqtt_test_echo.$$
 }
 
-# Test 2: Provisioning flow
+# Test 2: Provisioning flow (uses UUID for topics)
 # - Sub to accepted/rejected
-# - Pub request on $devicehub/devices/${DEVICE_ID}/provision/request
+# - Pub request on $devicehub/devices/${PROV_UUID}/provision/request
 provisioning_test() {
   req "Provisioning test"
-  local req_t="$devicehub/devices/${DEVICE_ID}/provision/request"
-  local acc_t="$devicehub/devices/${DEVICE_ID}/provision/accepted"
-  local rej_t="$devicehub/devices/${DEVICE_ID}/provision/rejected"
+  if [[ -z "${PROV_UUID}" ]]; then
+    fail "PROV_UUID not set; set PROV_UUID=<uuid> to run provisioning test"
+  fi
+  local req_t="$devicehub/devices/${PROV_UUID}/provision/request"
+  local acc_t="$devicehub/devices/${PROV_UUID}/provision/accepted"
+  local rej_t="$devicehub/devices/${PROV_UUID}/provision/rejected"
 
   # Start listener for accepted/rejected
   timeout "${TIMEOUT_SEC}" "${SUB[@]}" -v -t "${acc_t}" -t "${rej_t}" > /tmp/mqtt_prov_resp.$$ &
@@ -97,7 +101,7 @@ provisioning_test() {
 
   # Publish request
   local payload
-  payload=$(jq -n --arg id "${DEVICE_ID}" --arg ts "$(date -Is)" '{name:"Test Device "+$id, meta:{ts:$ts}}' 2>/dev/null || echo '{"name":"Test Device","meta":{"ts":"'"$(date -Is)"'"}}')
+  payload=$(jq -n --arg id "${PROV_UUID}" --arg ts "$(date -Is)" '{name:"Test Device "+$id, meta:{ts:$ts}}' 2>/dev/null || echo '{"name":"Test Device","meta":{"ts":"'"$(date -Is)"'"}}')
   timeout "${TIMEOUT_SEC}" "${PUB[@]}" -t "${req_t}" -m "${payload}" -q 1 || fail "publish provision request failed"
 
   # Await response

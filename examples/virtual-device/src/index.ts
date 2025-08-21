@@ -9,8 +9,8 @@ import { URL as NodeUrl } from 'url';
 
 // Simple virtual device that:
 // 1) Connects to MQTT broker
-// 2) Sends provisioning request to $devicehub/devices/{deviceId}/provision/request
-// 3) On accepted, publishes periodic telemetry to devices/{deviceId}/telemetry
+// 2) Sends provisioning request to $devicehub/devices/{uuid}/provision/request (uuid is PROV_UUID)
+// 3) On accepted, publishes periodic telemetry to devices/{deviceId}/telemetry (deviceId provided by server; defaults to uuid)
 
 const MQTT_URL = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME;
@@ -162,14 +162,23 @@ async function start() {
     rejectUnauthorized: insecureFlag ? false : MQTT_TLS_REJECT_UNAUTHORIZED,
   });
 
+  // Require UUID for provisioning topic
+  if (!PROV_UUID) {
+    console.error('[virtual-device] ERROR: PROV_UUID is required for provisioning');
+    process.exit(1);
+  }
+
   const client: MqttClient = connect(MQTT_URL, buildOpts(insecure));
 
   let provisioned = false;
   let telemetryTimer: NodeJS.Timeout | null = null;
 
-  const provReqTopic = `$devicehub/devices/${DEVICE_ID}/provision/request`;
-  const provAccTopic = `$devicehub/devices/${DEVICE_ID}/provision/accepted`;
-  const provRejTopic = `$devicehub/devices/${DEVICE_ID}/provision/rejected`;
+  // Use UUID for provisioning topics
+  const provReqTopic = `$devicehub/devices/${PROV_UUID}/provision/request`;
+  const provAccTopic = `$devicehub/devices/${PROV_UUID}/provision/accepted`;
+  const provRejTopic = `$devicehub/devices/${PROV_UUID}/provision/rejected`;
+  // Track the runtime device id (defaults to UUID until server overrides)
+  let runtimeDeviceId = String(PROV_UUID);
 
   client.on('connect', () => {
     console.log(`[virtual-device] connected → ${MQTT_URL} as ${DEVICE_ID}`);
@@ -179,7 +188,8 @@ async function start() {
       // Generate device key + CSR
       let keyPem: string; let csrPem: string;
       try {
-        ({ keyPem, csrPem } = genKeyAndCsr(DEVICE_ID));
+        // Generate CSR with CN equal to UUID so issued device cert CN matches UUID
+        ({ keyPem, csrPem } = genKeyAndCsr(String(PROV_UUID)));
       } catch (e: any) {
         console.error('[virtual-device] CSR generation failed', e?.message || e);
         return;
@@ -191,7 +201,7 @@ async function start() {
       }
       const provisionPayload: any = {
         csrPem,
-        name: `Virtual Device ${DEVICE_ID}`,
+        name: `Virtual Device ${runtimeDeviceId}`,
         token: process.env.DEVICE_TOKEN || undefined,
         meta: { model: 'simulator', firmware: '0.0.1', startedAt: new Date().toISOString() },
       };
@@ -208,8 +218,12 @@ async function start() {
       if (provisioned) return;
       if (!msg.certPem) { console.error('[virtual-device] missing certPem in accepted payload'); return; }
       provisioned = true;
+      // Update runtime device id from server response (expected to equal UUID)
+      if (msg.deviceId && typeof msg.deviceId === 'string') {
+        runtimeDeviceId = String(msg.deviceId);
+      }
       // Persist cert if requested
-      const certPath = DEVICE_CERT_OUT || path.join(tmpdir(), `${DEVICE_ID}.crt`);
+      const certPath = DEVICE_CERT_OUT || path.join(tmpdir(), `${runtimeDeviceId}.crt`);
       writeFileSync(certPath, msg.certPem);
       if (msg.caChainPem && MQTT_TLS_CA && !existsSync(MQTT_TLS_CA)) {
         // If a CA path was provided but file missing, optionally write it
@@ -217,7 +231,7 @@ async function start() {
       }
       // End bootstrap session and start runtime session using device cert
       try { client.end(true); } catch {}
-      startRuntime(certPath, DEVICE_KEY_OUT || undefined);
+      startRuntime(runtimeDeviceId, certPath, DEVICE_KEY_OUT || undefined);
     } else if (topic === provRejTopic) {
       console.error(`[virtual-device] <- rejected: ${payload.toString()}`);
     }
@@ -240,7 +254,7 @@ async function start() {
   process.on('SIGTERM', shutdown);
 }
 
-function startRuntime(deviceCertPath?: string, deviceKeyPath?: string) {
+function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?: string) {
   const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
   const cert = deviceCertPath ? readFileSync(deviceCertPath) : (MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined);
   const key = deviceKeyPath ? readFileSync(deviceKeyPath) : (MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined);
@@ -256,7 +270,7 @@ function startRuntime(deviceCertPath?: string, deviceKeyPath?: string) {
     rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
   };
   const client: MqttClient = connect(MQTT_URL, opts);
-  const teleTopic = `devices/${DEVICE_ID}/telemetry`;
+  const teleTopic = `devices/${deviceId}/telemetry`;
   let timer: NodeJS.Timeout | null = null;
 
   client.on('connect', () => {
