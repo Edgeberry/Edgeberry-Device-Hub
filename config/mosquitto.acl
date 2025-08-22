@@ -29,12 +29,8 @@ pattern write $devicehub/devices/%c/provision/request
 pattern read  $devicehub/devices/%c/provision/accepted
 pattern read  $devicehub/devices/%c/provision/rejected
 
-# Provisioning (open within authenticated realm): do not restrict by CN or clientId
-# The server performs authorization using the whitelist UUID, so the broker
-# can allow any authenticated client to use provisioning topics.
-topic write $devicehub/devices/+/provision/request
-topic read  $devicehub/devices/+/provision/accepted
-topic read  $devicehub/devices/+/provision/rejected
+# Provisioning (tight): do NOT allow open access. Rely on %c (clientId=UUID)
+# Devices must set clientId to the UUID during provisioning.
 
 # Twin flow (device twin interactions)
 # Devices write get/update; read accepted/rejected + delta
@@ -55,9 +51,11 @@ pattern read  $devicehub/devices/%u/twin/delta
 user twin
 topic readwrite #
 
-# Provisioning service: full access for backend operations
+# Provisioning certificate (shared) — limit strictly to provisioning topics only
 user provisioning
-topic readwrite #
+pattern write $devicehub/devices/%c/provision/request
+pattern read  $devicehub/devices/%c/provision/accepted
+pattern read  $devicehub/devices/%c/provision/rejected
 
 # ----------------------------------------------------------------------------
 # Keep service accounts least-privileged in production. Adjust above as needed.

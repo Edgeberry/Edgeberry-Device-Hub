@@ -3,6 +3,11 @@
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
 **Last updated:** 2025-08-21 16:13 CEST
+ ## Project Phase
+
+ - Current status: MVP in progress (2025-08-22).
+ - Scope is intentionally limited; security and features will be hardened post-MVP.
+ - References to 'MVP' in this doc indicate temporary trade-offs.
 
 ## Alignment Maintenance
 

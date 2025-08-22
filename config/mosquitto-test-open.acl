@@ -1,0 +1,5 @@
+# Open test listener ACL (clientId-scoped) for MVP validation
+# Anonymous clients are restricted to their own clientId namespace via %c
+pattern write $devicehub/devices/%c/provision/request
+pattern read  $devicehub/devices/%c/provision/accepted
+pattern read  $devicehub/devices/%c/provision/rejected

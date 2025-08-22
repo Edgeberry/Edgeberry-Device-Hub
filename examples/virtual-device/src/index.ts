@@ -20,6 +20,7 @@ const MQTT_TLS_CA = process.env.MQTT_TLS_CA || path.join(CERTS_DIR, 'ca.crt');
 const MQTT_TLS_CERT = process.env.MQTT_TLS_CERT || path.join(CERTS_DIR, 'provisioning.crt'); // Claim cert for bootstrap, or device cert for runtime
 const MQTT_TLS_KEY = process.env.MQTT_TLS_KEY || path.join(CERTS_DIR, 'provisioning.key');   // Claim key for bootstrap, or device key for runtime
 const MQTT_TLS_REJECT_UNAUTHORIZED = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
+const MQTT_NO_CLIENT_CERT = (process.env.MQTT_NO_CLIENT_CERT ?? 'false').toLowerCase() === 'true';
 const DEVICE_ID = process.env.DEVICE_ID || `vd-${Math.random().toString(36).slice(2, 8)}`;
 const TELEMETRY_PERIOD_MS = Number(process.env.TELEMETRY_PERIOD_MS || 3000);
 const PROV_UUID = process.env.PROV_UUID || process.env.UUID;
@@ -145,9 +146,16 @@ async function start() {
       }
     } catch { useApiPair = false; }
   }
-  const cert = useApiPair ? fetched.cert : (MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined);
-  const key = useApiPair ? fetched.key : (MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined);
-  console.log(`[virtual-device] TLS source: ca=${fetched.ca ? 'api' : (MQTT_TLS_CA ? 'file' : 'none')} certKey=${useApiPair ? 'api' : ((MQTT_TLS_CERT && MQTT_TLS_KEY) ? 'file' : 'none')}`);
+  // Only load local cert/key if files actually exist; allow forcing no client cert via env
+  let cert: Buffer | undefined;
+  let key: Buffer | undefined;
+  if (!MQTT_NO_CLIENT_CERT) {
+    const certPath = useApiPair ? undefined : (MQTT_TLS_CERT || '');
+    const keyPath = useApiPair ? undefined : (MQTT_TLS_KEY || '');
+    cert = useApiPair ? fetched.cert : (certPath && existsSync(certPath) ? readFileSync(certPath) : undefined);
+    key = useApiPair ? fetched.key : (keyPath && existsSync(keyPath) ? readFileSync(keyPath) : undefined);
+  }
+  console.log(`[virtual-device] TLS source: ca=${fetched.ca ? 'api' : (MQTT_TLS_CA ? 'file' : 'none')} certKey=${MQTT_NO_CLIENT_CERT ? 'none' : (useApiPair ? 'api' : ((cert && key) ? 'file' : 'none'))}`);
 
   const insecure = ALLOW_SELF_SIGNED || !ca;
   const buildOpts = (insecureFlag: boolean): IClientOptions => ({
@@ -156,6 +164,8 @@ async function start() {
     protocolVersion: 5,
     reconnectPeriod: 2000,
     clean: true,
+    // Use UUID as clientId during provisioning to satisfy brokers that scope ACLs by %c
+    clientId: String(PROV_UUID),
     ca: insecureFlag ? undefined : ca,
     cert,
     key,
@@ -181,7 +191,7 @@ async function start() {
   let runtimeDeviceId = String(PROV_UUID);
 
   client.on('connect', () => {
-    console.log(`[virtual-device] connected → ${MQTT_URL} as ${DEVICE_ID}`);
+    console.log(`[virtual-device] connected → ${MQTT_URL} clientId=${client.options.clientId}`);
     // Subscribe to provisioning responses and initiate CSR-based provisioning
     client.subscribe([provAccTopic, provRejTopic], { qos: 1 }, (err) => {
       if (err) console.error('[virtual-device] subscribe error', err);
@@ -264,6 +274,8 @@ function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?:
     protocolVersion: 5,
     reconnectPeriod: 3000,
     clean: true,
+    // Use deviceId as clientId during runtime
+    clientId: deviceId,
     ca,
     cert,
     key,

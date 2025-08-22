@@ -82,6 +82,7 @@ export function startMqtt(): MqttClient {
     console.log(`[${SERVICE}] connected to MQTT`);
     client.subscribe(TOPICS.provisionRequest, { qos: 1 }, (err: Error | null) => {
       if (err) console.error(`[${SERVICE}] subscribe error`, err);
+      else console.log(`[${SERVICE}] subscribed to ${TOPICS.provisionRequest}`);
     });
   });
   client.on('error', (err) => console.error(`[${SERVICE}] mqtt error`, err));
@@ -94,15 +95,27 @@ export function startMqtt(): MqttClient {
     const uuidFromTopic = parseTopicUuid(topic, '/provision/request');
     if (!uuidFromTopic) return;
     try {
+      const rawLen = payload?.length ?? 0;
+      console.log(`[${SERVICE}] provision message topic=${topic} bytes=${rawLen}`);
       console.log(`[${SERVICE}] provision request received for uuid=${uuidFromTopic}`);
       const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
-      const uuid = typeof (body as any).uuid === 'string' ? String((body as any).uuid) : uuidFromTopic;
+      const hasBodyUuid = typeof (body as any).uuid === 'string';
+      const bodyUuid = hasBodyUuid ? String((body as any).uuid) : undefined;
+      const uuid = hasBodyUuid ? (bodyUuid as string) : uuidFromTopic;
       const csrPem = typeof (body as any).csrPem === 'string' ? String((body as any).csrPem) : undefined;
+      console.log(`[${SERVICE}] provision parsed uuid=${uuid} csrPemLen=${csrPem ? csrPem.length : 0}`);
+      if (hasBodyUuid && bodyUuid !== uuidFromTopic) {
+        console.warn(`[${SERVICE}] uuid mismatch: topic=${uuidFromTopic} body=${bodyUuid}`);
+        const rej = TOPICS.rejected(uuidFromTopic);
+        client.publish(rej, JSON.stringify({ error: 'uuid_mismatch', message: 'body.uuid must match topic UUID' }), { qos: 1 });
+        return;
+      }
       if (ENFORCE_WHITELIST) {
         if (!uuid) throw new Error('missing_uuid');
         // Ask Core over D-Bus
         const res = await dbusCheckUUID(uuid);
         if (!res.ok) throw new Error(res.error || 'uuid_not_whitelisted');
+        console.log(`[${SERVICE}] whitelist ok for uuid=${uuid}`);
       }
       const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
