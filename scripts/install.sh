@@ -25,7 +25,7 @@ configure_service_envs() {
   local ETC_DIR="/etc/Edgeberry/devicehub"
   mkdir -p "$ETC_DIR"
   # Force mqtt:// for provisioning and twin; remove TLS/auth keys that are no longer used
-  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env")
+  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env" "$ETC_DIR/translator.env")
   local f
   for f in "${files[@]}"; do
     # Create file if missing and set URL
@@ -122,6 +122,7 @@ ensure_system_deps() {
 # Install Node.js production dependencies for each microservice
 install_node_deps() {
   local services=(core-service provisioning-service twin-service)
+  services+=(translator-service)
   local svc dir
   for svc in "${services[@]}"; do
     dir="${INSTALL_ROOT}/${svc}"
@@ -173,6 +174,7 @@ ALLOWED_NAMES=(
   core-service
   provisioning-service
   twin-service
+  translator-service
   config
   scripts
 )
@@ -289,6 +291,7 @@ install_systemd_units() {
     devicehub-core.service \
     devicehub-provisioning.service \
     devicehub-twin.service \
+    devicehub-translator.service \
     edgeberry-ca-rehash.service \
     edgeberry-ca-rehash.path; do
     if [[ -f "${ROOT_DIR}/config/${unit}" ]]; then
@@ -330,6 +333,7 @@ stop_services() {
   systemctl_safe stop devicehub-core.service || true
   systemctl_safe stop devicehub-provisioning.service || true
   systemctl_safe stop devicehub-twin.service || true
+  systemctl_safe stop devicehub-translator.service || true
 }
 
 validate_compiled_no_decorators() {
@@ -359,6 +363,7 @@ enable_services() {
   systemctl_safe enable devicehub-core.service || true
   systemctl_safe enable devicehub-provisioning.service || true
   systemctl_safe enable devicehub-twin.service || true
+  systemctl_safe enable devicehub-translator.service || true
   # Enable CA rehash path (auto-reload broker when CA dir changes)
   systemctl_safe enable edgeberry-ca-rehash.path || true
   systemctl_safe enable edgeberry-ca-rehash.service || true
@@ -373,6 +378,7 @@ start_services() {
   systemctl_safe restart devicehub-core.service || true
   systemctl_safe restart devicehub-provisioning.service || true
   systemctl_safe restart devicehub-twin.service || true
+  systemctl_safe restart devicehub-translator.service || true
   # Start path unit to monitor CA directory changes
   if ! systemctl_safe start edgeberry-ca-rehash.path; then
     log "WARN: failed to start edgeberry-ca-rehash.path; dumping recent logs"

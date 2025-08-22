@@ -74,6 +74,7 @@ import { startWhitelistDbusServer } from './dbus-whitelist.js';
 import { startCertificateDbusServer } from './dbus-certs.js';
 import { startCoreTwinDbusServer } from './dbus-twin.js';
 import { twinGetTwin } from './dbus-twin-client.js';
+import { startDevicesDbusServer } from './dbus-devices.js';
 
 const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
@@ -569,6 +570,8 @@ startWhitelistDbusServer().catch(() => {});
 startCertificateDbusServer().catch(() => {});
 // Start D-Bus TwinService (system bus) — Core as primary interface
 startCoreTwinDbusServer().catch(() => {});
+// Start D-Bus Devices1 (UUID -> deviceId resolution via devices list)
+startDevicesDbusServer().catch(() => {});
 
 // Unified logs: snapshot and streaming from systemd journal (journalctl)
 // Services are expected to be systemd units like devicehub-*.service

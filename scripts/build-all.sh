@@ -137,6 +137,7 @@ build_ui
 build_node_service core-service
 build_node_service provisioning-service
 build_node_service twin-service
+build_node_service translator-service
 
 # Create a single combined tarball from the staged content only
 if [[ -d "$COMBINED_STAGE" ]]; then

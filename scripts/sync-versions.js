@@ -13,6 +13,7 @@ const packagePaths = [
   'core-service/package.json',
   'provisioning-service/package.json',
   'twin-service/package.json',
+  'translator-service/package.json',
   'ui/package.json',
   'examples/nodered/package.json',
   'examples/virtual-device/package.json'
