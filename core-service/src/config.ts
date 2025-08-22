@@ -45,6 +45,7 @@ export const DEFAULT_LOG_UNITS: string[] = [
   'devicehub-core.service',
   'devicehub-provisioning.service',
   'devicehub-twin.service',
+  'devicehub-translator.service',
   // Infra dependencies
   'dbus.service',
   'mosquitto.service',
