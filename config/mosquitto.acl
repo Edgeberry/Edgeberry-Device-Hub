@@ -11,8 +11,9 @@
 # --- Device identity (mTLS) ---------------------------------------------------
 # Devices are identified by their certificate CN (= deviceId)
 # Grant each device read/write access to its own topic namespace
-pattern write devices/%u/#
-pattern read  devices/%u/#
+# MVP: Avoid broad access to non-namespaced device topics
+#pattern write devices/%u/#
+#pattern read  devices/%u/#
 
 # Provisioning flow (device bootstrap over MQTT)
 # Devices publish provision request and read accepted/rejected responses
@@ -43,19 +44,6 @@ pattern read  $devicehub/devices/%u/twin/delta
 # Optionally allow devices to read public broadcast announcements (if any)
 # topic read $devicehub/broadcast/#
 
-# --- Backend service accounts -------------------------------------------------
-# These blocks apply when the service connects with a client cert whose CN
-# matches the username below (e.g., CN=registry, CN=twin, CN=provisioning).
-
-# Twin service: full access for backend operations
-user twin
-topic readwrite #
-
-# Provisioning certificate (shared) — limit strictly to provisioning topics only
-user provisioning
-pattern write $devicehub/devices/%c/provision/request
-pattern read  $devicehub/devices/%c/provision/accepted
-pattern read  $devicehub/devices/%c/provision/rejected
-
-# ----------------------------------------------------------------------------
-# Keep service accounts least-privileged in production. Adjust above as needed.
+# Note: Backend services connect via the local anonymous listener (127.0.0.1:1883)
+# without TLS in MVP. No service-specific ACLs are defined here. If services move
+# to mTLS on 8883 later, define per-service users (CN) and permissions accordingly.

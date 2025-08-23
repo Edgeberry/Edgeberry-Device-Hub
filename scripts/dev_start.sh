@@ -46,11 +46,7 @@ has_npm_script() {
 
 start_mosquitto() {
   local conf
-  if [[ -f "$ROOT_DIR/mqtt-broker/dev.conf" ]]; then
-    conf="$ROOT_DIR/mqtt-broker/dev.conf"
-  elif [[ -f "$ROOT_DIR/config/mosquitto-dev.conf" ]]; then
-    conf="$ROOT_DIR/config/mosquitto-dev.conf"
-  elif [[ -f "$ROOT_DIR/config/mosquitto.conf" ]]; then
+  if [[ -f "$ROOT_DIR/config/mosquitto.conf" ]]; then
     conf="$ROOT_DIR/config/mosquitto.conf"
   else
     log "mosquitto config not found; skipping broker startup"

@@ -1,5 +1,0 @@
-# Edgeberry Device Hub — Unrestricted ACL for localhost-only listener
-# This file applies ONLY to the loopback listener (127.0.0.1:1883).
-# Do not use for any externally reachable listener.
-
-topic readwrite #

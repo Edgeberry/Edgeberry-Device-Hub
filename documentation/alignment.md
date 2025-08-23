@@ -109,13 +109,39 @@ Note: Some systems resolve `localhost` to IPv6 `::1`. If Mosquitto listens on IP
 - Implementation: Dual-listener configuration
   - mTLS listener: `8883` on `0.0.0.0` with `require_certificate true`, `use_subject_as_username true`
   - Local listener: `1883` on `127.0.0.1` with `allow_anonymous true`; no TLS
-- Config files updated:
-  - Dev: `config/mosquitto-dev.conf` includes `per_listener_settings true`, mTLS on 8883, and a loopback `listener 1883 127.0.0.1` with `allow_anonymous true` and `acl_file config/mosquitto-local-unrestricted.acl`
-  - Base: `config/mosquitto.conf` mirrors the same for simple local runs
-  - Prod: `config/mosquitto-prod.conf` includes `per_listener_settings true`, mTLS on 8883, and a loopback `listener 1883 127.0.0.1` with `allow_anonymous true` and `acl_file /etc/mosquitto/acl.d/mosquitto-local-unrestricted.acl`
+- Single canonical config file:
+  - `config/mosquitto.conf` defines both listeners and is used for dev and production.
+  - Installers may copy this file into `/etc/mosquitto/conf.d/edgeberry.conf` on target hosts.
 - ACLs:
   - mTLS listener uses `config/mosquitto.acl` for device/service topic permissions (CN → username).
-  - Local anonymous listener uses `config/mosquitto-local-unrestricted.acl`, granting full read/write on `$devicehub/#` for same-host services.
+  - Local anonymous listener is fully open for MVP and does not use an ACL file.
+
+##### Broker Config Files (MVP)
+
+- **Files kept (single-source)**
+  - `config/mosquitto.conf` — canonical broker config for both dev and production (dual listeners).
+  - `config/mosquitto.acl` — mTLS listener ACL enforcing per-device/service permissions.
+
+- **Removed (avoid duplication)**
+  - `config/mosquitto-dev.conf`
+  - `config/mosquitto-prod.conf`
+  - `config/mosquitto-test-open.acl`
+  - `config/mosquitto-local-unrestricted.acl`
+
+##### ACL Design (MVP)
+
+- **No broad device namespace**
+  - We avoid generic `devices/%u/#` read/write. All device interactions are scoped under `$devicehub/...` topic families.
+- **Provisioning**
+  - Devices (CN = deviceId) use `$devicehub/devices/%u/provision/{request,accepted,rejected}`.
+  - Shared provisioning certs use clientId scoping via `%c` for the same topics.
+- **Backend services (full access for MVP)**
+  - Service client cert CNs: `twin`, `provisioning`, `translator`.
+  - Each is granted `topic readwrite #` to simplify development and avoid broker-side friction.
+  - Post-MVP: tighten to least-privilege (e.g., twin-only topics, provisioning-only topics).
+- **Local loopback listener (127.0.0.1:1883)**
+  - Anonymous access allowed with no ACLs (fully open) for MVP to minimize configuration overhead.
+  - External clients/devices must use mTLS on `8883`; the loopback listener binds to `127.0.0.1` only.
 
 No password files are required for the local anonymous listener.
 
@@ -147,7 +173,7 @@ unset MQTT_TLS_CA MQTT_TLS_CERT MQTT_TLS_KEY MQTT_TLS_REJECT_UNAUTHORIZED
 #### Security Posture (MVP, same-host services)
 
 - Minimum security for inter-service messaging on the same host via loopback `127.0.0.1:1883`.
-- ACLs: the local anonymous listener uses `config/mosquitto-local-unrestricted.acl` to allow full read/write on `$devicehub/#` for same-host services only.
+- Local anonymous listener: fully open (no ACL file) for MVP to minimize configuration overhead; binds to loopback only.
 - External connections must use mTLS on `8883` with ACLs enforced by `config/mosquitto.acl` (CN mapped to username).
 - This is a deliberate MVP trade-off to optimize developer experience; we will tighten local authentication/authorization post-MVP (e.g., per-service credentials or local-only auth).
 
