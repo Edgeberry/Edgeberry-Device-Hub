@@ -382,8 +382,42 @@ app.get('/api/status', (_req: Request, res: Response) => {
   }
 });
 
+// Helper function to get Mosquitto version
+async function getMosquittoVersion(): Promise<string> {
+  try {
+    const { exec } = await import('child_process');
+    return new Promise((resolve) => {
+      exec('mosquitto -h', (error, stdout, stderr) => {
+        if (error) return resolve('unknown');
+        // Mosquitto outputs version in the first line of stderr
+        const versionMatch = stderr.trim().split('\n')[0].match(/mosquitto version (\d+\.\d+\.\d+)/i);
+        resolve(versionMatch ? versionMatch[1] : 'unknown');
+      });
+    });
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Helper function to get D-Bus version
+async function getDBusVersion(): Promise<string> {
+  try {
+    const { exec } = await import('child_process');
+    return new Promise((resolve) => {
+      exec('dbus-daemon --version', (error, stdout) => {
+        if (error) return resolve('unknown');
+        // D-Bus outputs version like: D-Bus Message Bus Daemon 1.12.20
+        const versionMatch = stdout.match(/D-Bus.*?(\d+\.\d+\.\d+)/i);
+        resolve(versionMatch ? versionMatch[1] : 'unknown');
+      });
+    });
+  } catch {
+    return 'unknown';
+  }
+}
+
 // GET /api/version -> service version info
-app.get('/api/version', (_req: Request, res: Response) => {
+app.get('/api/version', async (_req: Request, res: Response) => {
   try {
     // Try to read version from package.json
     let version = 'unknown';
@@ -397,6 +431,12 @@ app.get('/api/version', (_req: Request, res: Response) => {
       }
     } catch {}
     
+    // Get system component versions
+    const [mosquittoVersion, dbusVersion] = await Promise.all([
+      getMosquittoVersion(),
+      getDBusVersion()
+    ]);
+    
     const versionInfo = {
       service: name,
       version,
@@ -404,7 +444,11 @@ app.get('/api/version', (_req: Request, res: Response) => {
       git: version, // alias for compatibility
       node: process.version,
       platform: process.platform,
-      arch: process.arch
+      arch: process.arch,
+      components: {
+        mosquitto: mosquittoVersion,
+        dbus: dbusVersion
+      }
     };
     res.json(versionInfo);
   } catch (e: any) {
