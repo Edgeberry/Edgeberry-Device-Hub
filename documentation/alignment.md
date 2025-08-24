@@ -2,10 +2,12 @@
 
 This file defines the foundational philosophy, design intent, and system architecture for the Edgeberry Device Hub. It exists to ensure that all contributors—human or artificial—are aligned with the core values and structure of the project.
 
-**Last updated:** 2025-08-21 16:13 CEST
+**Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
+
+**Last updated:** 2025-08-24 12:44 CEST
  ## Project Phase
 
- - Current status: MVP in progress (2025-08-22).
+ - Current status: MVP (active as of 2025-08-24).
  - Scope is intentionally limited; security and features will be hardened post-MVP.
  - References to 'MVP' in this doc indicate temporary trade-offs.
 
@@ -63,20 +65,17 @@ Minimal steps to run broker + services with mTLS locally:
 - `mosquitto -c $(pwd)/config/mosquitto-dev.conf`
 - Dev/prod configs enforce mTLS and set `use_subject_as_username true` (CN → username for ACLs).
 
-3) Service client certs
-- Create client certs with CNs matching service usernames: `provisioning`, `twin`.
-- CN mapping is required for ACLs (see `config/mosquitto.acl`).
-  - Note: If a client certificate has an unknown/empty CN, services will log a warning indicating the expected CN (e.g., `provisioning`).
+3) Backend services do NOT use client certificates
+- Services connect over the local loopback listener `mqtt://127.0.0.1:1883` without TLS (anonymous) during MVP.
+- No service client certificates are required. ACLs apply to the mTLS listener only.
 
-4) Environment for services (example)
+4) Environment for services (loopback, no TLS)
 ```
-export MQTT_URL=mqtts://127.0.0.1:8883
-export MQTT_TLS_CA=./config/certs/ca.crt
-export MQTT_TLS_CERT=./config/certs/provisioning.crt
-export MQTT_TLS_KEY=./config/certs/provisioning.key
-export MQTT_TLS_REJECT_UNAUTHORIZED=true
+export MQTT_URL=mqtt://127.0.0.1:1883
+# No username/password required
+unset MQTT_TLS_CA MQTT_TLS_CERT MQTT_TLS_KEY MQTT_TLS_REJECT_UNAUTHORIZED
 ```
-- Run per service (adjust CERT/KEY per service):
+- Run per service:
   - `npm --prefix provisioning-service run dev`
   - `npm --prefix twin-service run dev`
 
@@ -135,10 +134,11 @@ Note: Some systems resolve `localhost` to IPv6 `::1`. If Mosquitto listens on IP
 - **Provisioning**
   - Devices (CN = deviceId) use `$devicehub/devices/%u/provision/{request,accepted,rejected}`.
   - Shared provisioning certs use clientId scoping via `%c` for the same topics.
-- **Backend services (full access for MVP)**
-  - Service client cert CNs: `twin`, `provisioning`, `translator`.
-  - Each is granted `topic readwrite #` to simplify development and avoid broker-side friction.
-  - Post-MVP: tighten to least-privilege (e.g., twin-only topics, provisioning-only topics).
+- **Backend services (local loopback, full access for MVP)**
+  - Backend services connect via the local anonymous listener `127.0.0.1:1883` without client certificates.
+  - They effectively have unrestricted broker access via the loopback listener for MVP to reduce friction.
+  - ACLs in `config/mosquitto.acl` apply to the mTLS listener on `8883` (devices/external clients), not to the local anonymous listener.
+  - Post-MVP: tighten to least-privilege (e.g., service-specific topics or local auth).
 - **Local loopback listener (127.0.0.1:1883)**
   - Anonymous access allowed with no ACLs (fully open) for MVP to minimize configuration overhead.
   - External clients/devices must use mTLS on `8883`; the loopback listener binds to `127.0.0.1` only.
@@ -176,6 +176,27 @@ unset MQTT_TLS_CA MQTT_TLS_CERT MQTT_TLS_KEY MQTT_TLS_REJECT_UNAUTHORIZED
 - Local anonymous listener: fully open (no ACL file) for MVP to minimize configuration overhead; binds to loopback only.
 - External connections must use mTLS on `8883` with ACLs enforced by `config/mosquitto.acl` (CN mapped to username).
 - This is a deliberate MVP trade-off to optimize developer experience; we will tighten local authentication/authorization post-MVP (e.g., per-service credentials or local-only auth).
+
+#### Post-MVP Plan
+
+- **Local listener hardening**
+  - Replace anonymous loopback with an authenticated local-only listener.
+  - Options considered: per-service username/password or mTLS for services. We will pick the simplest robust path during implementation.
+- **Least-privilege ACLs for services**
+  - Remove blanket `readwrite #` access for backend services.
+  - Define explicit topic families per service (e.g., twin-only, provisioning-only) and codify them in `config/mosquitto.acl`.
+- **Config updates**
+  - Update `config/mosquitto.conf` to add the authenticated local listener and disable anonymous access.
+  - Keep mTLS on `8883` unchanged for devices/external clients.
+- **Service environment**
+  - Services will use either `MQTT_USERNAME/MQTT_PASSWORD` for the local listener or client TLS materials if mTLS is chosen for services.
+  - Update `.env.example` and service docs accordingly.
+- **Auditing & logging**
+  - Enable clearer authentication and authorization logs for service connections and topic violations.
+- **Migration steps**
+  1) Introduce the new local authenticated listener alongside the anonymous one (temporary).
+  2) Roll services to use credentials (or mTLS) and verify with integration tests.
+  3) Remove the anonymous listener and enforce least-privilege ACLs.
 
 #### Diagnostics: MQTT Sanity Test (mTLS)
 
@@ -357,6 +378,7 @@ Internal modularity is an implementation detail and must not leak into the publi
 - For the current remote device deployment, the development server runs the UI in production mode at:
   - http://192.168.1.116:80
 - Use this URL for on-device validation after running `scripts/deploy.sh`.
+ - SSH user for this test server: `spuq` (use with `-u spuq`).
 
 #### API Structure
 - **HTTP API prefix:** `/api` (versioning via headers or path TBD) — served directly by `core-service`
@@ -585,6 +607,11 @@ The `scripts/deploy.sh` script provides automated deployment to remote hosts via
 - `--remote-dir` — Custom remote staging directory (default: `~/.edgeberry-deploy-<timestamp>`)
 - `--skip-build` — Skip local artifact building (use existing `dist-artifacts/`)
 - `-v, --verbose` — Verbose SSH/rsync output
+
+Example (test server):
+```
+bash scripts/deploy.sh -h 192.168.1.116 -u spuq
+```
 
 **Process**:
 1. Prompts for SSH credentials (user if not provided, password always)
