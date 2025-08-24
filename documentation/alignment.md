@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-08-24 12:44 CEST
+**Last updated:** 2025-08-24 14:23 CEST
  ## Project Phase
 
  - Current status: MVP (active as of 2025-08-24).
@@ -61,9 +61,10 @@ Minimal steps to run broker + services with mTLS locally:
 - Generate dev CA and server certs using `config/certs/README.md`.
 - Files used by dev broker: `config/certs/ca.crt`, `server.crt`, `server.key`.
 
-2) Start Mosquitto (mTLS dev config)
-- `mosquitto -c $(pwd)/config/mosquitto-dev.conf`
-- Dev/prod configs enforce mTLS and set `use_subject_as_username true` (CN → username for ACLs).
+2) Start Mosquitto (single canonical config)
+- `mosquitto -c $(pwd)/config/mosquitto.conf`
+- Note: this config references `/etc/mosquitto/...` for certs and ACL. Either run the installer once (preferred) or place the files accordingly before starting locally.
+- The config enforces mTLS on 8883 and sets `use_subject_as_username true` (CN → username for ACLs).
 
 3) Backend services do NOT use client certificates
 - Services connect over the local loopback listener `mqtt://127.0.0.1:1883` without TLS (anonymous) during MVP.
@@ -505,11 +506,11 @@ Interfaces (high level):
 - Core Service ↔ Workers over D-Bus: `core-service` invokes worker methods and subscribes to worker signals using well-defined D-Bus interfaces.
 - Services (provisioning-service, twin-service) ↔ MQTT: Publish/subscribe using typed helpers from `shared/mqtt` and topic constants defined in this document.
 
-Local development:
+- Local development:
 
 - Each subproject runs independently with its own `package.json` and start script. A top-level `dev` script can orchestrate broker, core service, workers, and UI.
- - No Docker for dev; Mosquitto runs locally. MVP uses `config/mosquitto-dev.conf` and dev TLS materials under `config/certs/`.
-   - Future: consolidate under `mqtt-broker/dev.conf` and `mqtt-broker/dev-certs/` for clearer separation.
+ - No Docker for dev; Mosquitto runs locally using `config/mosquitto.conf`.
+   - This file expects certs/ACL under `/etc/mosquitto/...`. Run `scripts/install.sh` once on the dev host to stage them, or manually place files to match the paths.
 - Env via `.env` files per project; never commit secrets.
 - D-Bus: prefer the user session bus during development (fallback to a private bus if needed); systemd user units can be used to emulate production `systemd` services locally.
  - Dev orchestrator: `scripts/dev_start.sh` starts Mosquitto and all services concurrently with hot-reload (prefers `npm run dev`/`tsx watch`). All process logs are multiplexed in a single terminal with per-service prefixes. Services run with `NODE_ENV=development`.

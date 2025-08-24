@@ -15,9 +15,10 @@ npm --prefix examples/virtual-device ci
 
 # Run the virtual device against your remote host
 # UUID must be whitelisted on the hub
-PROV_API_BASE=http://192.168.1.116 \
+# Test server (defaults): API http://192.168.1.116:80, MQTT tls 192.168.1.116:8883
+PROV_API_BASE=http://192.168.1.116:80 \
 MQTT_URL=mqtts://192.168.1.116:8883 \
-PROV_UUID=00000000-0000-0000-0000-000000000000 \
+PROV_UUID=9205255a-6767-4a8f-8a8b-499239906911 \
 npm --prefix examples/virtual-device run dev
 ```
 
@@ -42,6 +43,6 @@ If you’re running everything locally with the dev broker:
 npm --prefix examples/virtual-device ci
 MQTT_URL=mqtts://127.0.0.1:8883 \
 PROV_API_BASE=http://127.0.0.1:8080 \
-PROV_UUID=00000000-0000-0000-0000-000000000000 \
+PROV_UUID=9205255a-6767-4a8f-8a8b-499239906911 \
 npm --prefix examples/virtual-device run dev
 ```

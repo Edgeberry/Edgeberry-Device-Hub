@@ -52,6 +52,24 @@ See `documentation/alignment.md` for architecture and interface details, includi
 
 Note: Core no longer ingests MQTT directly. All device twin access for external clients goes through Core HTTP/D-Bus.
 
+## Mosquitto broker configuration (MVP)
+
+- Canonical broker config lives at `config/mosquitto.conf` (dual listeners: 8883 mTLS, 1883 loopback anonymous).
+- ACLs live at `config/mosquitto.acl`.
+- The installer (`scripts/install.sh`) deploys these to system paths and restarts Mosquitto:
+  - Config snippet: `/etc/mosquitto/conf.d/edgeberry.conf`
+  - Certs: `/etc/mosquitto/certs/{server.crt,server.key}`
+  - ACL: `/etc/mosquitto/acl.d/edgeberry.acl`
+  - CA trust directory (broker capath): `/etc/mosquitto/certs/edgeberry-ca.d`
+
+For development, you can start Mosquitto with the repo config directly:
+
+```
+mosquitto -c $(pwd)/config/mosquitto.conf -v
+```
+
+Note this config references `/etc/mosquitto/...` paths. Either run the installer once on your dev host or place the files accordingly.
+
 ## License & Collaboration
 **Copyright 2025 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
 

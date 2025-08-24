@@ -544,27 +544,28 @@ EOF
     # Remove any prior Device Hub mosquitto snippets to avoid duplicates
     rm -f /etc/mosquitto/conf.d/devicehub.conf /etc/mosquitto/conf.d/edgeberry.conf || true
 
-    # Write a dedicated conf.d file that references our installed paths (minimal to avoid dupes)
-    cat > /etc/mosquitto/conf.d/edgeberry.conf <<EOF
-# Edgeberry Device Hub (installed) — listeners
+    # Deploy our packaged mosquitto.conf into conf.d; fallback to generated minimal config
+    if [[ -f "${ROOT_DIR}/config/mosquitto.conf" ]]; then
+      install -m 0644 "${ROOT_DIR}/config/mosquitto.conf" \
+        /etc/mosquitto/conf.d/edgeberry.conf
+    else
+      # Fallback minimal config matching runtime paths
+      cat > /etc/mosquitto/conf.d/edgeberry.conf <<EOF
+# Edgeberry Device Hub (installed fallback) — listeners
 
 # Use per-listener settings so we can have separate auth/ACLs
 per_listener_settings true
 
-# 1) Local backend listener (no TLS, localhost-only, anonymous allowed)
+# Local backend listener (no TLS, localhost-only)
 listener 1883 127.0.0.1
 allow_anonymous true
-acl_file $ETC_LOCAL_ACL
 
-# 2) Device listener (mTLS on 8883)
+# Device listener (mTLS on 8883)
 listener 8883 0.0.0.0
 allow_anonymous false
 
 # TLS
-# Use a CA path so new roots added by the server are trusted automatically
 capath ${ETC_CA_DIR}
-# Fallback single CA (unused when capath is set)
-# cafile ${ETC_CA}
 certfile $ETC_CERT
 keyfile $ETC_KEY
 
@@ -575,12 +576,7 @@ use_subject_as_username true
 # ACLs for device listener
 acl_file $ETC_ACL
 EOF
-
-    # Write permissive local ACL for backend services
-    cat > "$ETC_LOCAL_ACL" <<'EOF'
-# Local backend ACL (localhost listener 1883)
-topic readwrite #
-EOF
+    fi
 
     # Validate broker configuration (best-effort):
     # If mosquitto service is inactive, try a short foreground start and capture output; otherwise rely on journal after restart.

@@ -15,23 +15,13 @@
 #pattern write devices/%u/#
 #pattern read  devices/%u/#
 
-# Provisioning flow (device bootstrap over MQTT)
-# Devices publish provision request and read accepted/rejected responses
-# Using patterns with %u (CN) to scope per device
-pattern write $devicehub/devices/%u/provision/request
-pattern read  $devicehub/devices/%u/provision/accepted
-pattern read  $devicehub/devices/%u/provision/rejected
 
-# Provisioning-by-claim (shared client cert): scope by clientId instead of CN
-# This allows all devices using the shared provisioning certificate to publish
-# and receive only within their own clientId namespace during provisioning.
-# Keep both %u and %c rules for compatibility.
-pattern write $devicehub/devices/%c/provision/request
-pattern read  $devicehub/devices/%c/provision/accepted
-pattern read  $devicehub/devices/%c/provision/rejected
-
-# Provisioning (tight): do NOT allow open access. Rely on %c (clientId=UUID)
-# Devices must set clientId to the UUID during provisioning.
+# Provisioning (do NOT rely on CN). Authorize by MQTT clientId instead.
+## We set clientId = UUID in the virtual device during provisioning, so we can
+## scope permissions per-UUID using %c (clientId expansion).
+pattern write $devicehub/devices/+/provision/request
+pattern read  $devicehub/devices/+/provision/accepted
+pattern read  $devicehub/devices/+/provision/rejected
 
 # Twin flow (device twin interactions)
 # Devices write get/update; read accepted/rejected + delta

@@ -35,6 +35,40 @@ const ALLOW_SELF_SIGNED: boolean = ((process.env.ALLOW_SELF_SIGNED ?? (PROV_API_
 const DEVICE_CERT_OUT = process.env.DEVICE_CERT_OUT || '';
 const DEVICE_KEY_OUT = process.env.DEVICE_KEY_OUT || '';
 
+// Map MQTT CONNACK reason codes to human-readable text (MQTT v5 and MQTT v3.1.1)
+function connackReasonText(code: number): string {
+  const v5: Record<number, string> = {
+    0: 'Success',
+    128: 'Unspecified error',
+    129: 'Malformed Packet',
+    130: 'Protocol Error',
+    131: 'Implementation specific error',
+    132: 'Unsupported Protocol Version',
+    133: 'Client Identifier not valid',
+    134: 'Bad User Name or Password',
+    135: 'Not authorized',
+    136: 'Server unavailable',
+    137: 'Server busy',
+    138: 'Banned',
+    140: 'Bad authentication method',
+    149: 'Packet too large',
+    151: 'Quota exceeded',
+    153: 'Payload format invalid',
+    156: 'Use another server',
+    157: 'Server moved',
+    159: 'Connection rate exceeded',
+  };
+  const v3: Record<number, string> = {
+    0: 'Connection Accepted',
+    1: 'Unacceptable protocol version',
+    2: 'Identifier rejected',
+    3: 'Server unavailable',
+    4: 'Bad user name or password',
+    5: 'Not authorized',
+  };
+  return v5[code] || v3[code] || `Unknown (${code})`;
+}
+
 function openssl(args: string[], input?: string): { code: number, out: string, err: string } {
   const res = spawnSync('openssl', args, { input, encoding: 'utf8' });
   return { code: res.status ?? 1, out: res.stdout || '', err: res.stderr || '' };
@@ -128,34 +162,32 @@ async function loadBootstrapTls(): Promise<{ ca?: Buffer; cert?: Buffer; key?: B
 
 async function start() {
   const fetched = await loadBootstrapTls();
-  const ca = fetched.ca || (MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined);
-  // Use API-provided cert/key only if both are present and match; otherwise fall back to local pair
-  let useApiPair = !!(fetched.cert && fetched.key);
-  if (useApiPair) {
-    try {
-      const tmp = mkdtempSync(path.join(tmpdir(), 'edgeberry-vd-pair-'));
-      const cPath = path.join(tmp, 'api.crt');
-      const kPath = path.join(tmp, 'api.key');
-      writeFileSync(cPath, fetched.cert!);
-      writeFileSync(kPath, fetched.key!);
-      const modC = openssl(['x509', '-noout', '-modulus', '-in', cPath]);
-      const modK = openssl(['rsa', '-noout', '-modulus', '-in', kPath]);
-      if (modC.code !== 0 || modK.code !== 0 || modC.out.trim() !== modK.out.trim()) {
-        console.warn('[virtual-device] WARNING: API cert/key do not match; falling back to file pair');
-        useApiPair = false;
-      }
-    } catch { useApiPair = false; }
+  // Enforce fetching of provisioning TLS materials before provisioning flow
+  if (!fetched.ca || !fetched.cert || !fetched.key) {
+    console.error('[virtual-device] ERROR: provisioning TLS materials missing. Set PROV_API_BASE and ensure ca.crt, provisioning.crt, provisioning.key are accessible.');
+    process.exit(1);
   }
-  // Only load local cert/key if files actually exist; allow forcing no client cert via env
-  let cert: Buffer | undefined;
-  let key: Buffer | undefined;
-  if (!MQTT_NO_CLIENT_CERT) {
-    const certPath = useApiPair ? undefined : (MQTT_TLS_CERT || '');
-    const keyPath = useApiPair ? undefined : (MQTT_TLS_KEY || '');
-    cert = useApiPair ? fetched.cert : (certPath && existsSync(certPath) ? readFileSync(certPath) : undefined);
-    key = useApiPair ? fetched.key : (keyPath && existsSync(keyPath) ? readFileSync(keyPath) : undefined);
+  // Validate fetched cert/key pair match
+  try {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'edgeberry-vd-pair-'));
+    const cPath = path.join(tmp, 'api.crt');
+    const kPath = path.join(tmp, 'api.key');
+    writeFileSync(cPath, fetched.cert);
+    writeFileSync(kPath, fetched.key);
+    const modC = openssl(['x509', '-noout', '-modulus', '-in', cPath]);
+    const modK = openssl(['rsa', '-noout', '-modulus', '-in', kPath]);
+    if (modC.code !== 0 || modK.code !== 0 || modC.out.trim() !== modK.out.trim()) {
+      console.error('[virtual-device] ERROR: fetched provisioning cert/key do not match');
+      process.exit(1);
+    }
+  } catch (e) {
+    console.error('[virtual-device] ERROR: failed to validate provisioning cert/key pair', (e as Error)?.message || e);
+    process.exit(1);
   }
-  console.log(`[virtual-device] TLS source: ca=${fetched.ca ? 'api' : (MQTT_TLS_CA ? 'file' : 'none')} certKey=${MQTT_NO_CLIENT_CERT ? 'none' : (useApiPair ? 'api' : ((cert && key) ? 'file' : 'none'))}`);
+  const ca = fetched.ca;
+  const cert: Buffer | undefined = fetched.cert;
+  const key: Buffer | undefined = fetched.key;
+  console.log('[virtual-device] TLS source: ca=api certKey=api');
 
   const insecure = ALLOW_SELF_SIGNED || !ca;
   const buildOpts = (insecureFlag: boolean): IClientOptions => ({
@@ -191,7 +223,7 @@ async function start() {
   let runtimeDeviceId = String(PROV_UUID);
 
   client.on('connect', () => {
-    console.log(`[virtual-device] connected → ${MQTT_URL} clientId=${client.options.clientId}`);
+    console.log(`[virtual-device] CONNECT accepted → ${MQTT_URL} clientId=${client.options.clientId}`);
     // Subscribe to provisioning responses and initiate CSR-based provisioning
     client.subscribe([provAccTopic, provRejTopic], { qos: 1 }, (err) => {
       if (err) console.error('[virtual-device] subscribe error', err);
@@ -248,11 +280,24 @@ async function start() {
   });
 
   client.on('error', (err: any) => {
-    console.error('[virtual-device] error', err);
+    console.error('[virtual-device] CONNECT rejected/error', err?.message || err);
   });
 
   client.on('close', () => {
     console.log('[virtual-device] connection closed');
+  });
+
+  // Inspect CONNACK to explicitly log accept/reject with reason code (MQTT v5)
+  client.on('packetreceive', (packet: any) => {
+    if (packet && packet.cmd === 'connack') {
+      const reason = typeof packet.reasonCode !== 'undefined' ? packet.reasonCode : packet.returnCode;
+      const sp = packet.sessionPresent;
+      if (reason === 0) {
+        console.log(`[virtual-device] CONNACK accepted (reasonCode=0 ${connackReasonText(0)}, sessionPresent=${sp})`);
+      } else {
+        console.error(`[virtual-device] CONNACK rejected (reasonCode=${reason} ${connackReasonText(reason)}, sessionPresent=${sp})`);
+      }
+    }
   });
 
   function shutdown() {
@@ -286,7 +331,7 @@ function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?:
   let timer: NodeJS.Timeout | null = null;
 
   client.on('connect', () => {
-    console.log(`[virtual-device] runtime connected with device cert → ${MQTT_URL}`);
+    console.log(`[virtual-device] runtime CONNECT accepted with device cert → ${MQTT_URL}`);
     timer = setInterval(() => {
       const m = { ts: Date.now(), temperature: 20 + Math.random() * 5, voltage: 3.3 + Math.random() * 0.1, status: 'ok' };
       client.publish(teleTopic, JSON.stringify(m), { qos: 0 });
@@ -294,10 +339,24 @@ function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?:
     }, TELEMETRY_PERIOD_MS);
   });
 
+  // Inspect CONNACK for runtime session too
+  client.on('packetreceive', (packet: any) => {
+    if (packet && packet.cmd === 'connack') {
+      const reason = typeof packet.reasonCode !== 'undefined' ? packet.reasonCode : packet.returnCode;
+      const sp = packet.sessionPresent;
+      if (reason === 0) {
+        console.log(`[virtual-device] runtime CONNACK accepted (reasonCode=0 ${connackReasonText(0)}, sessionPresent=${sp})`);
+      } else {
+        console.error(`[virtual-device] runtime CONNACK rejected (reasonCode=${reason} ${connackReasonText(reason)}, sessionPresent=${sp})`);
+      }
+    }
+  });
+
   function shutdown() {
     if (timer) { clearInterval(timer); timer = null; }
     try { client.end(true, {}, () => process.exit(0)); } catch { process.exit(0); }
   }
+
   client.on('error', (e) => console.error('[virtual-device] runtime error', e));
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
