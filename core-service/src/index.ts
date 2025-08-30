@@ -610,11 +610,7 @@ app.get('/diagnostics', (_req: Request, res: Response) => {
 console.log('[core-service] hello from Device Hub core-service');
 // Ensure provisioning DB schema exists (uuid_whitelist etc.) before exposing D-Bus API
 try { ensureProvisioningSchema(); } catch {}
-// D-Bus services are now started via startDbusServices() function below
-// Start D-Bus TwinService (system bus) — Core as primary interface
-startCoreTwinDbusServer().catch(() => {});
-// Start D-Bus Devices1 (UUID -> deviceId resolution via devices list)
-startDevicesDbusServer().catch(() => {});
+// D-Bus services are started via startDbusServices() function below
 
 // Unified logs: snapshot and streaming from systemd journal (journalctl)
 // Services are expected to be systemd units like devicehub-*.service
@@ -1811,7 +1807,7 @@ async function startDbusServices() {
     console.log(`[core-service] Starting D-Bus WhitelistService...`);
     const bus = await startWhitelistDbusServer();
     console.log(`[core-service] WhitelistService started, starting CertificateService...`);
-    await startCertificateDbusServer(bus);
+    await startCertificateDbusServer();
     console.log(`[core-service] D-Bus services started successfully`);
     
     // Ensure provisioning certificates exist for device bootstrap

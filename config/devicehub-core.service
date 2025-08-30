@@ -4,8 +4,7 @@ After=network-online.target dbus.service
 Wants=network-online.target dbus.service
 
 [Service]
-Type=dbus
-BusName=io.edgeberry.devicehub.Core
+Type=simple
 WorkingDirectory=/opt/Edgeberry/devicehub/core-service
 Environment=NODE_ENV=production
 Environment=PORT=80

@@ -1,4 +1,4 @@
-import { systemBus } from 'dbus-next';
+import * as dbus from 'dbus-native';
 
 const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const WL_OBJECT_PATH = '/io/edgeberry/devicehub/WhitelistService';
@@ -6,42 +6,67 @@ const WL_IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService';
 const CERT_OBJECT_PATH = '/io/edgeberry/devicehub/CertificateService';
 const CERT_IFACE_NAME = 'io.edgeberry.devicehub.CertificateService';
 
-let wlIfaceProxy: any | null = null;
-let certIfaceProxy: any | null = null;
+let bus: any | null = null;
 
-async function getWhitelistIface(): Promise<any> {
-  if (wlIfaceProxy) return wlIfaceProxy;
-  const bus = systemBus();
-  const obj = await bus.getProxyObject(BUS_NAME, WL_OBJECT_PATH);
-  const iface = obj.getInterface(WL_IFACE_NAME);
-  wlIfaceProxy = iface as any;
-  return wlIfaceProxy;
+function getBus(): any {
+  if (!bus) {
+    bus = dbus.systemBus();
+  }
+  return bus;
 }
 
-async function getCertIface(): Promise<any> {
-  if (certIfaceProxy) return certIfaceProxy;
-  const bus = systemBus();
-  const obj = await bus.getProxyObject(BUS_NAME, CERT_OBJECT_PATH);
-  const iface = obj.getInterface(CERT_IFACE_NAME);
-  certIfaceProxy = iface as any;
-  return certIfaceProxy;
+function callDbusMethod(objectPath: string, interfaceName: string, member: string, ...args: any[]): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const connection = getBus();
+    const service = connection.getService(BUS_NAME);
+    
+    service.getInterface(objectPath, interfaceName, (err: any, iface: any) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      // Call the method with callback
+      const callback = (err: any, ...results: any[]) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(results);
+      };
+      
+      // Add callback to args and call method
+      iface[member](...args, callback);
+    });
+  });
 }
 
-export async function dbusCheckUUID(uuid: string): Promise<{ ok: boolean; note?: string; used_at?: string; error?: string }>{
-  const iface = await getWhitelistIface();
-  const [ok, note, used_at, error] = await iface.CheckUUID(uuid);
-  return { ok: !!ok, note: note || undefined, used_at: used_at || undefined, error: error || undefined };
+export async function dbusCheckUUID(uuid: string): Promise<{ ok: boolean; note?: string; used_at?: string; error?: string }> {
+  try {
+    const result = await callDbusMethod(WL_OBJECT_PATH, WL_IFACE_NAME, 'CheckUUID', uuid);
+    const [ok, note, used_at, error] = result;
+    return { ok: !!ok, note: note || undefined, used_at: used_at || undefined, error: error || undefined };
+  } catch (error) {
+    throw error;
+  }
 }
 
-export async function dbusMarkUsed(uuid: string): Promise<{ ok: boolean; error?: string }>{
-  const iface = await getWhitelistIface();
-  const [ok, error] = await iface.MarkUsed(uuid);
-  return { ok: !!ok, error: error || undefined };
+export async function dbusMarkUsed(uuid: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const result = await callDbusMethod(WL_OBJECT_PATH, WL_IFACE_NAME, 'MarkUsed', uuid);
+    const [ok, error] = result;
+    return { ok: !!ok, error: error || undefined };
+  } catch (error) {
+    throw error;
+  }
 }
 
-export async function dbusIssueFromCSR(deviceId: string, csrPem: string, days?: number): Promise<{ ok: boolean; certPem?: string; caChainPem?: string; error?: string }>{
-  const iface = await getCertIface();
-  const d = typeof days === 'number' && isFinite(days) ? Math.max(1, Math.floor(days)) : 0;
-  const [ok, certPem, caChainPem, error] = await iface.IssueFromCSR(deviceId, csrPem, d);
-  return { ok: !!ok, certPem: certPem || undefined, caChainPem: caChainPem || undefined, error: error || undefined };
+export async function dbusIssueFromCSR(uuid: string, csrPem: string, validityDays: number): Promise<{ ok: boolean; certPem?: string; keyPem?: string; error?: string }> {
+  try {
+    const result = await callDbusMethod(CERT_OBJECT_PATH, CERT_IFACE_NAME, 'IssueFromCSR', uuid, csrPem, validityDays);
+    const [ok, certPem, keyPem, error] = result;
+    return { ok: !!ok, certPem: certPem || undefined, keyPem: keyPem || undefined, error: error || undefined };
+  } catch (error) {
+    throw error;
+  }
 }

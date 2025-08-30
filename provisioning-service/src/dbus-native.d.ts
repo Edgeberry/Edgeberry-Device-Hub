@@ -3,6 +3,7 @@ declare module 'dbus-native' {
   export interface DBusConnection {
     on(event: string, handler: Function): void;
     message(msg: any): void;
+    removeListener(event: string, handler: Function): void;
     getService(serviceName: string): DBusService;
   }
 

@@ -1,4 +1,4 @@
-import * as dbus from 'dbus-next';
+import * as dbus from 'dbus-native';
 import { PROVISIONING_DB } from './config.js';
 import { openDb, DB } from './types/database-types.js';
 
@@ -194,65 +194,69 @@ class WhitelistInterface {
   }
 }
 
-export async function startWhitelistDbusServer(): Promise<dbus.MessageBus> {
+export async function startWhitelistDbusServer(): Promise<any> {
   const bus = dbus.systemBus();
-  
   const whitelistService = new WhitelistInterface();
   
-  // Add method handler for WhitelistService methods
-  (bus as any).addMethodHandler(async (msg: any) => {
-    if (msg.path === OBJECT_PATH && msg.interface === IFACE_NAME) {
-      const method = msg.member;
-      const args = msg.body || [];
-      
-      try {
-        switch (method) {
-          case 'CheckUUID':
-            return await whitelistService.CheckUUID(args[0]);
-          case 'List':
-            return await whitelistService.List();
-          case 'Add':
-            return await whitelistService.Add(args[0], args[1]);
-          case 'Remove':
-            return await whitelistService.Remove(args[0]);
-          case 'Get':
-            return await whitelistService.Get(args[0]);
-          case 'MarkUsed':
-            return await whitelistService.MarkUsed(args[0]);
-          default:
-            throw new Error(`Unknown method: ${method}`);
-        }
-      } catch (error) {
-        console.error(`[dbus-whitelist] Error in ${method}:`, error);
-        throw error;
-      }
-    }
-    
-    // Handle introspection
-    if (msg.path === OBJECT_PATH && msg.interface === 'org.freedesktop.DBus.Introspectable' && msg.member === 'Introspect') {
-      return `<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
-"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
-<node>
-  <interface name="${IFACE_NAME}">
-    <method name="CheckUUID">
-      <arg direction="in" type="s" name="uuid"/>
-      <arg direction="out" type="b" name="ok"/>
-      <arg direction="out" type="s" name="note"/>
-      <arg direction="out" type="s" name="created_at"/>
-      <arg direction="out" type="s" name="error"/>
-    </method>
-    <method name="MarkUsed">
-      <arg direction="in" type="s" name="uuid"/>
-      <arg direction="out" type="b" name="ok"/>
-      <arg direction="out" type="s" name="error"/>
-    </method>
-  </interface>
-</node>`;
+  console.log('Starting Whitelist D-Bus server with dbus-native');
+  
+  // Create service interface using dbus-native pattern
+  const service = bus.getService(BUS_NAME);
+  const obj = service.createObject(OBJECT_PATH);
+  const iface = obj.createInterface(IFACE_NAME);
+  
+  // Add CheckUUID method
+  iface.addMethod('CheckUUID', {
+    in: ['s'],
+    out: ['b', 's', 's', 's']
+  }, async (uuid: string, callback: Function) => {
+    try {
+      const result = await whitelistService.CheckUUID(uuid);
+      callback(null, ...result);
+    } catch (error) {
+      callback(error);
     }
   });
   
-  await bus.requestName(BUS_NAME, 0);
-  console.log(`[dbus-whitelist] WhitelistService exported at ${OBJECT_PATH} on system bus`);
+  // Add List method
+  iface.addMethod('List', {
+    in: [],
+    out: ['as']
+  }, async (callback: Function) => {
+    try {
+      const result = await whitelistService.List();
+      callback(null, result);
+    } catch (error) {
+      callback(error);
+    }
+  });
   
-  return bus as any;
+  // Add Add method
+  iface.addMethod('Add', {
+    in: ['s', 's'],
+    out: ['b', 's']
+  }, async (uuid: string, note: string, callback: Function) => {
+    try {
+      const result = await whitelistService.Add(uuid, note);
+      callback(null, ...result);
+    } catch (error) {
+      callback(error);
+    }
+  });
+  
+  // Add MarkUsed method
+  iface.addMethod('MarkUsed', {
+    in: ['s'],
+    out: ['b', 's']
+  }, async (uuid: string, callback: Function) => {
+    try {
+      const result = await whitelistService.MarkUsed(uuid);
+      callback(null, ...result);
+    } catch (error) {
+      callback(error);
+    }
+  });
+  
+  console.log(`Whitelist D-Bus server started on ${BUS_NAME} at ${OBJECT_PATH}`);
+  return bus;
 }

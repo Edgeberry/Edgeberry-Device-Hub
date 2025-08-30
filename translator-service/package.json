@@ -10,7 +10,7 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "dbus-next": "^0.10.2",
+    "dbus-native": "^0.4.0",
     "mqtt": "^5.5.0"
   },
   "devDependencies": {

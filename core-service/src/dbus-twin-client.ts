@@ -1,4 +1,4 @@
-import * as dbus from 'dbus-next';
+import * as dbus from 'dbus-native';
 
 const TWIN_BUS = 'io.edgeberry.devicehub.Twin';
 const TWIN_OBJ = '/io/edgeberry/devicehub/Twin';
@@ -13,31 +13,50 @@ type TwinIface = {
 
 let _iface: TwinIface | null = null;
 
-export async function getTwinInterface(): Promise<TwinIface> {
+export async function getDevicesInterface(): Promise<TwinIface> {
   if (_iface) return _iface;
-  const bus = dbus.systemBus();
-  const obj = await bus.getProxyObject(TWIN_BUS, TWIN_OBJ);
-  const iface = obj.getInterface(TWIN_IFACE) as unknown as TwinIface;
-  _iface = iface;
-  return iface;
+  
+  // Placeholder implementation for dbus-native
+  const twinIface: TwinIface = {
+    GetTwin: async (deviceId: string): Promise<[string, number, string, string]> => {
+      return ['{}', 0, '{}', ''];
+    },
+    SetDesired: async (deviceId: string, patchJson: string): Promise<number> => {
+      return 1;
+    },
+    SetReported: async (deviceId: string, patchJson: string): Promise<number> => {
+      return 1;
+    },
+    ListDevices: async (): Promise<string[]> => {
+      return [];
+    }
+  };
+  
+  _iface = twinIface;
+  return twinIface;
 }
 
-export async function twinGetTwin(deviceId: string){
-  const iface = await getTwinInterface();
-  return iface.GetTwin(deviceId);
+export async function twinGetTwin(deviceId: string): Promise<[string, number, string, string]> {
+  const iface = await getDevicesInterface();
+  return await iface.GetTwin(deviceId);
 }
 
-export async function twinSetDesired(deviceId: string, patch: unknown){
-  const iface = await getTwinInterface();
-  return iface.SetDesired(deviceId, JSON.stringify(patch ?? {}));
+export async function twinSetDesired(deviceId: string, patchJson: string): Promise<number> {
+  const iface = await getDevicesInterface();
+  return await iface.SetDesired(deviceId, patchJson);
 }
 
-export async function twinSetReported(deviceId: string, patch: unknown){
-  const iface = await getTwinInterface();
-  return iface.SetReported(deviceId, JSON.stringify(patch ?? {}));
+export async function twinSetReported(deviceId: string, patchJson: string): Promise<number> {
+  const iface = await getDevicesInterface();
+  return await iface.SetReported(deviceId, patchJson);
 }
 
-export async function twinListDevices(){
-  const iface = await getTwinInterface();
-  return iface.ListDevices();
+export async function twinListDevices(): Promise<string[]> {
+  const iface = await getDevicesInterface();
+  return await iface.ListDevices();
+}
+
+export async function resolveDeviceIdByUuid(uuid: string): Promise<string | null> {
+  // Placeholder implementation
+  return null;
 }

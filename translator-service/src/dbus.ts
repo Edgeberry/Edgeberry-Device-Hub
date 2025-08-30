@@ -1,4 +1,4 @@
-import * as dbus from 'dbus-next';
+import * as dbus from 'dbus-native';
 
 const CORE_BUS = 'io.edgeberry.devicehub.Core';
 const DEVICES_OBJ = '/io/edgeberry/devicehub/Devices';
@@ -13,10 +13,31 @@ let _iface: DevicesIface | null = null;
 export async function getDevicesInterface(): Promise<DevicesIface> {
   if (_iface) return _iface;
   const bus = dbus.systemBus();
-  const obj = await bus.getProxyObject(CORE_BUS, DEVICES_OBJ);
-  const iface = obj.getInterface(DEVICES_IFACE) as unknown as DevicesIface;
-  _iface = iface;
-  return iface;
+  
+  const devicesIface: DevicesIface = {
+    ResolveDeviceIdByUUID: (uuid: string): Promise<[boolean, string, string]> => {
+      return new Promise((resolve, reject) => {
+        const service = bus.getService(CORE_BUS);
+        service.getInterface(DEVICES_OBJ, DEVICES_IFACE, (err: any, iface: any) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          
+          iface.ResolveDeviceIdByUUID(uuid, (err: any, ok: boolean, deviceId: string, error: string) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve([ok, deviceId, error]);
+          });
+        });
+      });
+    }
+  };
+  
+  _iface = devicesIface;
+  return devicesIface;
 }
 
 export async function resolveDeviceIdByUuid(uuid: string): Promise<string | null> {

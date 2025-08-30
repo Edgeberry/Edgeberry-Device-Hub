@@ -1,1 +1,1 @@
-declare module 'dbus-next';
+declare module 'dbus-native';

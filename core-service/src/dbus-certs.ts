@@ -1,4 +1,4 @@
-import * as dbus from 'dbus-next';
+import * as dbus from 'dbus-native';
 import { issueDeviceCertFromCSR } from './certs.js';
 import path from 'path';
 import fs from 'fs';
@@ -46,53 +46,30 @@ class CertificateInterface {
   }
 }
 
-export async function startCertificateDbusServer(bus: any): Promise<void> {
-  try {
-    const certService = new CertificateInterface();
-    
-    // Add method handler for CertificateService methods using the same pattern as WhitelistService
-    (bus as any).addMethodHandler(async (msg: any) => {
-      if (msg.path === OBJECT_PATH && msg.interface === IFACE_NAME) {
-        const method = msg.member;
-        const args = msg.body || [];
-        
-        try {
-          switch (method) {
-            case 'IssueFromCSR':
-              return await certService.IssueFromCSR(args[0], args[1], args[2]);
-            default:
-              throw new Error(`Unknown method: ${method}`);
-          }
-        } catch (error) {
-          console.error(`[dbus-certs] Error in ${method}:`, error);
-          throw error;
-        }
-      }
-      
-      // Handle introspection
-      if (msg.path === OBJECT_PATH && msg.interface === 'org.freedesktop.DBus.Introspectable' && msg.member === 'Introspect') {
-        return `<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
-"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
-<node>
-  <interface name="${IFACE_NAME}">
-    <method name="IssueFromCSR">
-      <arg direction="in" type="s" name="deviceId"/>
-      <arg direction="in" type="s" name="csrPem"/>
-      <arg direction="in" type="u" name="days"/>
-      <arg direction="out" type="b" name="success"/>
-      <arg direction="out" type="s" name="certPem"/>
-      <arg direction="out" type="s" name="caChainPem"/>
-      <arg direction="out" type="s" name="error"/>
-    </method>
-  </interface>
-</node>`;
-      }
-    });
-    
-    console.log(`[dbus-certs] CertificateService exported at ${OBJECT_PATH} on system bus`);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-    console.error('[core-service] Failed to start D-Bus CertificateService:', errorMessage);
-    throw e; // Re-throw to allow caller to handle the error
-  }
+export async function startCertificateDbusServer(): Promise<any> {
+  const bus = dbus.systemBus();
+  const certificateService = new CertificateInterface();
+  
+  console.log('Starting Certificate D-Bus server with dbus-native');
+  
+  // Create service interface using dbus-native pattern
+  const service = bus.getService(BUS_NAME);
+  const obj = service.createObject(OBJECT_PATH);
+  const iface = obj.createInterface(IFACE_NAME);
+  
+  // Add IssueFromCSR method
+  iface.addMethod('IssueFromCSR', {
+    in: ['s', 's', 'i'],
+    out: ['b', 's', 's', 's']
+  }, async (uuid: string, csrPem: string, validityDays: number, callback: Function) => {
+    try {
+      const result = await certificateService.IssueFromCSR(uuid, csrPem, validityDays);
+      callback(null, ...result);
+    } catch (error) {
+      callback(error);
+    }
+  });
+  
+  console.log(`Certificate D-Bus server started on ${BUS_NAME} at ${OBJECT_PATH}`);
+  return bus;
 }
