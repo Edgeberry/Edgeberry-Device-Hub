@@ -1,7 +1,8 @@
 import * as dbus from 'dbus-next';
 import { issueDeviceCertFromCSR } from './certs.js';
-import { CA_CRT } from './config.js';
+import path from 'path';
 import fs from 'fs';
+import { CA_CRT } from './config.js';
 import { getArrayValue } from './types/dbus-helpers.js';
 
 type CertIssueResult = [boolean, string, string, string];
@@ -11,20 +12,8 @@ const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/CertificateService';
 const IFACE_NAME = 'io.edgeberry.devicehub.CertificateService';
 
-class CertificateInterface extends (dbus.interface.Interface as any) {
-  constructor() {
-    super(IFACE_NAME);
-    
-    // Register methods with the correct signature format
-    this.addMethod('IssueFromCSR', { 
-      inSignature: 'ssu', 
-      outSignature: 'bsss',
-      handler: this.issueFromCSR.bind(this)
-    });
-  }
-
-  // IssueFromCSR(s deviceId, s csrPem, u days) → (b ok, s certPem, s caChainPem, s error)
-  private async issueFromCSR(deviceId: string, csrPem: string, days: number): Promise<CertIssueResult> {
+class CertificateInterface {
+  async IssueFromCSR(deviceId: string, csrPem: string, days: number): Promise<[boolean, string, string, string]> {
     try {
       if (typeof deviceId !== 'string' || typeof csrPem !== 'string' || typeof days !== 'number') {
         throw new Error('Invalid parameter types');
@@ -57,18 +46,50 @@ class CertificateInterface extends (dbus.interface.Interface as any) {
   }
 }
 
-export async function startCertificateDbusServer(): Promise<void> {
+export async function startCertificateDbusServer(bus: any): Promise<void> {
   try {
-    const bus = dbus.systemBus();
-    try { 
-      await bus.requestName(BUS_NAME, 0);
-    } catch (e) {
-      console.warn(`[core-service] Could not request name ${BUS_NAME}:`, e);
-    }
+    const certService = new CertificateInterface();
     
-    const iface = new CertificateInterface();
-    bus.export(OBJECT_PATH, iface);
-    console.log(`[core-service] D-Bus CertificateService exported at ${OBJECT_PATH}`);
+    // Add method handler for CertificateService methods using the same pattern as WhitelistService
+    (bus as any).addMethodHandler(async (msg: any) => {
+      if (msg.path === OBJECT_PATH && msg.interface === IFACE_NAME) {
+        const method = msg.member;
+        const args = msg.body || [];
+        
+        try {
+          switch (method) {
+            case 'IssueFromCSR':
+              return await certService.IssueFromCSR(args[0], args[1], args[2]);
+            default:
+              throw new Error(`Unknown method: ${method}`);
+          }
+        } catch (error) {
+          console.error(`[dbus-certs] Error in ${method}:`, error);
+          throw error;
+        }
+      }
+      
+      // Handle introspection
+      if (msg.path === OBJECT_PATH && msg.interface === 'org.freedesktop.DBus.Introspectable' && msg.member === 'Introspect') {
+        return `<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="${IFACE_NAME}">
+    <method name="IssueFromCSR">
+      <arg direction="in" type="s" name="deviceId"/>
+      <arg direction="in" type="s" name="csrPem"/>
+      <arg direction="in" type="u" name="days"/>
+      <arg direction="out" type="b" name="success"/>
+      <arg direction="out" type="s" name="certPem"/>
+      <arg direction="out" type="s" name="caChainPem"/>
+      <arg direction="out" type="s" name="error"/>
+    </method>
+  </interface>
+</node>`;
+      }
+    });
+    
+    console.log(`[dbus-certs] CertificateService exported at ${OBJECT_PATH} on system bus`);
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : 'Unknown error';
     console.error('[core-service] Failed to start D-Bus CertificateService:', errorMessage);

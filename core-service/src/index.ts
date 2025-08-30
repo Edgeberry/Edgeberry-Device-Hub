@@ -67,7 +67,7 @@ import {
   PROVISIONING_KEY_PATH,
   PROVISIONING_HTTP_ENABLE_CERT_API,
 } from './config.js';
-import { ensureDirs, caExists, generateRootCA, readCertMeta, issueProvisioningCert } from './certs.js';
+import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert } from './certs.js';
 import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 import { startWhitelistDbusServer } from './dbus-whitelist.js';
@@ -125,13 +125,14 @@ app.get('/api/provisioning/certs/ca.crt', async (_req: Request, res: Response) =
 app.get('/api/provisioning/certs/provisioning.crt', async (_req: Request, res: Response) => {
   try {
     console.log('[core-service] HIT /api/provisioning/certs/provisioning.crt');
-    if (!PROVISIONING_CERT_PATH || !fs.existsSync(PROVISIONING_CERT_PATH)) { res.status(404).end('not found'); return; }
+    const provisioningCertPath = path.join(PROV_DIR, 'provisioning.crt');
+    if (!fs.existsSync(provisioningCertPath)) { res.status(404).end('not found'); return; }
     res.setHeader('Content-Type', 'application/x-pem-file');
     res.setHeader('Content-Disposition', 'attachment; filename="provisioning.crt"');
-    const s = fs.createReadStream(PROVISIONING_CERT_PATH);
-    s.on('error', () => res.status(500).end());
-    s.pipe(res);
-  } catch {
+    const certContent = fs.readFileSync(provisioningCertPath, 'utf8');
+    res.send(certContent);
+  } catch (err) {
+    console.error('[core-service] Error serving provisioning cert:', err);
     res.status(500).end('server error');
   }
 });
@@ -142,13 +143,14 @@ app.get('/api/provisioning/certs/provisioning.crt', async (_req: Request, res: R
 app.get('/api/provisioning/certs/provisioning.key', async (_req: Request, res: Response) => {
   try {
     console.log('[core-service] HIT /api/provisioning/certs/provisioning.key');
-    if (!PROVISIONING_KEY_PATH || !fs.existsSync(PROVISIONING_KEY_PATH)) { res.status(404).end('not found'); return; }
+    const provisioningKeyPath = path.join(PROV_DIR, 'provisioning.key');
+    if (!fs.existsSync(provisioningKeyPath)) { res.status(404).end('not found'); return; }
     res.setHeader('Content-Type', 'application/x-pem-file');
     res.setHeader('Content-Disposition', 'attachment; filename="provisioning.key"');
-    const s = fs.createReadStream(PROVISIONING_KEY_PATH);
-    s.on('error', () => res.status(500).end());
-    s.pipe(res);
-  } catch {
+    const keyContent = fs.readFileSync(provisioningKeyPath, 'utf8');
+    res.send(keyContent);
+  } catch (err) {
+    console.error('[core-service] Error serving provisioning key:', err);
     res.status(500).end('server error');
   }
 });
@@ -608,10 +610,7 @@ app.get('/diagnostics', (_req: Request, res: Response) => {
 console.log('[core-service] hello from Device Hub core-service');
 // Ensure provisioning DB schema exists (uuid_whitelist etc.) before exposing D-Bus API
 try { ensureProvisioningSchema(); } catch {}
-// Start D-Bus WhitelistService (system bus)
-startWhitelistDbusServer().catch(() => {});
-// Start D-Bus CertificateService (system bus)
-startCertificateDbusServer().catch(() => {});
+// D-Bus services are now started via startDbusServices() function below
 // Start D-Bus TwinService (system bus) — Core as primary interface
 startCoreTwinDbusServer().catch(() => {});
 // Start D-Bus Devices1 (UUID -> deviceId resolution via devices list)
@@ -1128,16 +1127,13 @@ app.get('/api/settings/certs/provisioning', async (_req: Request, res: Response)
   }
 });
 
-// POST /api/settings/certs/provisioning { name, days? } -> issue a new provisioning cert
+// POST /api/settings/certs/provisioning -> generate provisioning cert
 app.post('/api/settings/certs/provisioning', async (req: Request, res: Response) => {
   try {
-    const { name, days } = req.body || {};
-    if (!name || typeof name !== 'string') { res.status(400).json({ error: 'name is required' }); return; }
-    const result = await issueProvisioningCert(name, typeof days === 'number' ? days : undefined);
-    const meta = await readCertMeta(result.certPath);
-    res.json({ ok: true, cert: result.certPath, key: result.keyPath, meta });
+    await generateProvisioningCert();
+    res.json({ ok: true, message: 'Provisioning certificate generated' });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'failed to issue provisioning cert' });
+    res.status(500).json({ error: e?.message || 'failed to generate provisioning cert' });
   }
 });
 
@@ -1809,7 +1805,34 @@ function setupShutdown(){
 }
 setupShutdown();
 
-server.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[core-service] listening on :${PORT}, UI_DIST=${UI_DIST}`);
+// Start D-Bus services and ensure provisioning certificates exist
+async function startDbusServices() {
+  try {
+    console.log(`[core-service] Starting D-Bus WhitelistService...`);
+    const bus = await startWhitelistDbusServer();
+    console.log(`[core-service] WhitelistService started, starting CertificateService...`);
+    await startCertificateDbusServer(bus);
+    console.log(`[core-service] D-Bus services started successfully`);
+    
+    // Ensure provisioning certificates exist for device bootstrap
+    try {
+      await generateProvisioningCert();
+      console.log(`[core-service] Provisioning certificates ensured`);
+    } catch (error) {
+      console.warn(`[core-service] Failed to generate provisioning certificates:`, error);
+    }
+  } catch (error) {
+    console.error(`[core-service] Failed to start D-Bus services:`, error);
+    console.error(`[core-service] D-Bus error details:`, (error as Error).stack || error);
+  }
+}  
+// Initialize D-Bus services before starting HTTP server
+startDbusServices().then(() => {
+  server.listen(PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`[core-service] listening on :${PORT}, UI_DIST=${UI_DIST}`);
+  });
+}).catch((error) => {
+  console.error(`[core-service] Startup failed:`, error);
+  process.exit(1);
 });

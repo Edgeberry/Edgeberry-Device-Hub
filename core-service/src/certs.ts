@@ -138,3 +138,66 @@ export async function issueDeviceCertFromCSR(deviceId: string, csrPem: string, d
   return { certPem, caChainPem };
 }
 
+// Generate provisioning client certificate for device bootstrap
+export async function generateProvisioningCert(): Promise<void> {
+  if (!(await caExists())) {
+    throw new Error('Root CA not found. Generate it first.');
+  }
+  
+  ensureDirs();
+  
+  const provisioningCertPath = path.join(PROV_DIR, 'provisioning.crt');
+  const provisioningKeyPath = path.join(PROV_DIR, 'provisioning.key');
+  
+  // Skip if already exists
+  if (fs.existsSync(provisioningCertPath) && fs.existsSync(provisioningKeyPath)) {
+    console.log('[certs] Provisioning certificate already exists');
+    return;
+  }
+  
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edgeberry-prov-'));
+  const keyPath = path.join(tmpDir, 'provisioning.key');
+  const csrPath = path.join(tmpDir, 'provisioning.csr');
+  const crtPath = path.join(tmpDir, 'provisioning.crt');
+  const extPath = path.join(tmpDir, 'provisioning.ext');
+  
+  try {
+    // Generate private key (unencrypted for provisioning)
+    let r = await runCmd('openssl', ['genrsa', '-out', keyPath, '2048']);
+    if (r.code !== 0) throw new Error(`key generation failed: ${r.err || r.out}`);
+    
+    // Generate CSR
+    r = await runCmd('openssl', ['req', '-new', '-key', keyPath, '-out', csrPath, '-subj', '/CN=provisioning-client']);
+    if (r.code !== 0) throw new Error(`CSR generation failed: ${r.err || r.out}`);
+    
+    // Create extension file for client certificate
+    const extContent = [
+      '[v3_client]',
+      'basicConstraints=CA:FALSE',
+      'keyUsage = digitalSignature, keyEncipherment',
+      'extendedKeyUsage = clientAuth',
+      'subjectKeyIdentifier = hash',
+      'authorityKeyIdentifier = keyid,issuer',
+      ''
+    ].join('\n');
+    fs.writeFileSync(extPath, extContent, { encoding: 'utf8' });
+    
+    // Sign certificate
+    r = await runCmd('openssl', ['x509', '-req', '-in', csrPath, '-CA', CA_CRT, '-CAkey', CA_KEY, '-CAcreateserial', '-out', crtPath, '-days', '825', '-sha256', '-extfile', extPath, '-extensions', 'v3_client']);
+    if (r.code !== 0) throw new Error(`certificate signing failed: ${r.err || r.out}`);
+    
+    // Copy to final locations
+    fs.copyFileSync(crtPath, provisioningCertPath);
+    fs.copyFileSync(keyPath, provisioningKeyPath);
+    
+    console.log('[certs] Generated provisioning certificate');
+  } finally {
+    // Cleanup temp files
+    try { fs.unlinkSync(keyPath); } catch {}
+    try { fs.unlinkSync(csrPath); } catch {}
+    try { fs.unlinkSync(crtPath); } catch {}
+    try { fs.unlinkSync(extPath); } catch {}
+    try { fs.rmdirSync(tmpDir); } catch {}
+  }
+}
+

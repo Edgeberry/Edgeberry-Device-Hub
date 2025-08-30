@@ -14,7 +14,7 @@ const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/WhitelistService';
 const IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService';
 
-class WhitelistInterface extends (dbus.interface.Interface as any) {
+class WhitelistInterface {
   private db: DB | null = null;
   
   private getDb(): DB | null {
@@ -26,43 +26,8 @@ class WhitelistInterface extends (dbus.interface.Interface as any) {
     }
     return this.db;
   }
-  constructor() {
-    super(IFACE_NAME);
 
-    // Register all methods with proper type signatures
-    this.addMethod('CheckUUID', {
-      inSignature: 's',
-      outSignature: 'bsss',
-      handler: this.checkUUID.bind(this)
-    });
-
-    this.addMethod('List', {
-      inSignature: '',
-      outSignature: 'a(sssx)',
-      handler: this.list.bind(this)
-    });
-
-    this.addMethod('Add', {
-      inSignature: 'ss',
-      outSignature: 'bss',
-      handler: this.add.bind(this)
-    });
-
-    this.addMethod('Remove', {
-      inSignature: 's',
-      outSignature: 'bss',
-      handler: this.remove.bind(this)
-    });
-
-    this.addMethod('Get', {
-      inSignature: 's',
-      outSignature: 'bsssx',
-      handler: this.get.bind(this)
-    });
-  }
-
-
-  private async checkUUID(uuid: string): Promise<[boolean, string, string, string]> {
+  async CheckUUID(uuid: string): Promise<[boolean, string, string, string]> {
     if (typeof uuid !== 'string' || !uuid.trim()) {
       console.warn('Invalid UUID provided to CheckUUID');
       return [false, 'invalid_uuid', '', ''];
@@ -98,49 +63,30 @@ class WhitelistInterface extends (dbus.interface.Interface as any) {
     }
   }
 
-  private async list(): Promise<Array<[string, string, string, bigint]>> {
+  async List(): Promise<Array<[string, string, string, bigint]>> {
     const db = this.getDb();
     if (!db) {
       return [];
     }
 
     try {
-      const stmt = db.prepare(`
-        SELECT 
-          uuid, 
-          note, 
-          created_at,
-          strftime('%s', used_at) as used_at_ts 
-        FROM uuid_whitelist
-      `);
+      const stmt = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC');
+      const rows = stmt.all() as Array<{ uuid: string; note: string; created_at: string; used_at?: string }>;
       
-      const rows = stmt.all() as Array<{
-        uuid: string;
-        note: string;
-        created_at: string;
-        used_at_ts: number | null;
-      }>;
-
-      return rows.map(row => {
-        const timestamp = row.used_at_ts ? BigInt(row.used_at_ts) : 0n;
-        
-        return [
-          String(row.uuid || ''),
-          String(row.note || ''),
-          String(row.created_at || ''),
-          timestamp
-        ];
-      });
+      return rows.map(row => [
+        row.uuid,
+        row.note || '',
+        row.created_at || '',
+        BigInt(Date.parse(row.used_at || '0'))
+      ]);
     } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-      console.error('List error:', errorMessage);
+      console.error('List error:', e);
       return [];
     }
   }
 
-  private async add(uuid: string, note: string): Promise<[boolean, string, string]> {
+  async Add(uuid: string, note: string): Promise<[boolean, string, string]> {
     if (typeof uuid !== 'string' || !uuid.trim()) {
-      console.warn('Invalid UUID provided to Add');
       return [false, 'invalid_uuid', ''];
     }
 
@@ -150,35 +96,23 @@ class WhitelistInterface extends (dbus.interface.Interface as any) {
     }
 
     try {
-      // Check if UUID already exists
-      const existing = db.prepare('SELECT uuid FROM uuid_whitelist WHERE uuid = ?').get(uuid);
-      if (existing) {
-        return [false, 'uuid_already_exists', ''];
+      const stmt = db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at) VALUES (?, ?, datetime("now"))');
+      const result = stmt.run(uuid.trim(), note || '');
+      
+      if (result.changes > 0) {
+        return [true, '', ''];
+      } else {
+        return [false, 'insert_failed', ''];
       }
-      
-      const now = new Date().toISOString();
-      const stmt = db.prepare(`
-        INSERT INTO uuid_whitelist (uuid, note, created_at)
-        VALUES (?, ?, ?)
-      `);
-      
-      const result = stmt.run(uuid, note || '', now);
-      return [result.changes > 0, 'success', ''];
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Unknown error';
       console.error('Add error:', errorMessage);
-      
-      if (errorMessage.includes('UNIQUE constraint failed')) {
-        return [false, 'duplicate', ''];
-      }
-      
-      return [false, 'internal_error', errorMessage];
+      return [false, errorMessage, ''];
     }
   }
 
-  private async remove(uuid: string): Promise<[boolean, string, string]> {
+  async Remove(uuid: string): Promise<[boolean, string, string]> {
     if (typeof uuid !== 'string' || !uuid.trim()) {
-      console.warn('Invalid UUID provided to Remove');
       return [false, 'invalid_uuid', ''];
     }
 
@@ -189,37 +123,136 @@ class WhitelistInterface extends (dbus.interface.Interface as any) {
 
     try {
       const stmt = db.prepare('DELETE FROM uuid_whitelist WHERE uuid = ?');
-      const result = stmt.run(uuid);
+      const result = stmt.run(uuid.trim());
       
-      if (result.changes === 0) {
-        return [false, 'not_found', ''];
+      if (result.changes > 0) {
+        return [true, '', ''];
+      } else {
+        return [false, 'uuid_not_found', ''];
       }
-      
-      return [true, 'success', ''];
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Unknown error';
       console.error('Remove error:', errorMessage);
-      return [false, 'internal_error', errorMessage];
+      return [false, errorMessage, ''];
+    }
+  }
+
+  async Get(uuid: string): Promise<[boolean, string, string, string, string]> {
+    if (typeof uuid !== 'string' || !uuid.trim()) {
+      console.warn('Invalid UUID provided to Get');
+      return [false, 'invalid_uuid', '', '', ''];
+    }
+
+    const db = this.getDb();
+    if (!db) {
+      return [false, 'database_error', '', '', ''];
+    }
+
+    try {
+      const stmt = db.prepare('SELECT note, created_at, used_at FROM uuid_whitelist WHERE uuid = ?');
+      const row = stmt.get(uuid) as { note?: string; created_at?: string; used_at?: string } | undefined;
+      
+      if (!row) {
+        return [false, 'uuid_not_whitelisted', '', '', ''];
+      }
+
+      return [
+        true,
+        String(row.note || ''),
+        String(row.created_at || ''),
+        String(row.used_at || ''),
+        ''
+      ];
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+      console.error('Get error:', errorMessage);
+      return [false, 'internal_error', '', '', ''];
+    }
+  }
+
+  async MarkUsed(uuid: string): Promise<[boolean, string]> {
+    if (typeof uuid !== 'string' || !uuid.trim()) {
+      console.warn('Invalid UUID provided to MarkUsed');
+      return [false, 'invalid_uuid'];
+    }
+
+    const db = this.getDb();
+    if (!db) {
+      return [false, 'database_error'];
+    }
+
+    try {
+      const stmt = db.prepare('UPDATE uuid_whitelist SET used_at = datetime("now") WHERE uuid = ? AND used_at IS NULL');
+      const result = stmt.run(uuid.trim());
+      
+      return [result.changes > 0, ''];
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+      console.error('MarkUsed error:', errorMessage);
+      return [false, errorMessage];
     }
   }
 }
 
-export async function startWhitelistDbusServer(): Promise<void> {
-  try {
-    const bus = dbus.systemBus();
-    
-    try { 
-      await bus.requestName(BUS_NAME, 0);
-    } catch (e) {
-      console.warn(`[core-service] Could not request name ${BUS_NAME}:`, e);
+export async function startWhitelistDbusServer(): Promise<dbus.MessageBus> {
+  const bus = dbus.systemBus();
+  
+  const whitelistService = new WhitelistInterface();
+  
+  // Add method handler for WhitelistService methods
+  (bus as any).addMethodHandler(async (msg: any) => {
+    if (msg.path === OBJECT_PATH && msg.interface === IFACE_NAME) {
+      const method = msg.member;
+      const args = msg.body || [];
+      
+      try {
+        switch (method) {
+          case 'CheckUUID':
+            return await whitelistService.CheckUUID(args[0]);
+          case 'List':
+            return await whitelistService.List();
+          case 'Add':
+            return await whitelistService.Add(args[0], args[1]);
+          case 'Remove':
+            return await whitelistService.Remove(args[0]);
+          case 'Get':
+            return await whitelistService.Get(args[0]);
+          case 'MarkUsed':
+            return await whitelistService.MarkUsed(args[0]);
+          default:
+            throw new Error(`Unknown method: ${method}`);
+        }
+      } catch (error) {
+        console.error(`[dbus-whitelist] Error in ${method}:`, error);
+        throw error;
+      }
     }
     
-    const iface = new WhitelistInterface();
-    bus.export(OBJECT_PATH, iface);
-    console.log(`[core-service] D-Bus WhitelistService exported at ${OBJECT_PATH}`);
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-    console.error('[core-service] Failed to start D-Bus WhitelistService:', errorMessage);
-    throw e; // Re-throw to allow caller to handle the error
-  }
+    // Handle introspection
+    if (msg.path === OBJECT_PATH && msg.interface === 'org.freedesktop.DBus.Introspectable' && msg.member === 'Introspect') {
+      return `<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="${IFACE_NAME}">
+    <method name="CheckUUID">
+      <arg direction="in" type="s" name="uuid"/>
+      <arg direction="out" type="b" name="ok"/>
+      <arg direction="out" type="s" name="note"/>
+      <arg direction="out" type="s" name="created_at"/>
+      <arg direction="out" type="s" name="error"/>
+    </method>
+    <method name="MarkUsed">
+      <arg direction="in" type="s" name="uuid"/>
+      <arg direction="out" type="b" name="ok"/>
+      <arg direction="out" type="s" name="error"/>
+    </method>
+  </interface>
+</node>`;
+    }
+  });
+  
+  await bus.requestName(BUS_NAME, 0);
+  console.log(`[dbus-whitelist] WhitelistService exported at ${OBJECT_PATH} on system bus`);
+  
+  return bus as any;
 }
