@@ -11,32 +11,33 @@ export function setBroadcastFunction(fn: (topic: string, payload: any) => void) 
 }
 
 class CoreTwinInterface {
-  async GetTwin(deviceId: string): Promise<[string, number, string, string]> {
-    return ['{}', 0, '{}', ''];
+  async GetTwin(deviceId: string): Promise<string> {
+    return JSON.stringify({ desired: {}, reported: {}, version: 0, error: '' });
   }
 
-  async SetDesired(deviceId: string, patchJson: string): Promise<[boolean, number, string]> {
-    return [true, 1, ''];
+  async SetDesired(deviceId: string, patchJson: string): Promise<string> {
+    return JSON.stringify({ success: true, newVersion: 1, error: '' });
   }
 
-  async SetReported(deviceId: string, patchJson: string): Promise<[boolean, number, string]> {
-    return [true, 1, ''];
+  async SetReported(deviceId: string, patchJson: string): Promise<string> {
+    return JSON.stringify({ success: true, newVersion: 1, error: '' });
   }
 
-  async ListDevices(): Promise<string[]> {
-    return [];
+  async ListDevices(): Promise<string> {
+    return JSON.stringify([]);
   }
 
-  async UpdateDeviceStatus(deviceId: string, status: string, timestamp: number): Promise<boolean> {
-    console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${new Date(timestamp).toISOString()}`);
+  async UpdateDeviceStatus(deviceId: string, status: string, timestamp: string): Promise<string> {
+    const timestampNum = parseInt(timestamp);
+    console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${new Date(timestampNum).toISOString()}`);
     
     // Broadcast device status update via WebSocket
     if (broadcastFunction) {
       const statusUpdate = {
         deviceId,
         status: status === 'online',
-        timestamp: new Date(timestamp).toISOString(),
-        last_seen: status === 'offline' ? new Date(timestamp).toISOString() : null
+        timestamp: new Date(timestampNum).toISOString(),
+        last_seen: status === 'offline' ? new Date(timestampNum).toISOString() : null
       };
       
       // Broadcast to both authenticated and public device status topics
@@ -44,11 +45,11 @@ class CoreTwinInterface {
       broadcastFunction('device.status.public', { type: 'device.status.public', data: { 
         deviceId, 
         status: status === 'online',
-        timestamp: new Date(timestamp).toISOString()
+        timestamp: new Date(timestampNum).toISOString()
       }});
     }
     
-    return true;
+    return JSON.stringify({ success: true });
   }
 }
 
@@ -91,7 +92,7 @@ export async function startCoreTwinDbusServer(bus: any): Promise<any> {
         throw error;
       }
     },
-    UpdateDeviceStatus: async (deviceId: string, status: string, timestamp: number) => {
+    UpdateDeviceStatus: async (deviceId: string, status: string, timestamp: string) => {
       try {
         const result = await twinService.UpdateDeviceStatus(deviceId, status, timestamp);
         return result;
@@ -105,11 +106,11 @@ export async function startCoreTwinDbusServer(bus: any): Promise<any> {
   bus.exportInterface(serviceObject, OBJECT_PATH, {
     name: IFACE_NAME,
     methods: {
-      GetTwin: ['s', 'suss'],
-      SetDesired: ['ss', 'bus'],
-      SetReported: ['ss', 'bus'],
-      ListDevices: ['', 'as'],
-      UpdateDeviceStatus: ['sst', 'b']
+      GetTwin: ['s', 's'],
+      SetDesired: ['ss', 's'],
+      SetReported: ['ss', 's'],
+      ListDevices: ['', 's'],
+      UpdateDeviceStatus: ['sss', 's']
     },
     signals: {}
   });

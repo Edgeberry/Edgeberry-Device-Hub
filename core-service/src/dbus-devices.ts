@@ -17,9 +17,9 @@ function openDb(path: string): Database.Database | null {
 }
 
 class DevicesInterface {
-  async RegisterDevice(deviceId: string, name: string, token: string, metaJson: string): Promise<[boolean, string]> {
+  async RegisterDevice(deviceId: string, name: string, token: string, metaJson: string): Promise<string> {
     const db = openDb(PROVISIONING_DB);
-    if (!db) return [false, 'Database unavailable'];
+    if (!db) return JSON.stringify({ success: false, error: 'Database unavailable' });
     
     try {
       // Create devices table if it doesn't exist
@@ -41,10 +41,10 @@ class DevicesInterface {
       
       stmt.run(deviceId, name || '', token || '', metaJson || '{}');
       console.log(`[DevicesService] Registered device: ${deviceId}`);
-      return [true, 'Device registered successfully'];
+      return JSON.stringify({ success: true, message: 'Device registered successfully' });
     } catch (error) {
       console.error(`[DevicesService] Failed to register device ${deviceId}:`, error);
-      return [false, `Registration failed: ${(error as Error).message}`];
+      return JSON.stringify({ success: false, error: `Registration failed: ${(error as Error).message}` });
     } finally {
       db.close();
     }
@@ -90,14 +90,14 @@ class DevicesInterface {
     }
   }
 
-  async GetDeviceInfo(deviceId: string): Promise<[boolean, string, string]> {
+  async GetDeviceInfo(deviceId: string): Promise<string> {
     // Placeholder implementation
-    return [false, '', 'Device not found'];
+    return JSON.stringify({ success: false, name: '', error: 'Device not found' });
   }
 
-  async ListDevices(): Promise<string[]> {
+  async ListDevices(): Promise<string> {
     // Placeholder implementation
-    return [];
+    return JSON.stringify([]);
   }
 }
 
@@ -152,10 +152,10 @@ export async function startDevicesDbusServer(bus: any): Promise<any> {
   bus.exportInterface(serviceObject, OBJECT_PATH, {
     name: IFACE_NAME,
     methods: {
-      RegisterDevice: ['ssss', 'bs'],
+      RegisterDevice: ['ssss', 's'],
       ResolveDeviceIdByUuid: ['s', 's'],
-      GetDeviceInfo: ['s', 'bss'],
-      ListDevices: ['', 'as']
+      GetDeviceInfo: ['s', 's'],
+      ListDevices: ['', 's']
     },
     signals: {}
   });

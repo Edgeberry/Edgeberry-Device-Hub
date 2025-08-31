@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-08-31 15:36 CEST
+**Last updated:** 2025-08-31 19:10 CEST
 
 ## Documentation Strategy
 
@@ -398,10 +398,14 @@ Internal modularity is an implementation detail and must not leak into the publi
 - **Authentication:** Via the `fh_session` JWT cookie on upgrade
 - **Features:** Topic-based subscribe/unsubscribe and server push updates
 
+**Device Status Topics:**
+- `device.status` (authenticated) - Real-time device online/offline status updates with timestamps
+- `device.status.public` (public) - Public device status updates for anonymous clients
+
 Anonymous access (Observer mode):
 - Connections without a valid session cookie are accepted as anonymous.
 - On connect the server sends `{ type: "welcome", data: { authenticated: boolean } }` to indicate auth status.
-- Anonymous clients are read-only and may only subscribe to the public topics listed below.
+- Anonymous clients are read-only and may only subscribe to the public topics listed above.
 - Authenticated clients may subscribe to all topics documented in this section (subject to role-based UI gating where applicable).
 
 #### UI Routing (One-Page App)
@@ -556,7 +560,6 @@ Common namespace: `io.edgeberry.devicehub.*`
 **Production Status**: All D-Bus interfaces are fully implemented and production-ready. Whitelist enforcement is enabled by default in the provisioning service.
 
 #### Core Whitelist Service
-
 - Bus name: `io.edgeberry.devicehub.Core`
 - Object path: `/io/edgeberry/devicehub/WhitelistService`
 - Interface: `io.edgeberry.devicehub.WhitelistService`
@@ -565,6 +568,7 @@ Common namespace: `io.edgeberry.devicehub.*`
     - Input: `{"uuid": "string"}`
     - Output: `{"success": boolean, "note": "string", "used_at": "string", "error": "string"}`
   - `MarkUsed(s requestJson) → (s responseJson)`
+{{ ... }}
     - Input: `{"uuid": "string"}`
     - Output: `{"success": boolean, "error": "string"}`
   - `List(s requestJson) → (s responseJson)`
@@ -611,6 +615,9 @@ Common namespace: `io.edgeberry.devicehub.*`
     - `SetReported(s requestJson) → (s responseJson)`
       - Input: `{"deviceId": "string", "reportedJson": "string"}`
       - Output: `{"success": boolean, "newVersion": number, "error": "string"}`
+    - `UpdateDeviceStatus(s requestJson) → (s responseJson)`
+      - Input: `{"deviceId": "string", "status": "string", "timestamp": "string"}`
+      - Output: `{"success": boolean, "error": "string"}`
     - `ListDevices(s requestJson) → (s responseJson)`
       - Input: `{}`
       - Output: `{"success": boolean, "deviceIds": ["string"], "error": "string"}`

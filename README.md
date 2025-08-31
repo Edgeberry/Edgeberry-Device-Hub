@@ -27,12 +27,24 @@ Microservice architecture seperates the responsibilities. Each service is a sepa
 - **Device Twin Service**
   - Maintains a "digital twin" for each device - a real-time mirror of its current state and desired configuration.
   - Tracks what you want each device to do (desired state) versus what it's actually doing (reported state), automatically syncing changes between your dashboard and devices.
+  - **Monitors device online/offline status** by subscribing to Mosquitto broker connection events and stores device status history in SQLite database.
+  - **Provides real-time device status updates** via D-Bus to Core service, which broadcasts status changes to UI clients over WebSocket.
   - Exposes an internal D-Bus interface `io.edgeberry.devicehub.Twin1` under bus `io.edgeberry.devicehub.Twin` for Core to call. Not directly exposed to external clients.
 
 See `documentation/alignment.md` for architecture and interface details, including D-Bus contracts.
 
-### HTTP API Note (Twin)
+### HTTP API Notes
+
+**Device Twin:**
 - New endpoint in Core: `GET /api/devices/:id/twin` — returns desired/reported docs by calling Twin over D-Bus.
+
+**Device Status:**
+- Device list endpoint `GET /api/devices` now includes real-time `online` status and `last_seen` timestamp for each device.
+- Device status is fetched from twin-service database and updated in real-time via WebSocket broadcasts.
+
+**WebSocket API:**
+- Core service provides WebSocket endpoint at `/api/ws` for real-time updates.
+- Topics: `device.status` (authenticated), `device.status.public` (public) for live device online/offline notifications.
 
 ## Internal MQTT (twin-service)
 
@@ -49,6 +61,9 @@ See `documentation/alignment.md` for architecture and interface details, includi
 | `$devicehub/devices/{deviceId}/twin/update/accepted` | Outbound | Twin update accepted |
 | `$devicehub/devices/{deviceId}/twin/update/rejected` | Outbound | Twin update rejected |
 | `$devicehub/devices/{deviceId}/twin/update/delta` | Outbound | Twin state delta notification |
+| `$devicehub/devices/{deviceId}/status` | Inbound | Device status updates (online/offline with timestamp) |
+| `$devicehub/devices/{deviceId}/heartbeat` | Inbound | Device heartbeat messages |
+| `$SYS/broker/log/N` | Inbound | Mosquitto broker connection logs (monitored by twin-service) |
 
 Note: Core no longer ingests MQTT directly. All device twin access for external clients goes through Core HTTP/D-Bus.
 

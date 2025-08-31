@@ -667,6 +667,7 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
 // Data sources:
 //  - provisioning.db (table `devices`)
 //  - registry.db (table `device_events`)
+//  - twin.db (table `device_events` for connection status)
 // For MVP we access SQLite files directly. In future, route via shared repos or D-Bus.
 
 function openDb(file: string){
@@ -896,19 +897,80 @@ function getDevicesListSync(): { devices: Array<{ id: string; name: string; toke
   if(!db){ return { devices: [] }; }
   try{
     const rows = db.prepare('SELECT id, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
-    const lastSeen = getLastSeenMap();
-    const now = Date.now();
+    
+    // Get device statuses from twin-service database
+    const deviceStatuses = getTwinServiceDeviceStatuses();
+    
     const devices = rows.map((r: any) => {
-      const ls = lastSeen[r.id];
-      const last_seen = ls || null;
-      const online = ls ? (now - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
-      return { id: r.id, name: r.name, token: r.token, meta: tryParseJson(r.meta), created_at: r.created_at, last_seen, online };
+      const deviceStatus = deviceStatuses[r.id];
+      const online = deviceStatus ? deviceStatus.online : false;
+      const last_seen = deviceStatus ? deviceStatus.last_seen : null;
+      
+      return { 
+        id: r.id, 
+        name: r.name, 
+        token: r.token, 
+        meta: tryParseJson(r.meta), 
+        created_at: r.created_at, 
+        last_seen, 
+        online 
+      };
     });
     return { devices };
   }catch{
     return { devices: [] };
   }finally{
     try{ db.close(); }catch{}
+  }
+}
+
+function getTwinServiceDeviceStatuses(): Record<string, { online: boolean; last_seen: string | null }> {
+  const twinDbPath = '/opt/Edgeberry/devicehub/twin-service/twin.db';
+  const db = openDb(twinDbPath);
+  if (!db) { return {}; }
+  
+  try {
+    // Ensure device_events table exists
+    db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      payload BLOB,
+      ts TEXT NOT NULL DEFAULT (datetime('now'))
+    )`).run();
+
+    // Get latest status for each device
+    const stmt = db.prepare(`
+      SELECT device_id, payload, ts FROM device_events e1
+      WHERE e1.topic LIKE '%clients/%' 
+      AND e1.id = (
+        SELECT MAX(e2.id) FROM device_events e2 
+        WHERE e2.device_id = e1.device_id AND e2.topic LIKE '%clients/%'
+      )
+    `);
+    
+    const rows = stmt.all() as { device_id: string; payload: string; ts: string }[];
+    const result: Record<string, { online: boolean; last_seen: string | null }> = {};
+    
+    for (const row of rows) {
+      try {
+        const payload = JSON.parse(row.payload);
+        const isOnline = payload.status === 'online';
+        result[row.device_id] = {
+          online: isOnline,
+          last_seen: isOnline ? null : row.ts
+        };
+      } catch {
+        result[row.device_id] = { online: false, last_seen: null };
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('[core-service] Failed to get device statuses from twin-service:', error);
+    return {};
+  } finally {
+    try { db.close(); } catch {}
   }
 }
 

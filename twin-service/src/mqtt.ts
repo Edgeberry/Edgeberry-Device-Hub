@@ -1,6 +1,6 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync, existsSync } from 'fs';
-import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, REGISTRY_DB } from './config.js';
+import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, DB_PATH } from './config.js';
 import { Json } from './types.js';
 import { getTwin, setDoc } from './db.js';
 import { dbusUpdateDeviceStatus } from './dbus.js';
@@ -41,7 +41,7 @@ function parseStatusDeviceId(topic: string): string | null {
 
 function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean): void {
   try {
-    const db = new Database(REGISTRY_DB);
+    const db = new Database(DB_PATH);
     
     // Ensure device_events table exists
     db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
@@ -64,8 +64,9 @@ function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean): void
     
     // Report status change to core-service via D-Bus
     dbusUpdateDeviceStatus(deviceId, status, timestamp).then((result) => {
-      if (!result.ok) {
-        console.error(`[${SERVICE}] Failed to report device status to core-service: ${result.error}`);
+      // result is boolean - true means success
+      if (!result) {
+        console.error(`[${SERVICE}] Failed to report device status to core-service`);
       }
     }).catch((error) => {
       console.error(`[${SERVICE}] Error reporting device status to core-service:`, error);
@@ -83,7 +84,7 @@ function isValidDeviceId(clientId: string): boolean {
 
 function recordDeviceHeartbeat(deviceId: string): void {
   try {
-    const db = new Database(REGISTRY_DB);
+    const db = new Database(DB_PATH);
     
     // Ensure device_events table exists
     db.prepare(`CREATE TABLE IF NOT EXISTS device_events (

@@ -1,6 +1,9 @@
 import fs from 'fs';
 import dbus from 'dbus-native';
 import type { Json } from './types.js';
+import { getAllDeviceStatuses } from './db.js';
+import { DB_PATH } from './config.js';
+import Database from 'better-sqlite3';
 
 const SERVICE = 'twin-service';
 
@@ -95,14 +98,27 @@ export async function dbusSetReported(deviceId: string, reportedJson: string): P
   }
 }
 
-export async function dbusUpdateDeviceStatus(deviceId: string, status: string, timestamp: number): Promise<{ ok: boolean; error?: string }> {
+export async function dbusUpdateDeviceStatus(deviceId: string, status: string, timestamp: number): Promise<boolean> {
   try {
-    const result = await callDbusMethod(CORE_BUS_NAME, TWIN_OBJECT_PATH, TWIN_IFACE_NAME, 'UpdateDeviceStatus', deviceId, status, timestamp);
-    const success = result[0];
-    return { ok: success };
-  } catch (error) {
-    console.error(`[twin-service] Failed to update device status via D-Bus:`, error);
-    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    const result = await callDbusMethod(CORE_BUS_NAME, TWIN_OBJECT_PATH, TWIN_IFACE_NAME, 'UpdateDeviceStatus', deviceId, status, timestamp.toString());
+    const response = JSON.parse(result[0] as string);
+    return response.success;
+  } catch (error: any) {
+    console.error(`[${SERVICE}] Failed to update device status via D-Bus:`, error);
+    throw new Error(`Failed to report device status to core-service: ${error?.message || 'Unknown error'}`);
+  }
+}
+
+/** Get all device statuses from the twin-service database */
+export function getAllDeviceStatusesFromDb(): Record<string, { online: boolean; last_seen: string | null }> {
+  try {
+    const db = new (Database as any)(DB_PATH);
+    const statuses = getAllDeviceStatuses(db);
+    db.close();
+    return statuses;
+  } catch (error: any) {
+    console.error(`[${SERVICE}] Failed to get device statuses:`, error);
+    return {};
   }
 }
 
