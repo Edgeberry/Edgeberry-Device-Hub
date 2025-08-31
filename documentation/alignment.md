@@ -631,7 +631,7 @@ CI and releases:
   - `versions.json` holds the unified project version and pinned dependency versions.
   - `scripts/sync-versions.js` updates all `package.json` files across the monorepo.
   - Root script: `npm run sync-versions`.
-  - Applies to: root, `core-service`, `provisioning-service`, `registry-service` (if present), `twin-service`, `ui`, `examples/nodered`, `examples/virtual-device`.
+  - Applies to: root, `core-service`, `provisioning-service`, `twin-service`, `translator-service`, `ui`, `examples/nodered`, `examples/virtual-device`.
 - Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
 

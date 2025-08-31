@@ -161,7 +161,9 @@ main() {
     for opt in "${SSH_COMMON_OPTS[@]}"; do
       RSH_CMD="$RSH_CMD $opt"
     done
-    [[ -n "${IDENTITY_FILE}" ]] && RSH_CMD="$RSH_CMD -i '$IDENTITY_FILE'"
+    if [[ -n "${IDENTITY_FILE}" ]]; then
+      RSH_CMD="$RSH_CMD -i '$IDENTITY_FILE'"
+    fi
     rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" "${ART_FILES[@]}" "${USER}@${HOST}:${REMOTE_STAGING}/dist-artifacts/"
     rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" -r "$ROOT_DIR/config/" "${USER}@${HOST}:${REMOTE_STAGING}/config/"
     rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" "$ROOT_DIR/scripts/install.sh" "${USER}@${HOST}:${REMOTE_STAGING}/scripts/install.sh"

@@ -7,3 +7,4 @@ export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT || un
 export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY || undefined; // e.g., ../config/certs/twin.key
 export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
 export const DB_PATH: string = process.env.TWIN_DB || 'twin.db';
+export const REGISTRY_DB: string = process.env.REGISTRY_DB || 'registry.db';

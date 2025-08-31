@@ -36,26 +36,21 @@
  */
 import express, { type Request, type Response, type NextFunction } from 'express';
 import http from 'http';
-import { WebSocketServer } from 'ws';
-import path from 'path';
-import morgan from 'morgan';
-import cors from 'cors';
+import { readFileSync, existsSync } from 'fs';
 import { spawn } from 'child_process';
-import fs from 'fs';
-import os from 'os';
-import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
 import Database from 'better-sqlite3';
+import express from 'express';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import cookieParser from 'cookie-parser';
+import cors from 'cors';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { connect as mqttConnect } from 'mqtt';
 import {
   PORT,
-  ADMIN_USER,
-  ADMIN_PASSWORD,
-  SESSION_COOKIE,
-  JWT_SECRET,
-  JWT_TTL_SECONDS,
+  NODE_ENV,
   CERTS_DIR,
-  ROOT_DIR,
-  PROV_DIR,
   CA_KEY,
   CA_CRT,
   UI_DIST,
@@ -66,6 +61,12 @@ import {
   PROVISIONING_CERT_PATH,
   PROVISIONING_KEY_PATH,
   PROVISIONING_HTTP_ENABLE_CERT_API,
+  PROV_DIR,
+  ADMIN_USER,
+  ADMIN_PASSWORD,
+  JWT_SECRET,
+  JWT_TTL_SECONDS,
+  SESSION_COOKIE,
 } from './config.js';
 import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert } from './certs.js';
 import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
@@ -610,12 +611,15 @@ app.get('/diagnostics', (_req: Request, res: Response) => {
 console.log('[core-service] hello from Device Hub core-service');
 // Ensure provisioning DB schema exists (uuid_whitelist etc.) before exposing D-Bus API
 try { ensureProvisioningSchema(); } catch {}
-// D-Bus services are started via startDbusServices() function below
+// Start D-Bus services
+await startDbusServices();
 
+// Device connection tracking is handled by twin service via MQTT
 // Unified logs: snapshot and streaming from systemd journal (journalctl)
 // Services are expected to be systemd units like devicehub-*.service
 // DEFAULT_LOG_UNITS now imported from src/logs.ts
 
+// ... (rest of the code remains the same)
 // buildJournalctlArgs moved to src/logs.ts
 
 // ===== Simple single-user admin authentication using JWT =====
@@ -1824,6 +1828,8 @@ async function startDbusServices() {
     await startWhitelistDbusServer(bus);
     console.log(`[core-service] Starting CertificateService...`);
     await startCertificateDbusServer(bus);
+    console.log(`[core-service] Starting DevicesService...`);
+    await startDevicesDbusServer(bus);
     console.log(`[core-service] D-Bus services started successfully`);
     
     // Ensure provisioning certificates exist for device bootstrap

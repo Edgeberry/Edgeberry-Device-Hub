@@ -82,7 +82,6 @@ start_service() {
     translator-service)
       ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
       ;;
-    # registry-service removed
   esac
   local cmd
   if has_npm_script "$dir" dev; then
@@ -124,7 +123,6 @@ ensure_deps "$ROOT_DIR/provisioning-service"
 ensure_deps "$ROOT_DIR/twin-service"
 # translator-service
 ensure_deps "$ROOT_DIR/translator-service"
-# registry-service removed
 
 if [[ "${DEV_MOSQUITTO:-0}" = "1" ]]; then
   start_mosquitto
@@ -169,7 +167,6 @@ start_service provisioning-service provisioning-service
 start_service twin-service twin-service
 # translator-service
 start_service translator-service translator-service
-# registry-service removed
 
 log "all dev processes started (PIDs: ${PIDS[*]-}). Core-service listening on http://localhost:8080. Press Ctrl-C to stop."
 

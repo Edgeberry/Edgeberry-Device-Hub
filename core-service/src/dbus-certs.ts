@@ -4,7 +4,7 @@ import { issueDeviceCertFromCSR } from './certs.js';
 // D-Bus constants
 const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/CertificateService';
-const IFACE_NAME = 'io.edgeberry.devicehub.CertificateService1';
+const IFACE_NAME = 'io.edgeberry.devicehub.CertificateService';
 
 export class CertificateInterface {
   async IssueFromCSR(deviceId: string, csrPem: string, days: number): Promise<string> {

@@ -1,13 +1,15 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync, existsSync } from 'fs';
-import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED } from './config.js';
+import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, REGISTRY_DB } from './config.js';
 import { Json } from './types.js';
 import { getTwin, setDoc } from './db.js';
+import Database from 'better-sqlite3';
 
 // Topic helpers and constants
 const TOPICS = {
   get: '$devicehub/devices/+/twin/get',
   update: '$devicehub/devices/+/twin/update',
+  heartbeat: '$devicehub/devices/+/heartbeat',
   accepted: (deviceId: string) => `$devicehub/devices/${deviceId}/twin/update/accepted`,
   delta: (deviceId: string) => `$devicehub/devices/${deviceId}/twin/update/delta`,
   rejected: (deviceId: string) => `$devicehub/devices/${deviceId}/twin/update/rejected`,
@@ -20,6 +22,75 @@ function parseTopicDeviceId(topic: string, suffix: string): string | null {
   if (parts[3] !== 'twin') return null;
   if (!topic.endsWith(suffix)) return null;
   return parts[2];
+}
+
+function parseHeartbeatDeviceId(topic: string): string | null {
+  const parts = topic.split('/');
+  if (parts.length !== 4) return null;
+  if (parts[0] !== '$devicehub' || parts[1] !== 'devices' || parts[3] !== 'heartbeat') return null;
+  return parts[2];
+}
+
+function parseStatusDeviceId(topic: string): string | null {
+  const parts = topic.split('/');
+  if (parts.length !== 4) return null;
+  if (parts[0] !== '$devicehub' || parts[1] !== 'devices' || parts[3] !== 'status') return null;
+  return parts[2];
+}
+
+function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean): void {
+  try {
+    const db = new Database(REGISTRY_DB);
+    
+    // Ensure device_events table exists
+    db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      payload BLOB,
+      ts TEXT NOT NULL DEFAULT (datetime('now'))
+    )`).run();
+    
+    // Record connection status as device event
+    const status = isOnline ? 'online' : 'offline';
+    const payload = JSON.stringify({ status, ts: Date.now() });
+    db.prepare(`INSERT INTO device_events (device_id, topic, payload, ts) VALUES (?, ?, ?, datetime('now'))`)
+      .run(deviceId, `$SYS/broker/clients/${deviceId}`, payload);
+    
+    db.close();
+    console.log(`[${SERVICE}] Device ${deviceId} is now ${status}`);
+  } catch (error) {
+    console.error(`[${SERVICE}] Failed to record connection status for device ${deviceId}:`, error);
+  }
+}
+
+function isValidDeviceId(clientId: string): boolean {
+  // Check if clientId looks like a UUID (device ID)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(clientId);
+}
+
+function recordDeviceHeartbeat(deviceId: string): void {
+  try {
+    const db = new Database(REGISTRY_DB);
+    
+    // Ensure device_events table exists
+    db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      payload BLOB,
+      ts TEXT NOT NULL DEFAULT (datetime('now'))
+    )`).run();
+    
+    // Record heartbeat as device event for online status tracking
+    db.prepare(`INSERT INTO device_events (device_id, topic, payload, ts) VALUES (?, ?, ?, datetime('now'))`)
+      .run(deviceId, `$devicehub/devices/${deviceId}/heartbeat`, 'heartbeat');
+    
+    db.close();
+  } catch (error) {
+    console.error(`[${SERVICE}] Failed to record heartbeat for device ${deviceId}:`, error);
+  }
 }
 
 function shallowDelta(desired: Json, reported: Json): Json {
@@ -65,11 +136,31 @@ export function startMqtt(db: any): MqttClient {
     client.subscribe(TOPICS.update, { qos: 1 }, (err: Error | null) => {
       if (err) console.error(`[${SERVICE}] subscribe update error`, err);
     });
+    // Subscribe to Mosquitto client connection events for device tracking
+    client.subscribe('$SYS/broker/log/M/clients/+', (err) => {
+      if (err) {
+        console.error(`[${SERVICE}] failed to subscribe to client events:`, err);
+      } else {
+        console.log(`[${SERVICE}] subscribed to client connection events`);
+      }
+    });
   });
   client.on('error', (err) => console.error(`[${SERVICE}] mqtt error`, err));
 
   client.on('message', (topic: string, payload: Buffer) => {
     try {
+      // Handle Mosquitto client connection events
+      if (topic.startsWith('$SYS/broker/log/M/clients/')) {
+        const clientId = topic.split('/').pop();
+        if (!clientId || !isValidDeviceId(clientId)) return;
+        
+        const message = payload.toString();
+        if (message.includes('connected') || message.includes('disconnected')) {
+          const isOnline = message.includes('connected');
+          recordDeviceConnectionStatus(clientId, isOnline);
+        }
+        return;
+      }
       if (topic.startsWith('$devicehub/devices/') && topic.endsWith('/twin/get')) {
         const deviceId = parseTopicDeviceId(topic, '/twin/get');
         if (!deviceId) return;

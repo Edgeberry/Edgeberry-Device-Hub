@@ -1,48 +1,70 @@
 import * as dbus from 'dbus-native';
 
-const CORE_BUS = 'io.edgeberry.devicehub.Core';
-const DEVICES_OBJ = '/io/edgeberry/devicehub/Devices';
-const DEVICES_IFACE = 'io.edgeberry.devicehub.Devices1';
+// D-Bus client configuration - connect to Core service DevicesService
+const CORE_BUS_NAME = 'io.edgeberry.devicehub.Core';
+const DEVICES_OBJECT_PATH = '/io/edgeberry/devicehub/DevicesService';
+const DEVICES_IFACE_NAME = 'io.edgeberry.devicehub.DevicesService';
 
-type DevicesIface = {
-  ResolveDeviceIdByUUID(uuid: string): Promise<[boolean, string, string]>;
-};
+let bus: any | null = null;
 
-let _iface: DevicesIface | null = null;
+function getBus(): any {
+  if (!bus) {
+    bus = dbus.systemBus();
+  }
+  return bus;
+}
 
-export async function getDevicesInterface(): Promise<DevicesIface> {
-  if (_iface) return _iface;
-  const bus = dbus.systemBus();
-  
-  const devicesIface: DevicesIface = {
-    ResolveDeviceIdByUUID: (uuid: string): Promise<[boolean, string, string]> => {
-      return new Promise((resolve, reject) => {
-        const service = bus.getService(CORE_BUS);
-        service.getInterface(DEVICES_OBJ, DEVICES_IFACE, (err: any, iface: any) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          
-          iface.ResolveDeviceIdByUUID(uuid, (err: any, ok: boolean, deviceId: string, error: string) => {
-            if (err) {
-              reject(err);
-              return;
-            }
-            resolve([ok, deviceId, error]);
-          });
-        });
-      });
-    }
-  };
-  
-  _iface = devicesIface;
-  return devicesIface;
+function callDbusMethod(busName: string, objectPath: string, interfaceName: string, member: string, ...args: any[]): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const connection = getBus();
+    const service = connection.getService(busName);
+    
+    service.getInterface(objectPath, interfaceName, (err: any, iface: any) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      // Call the method with callback
+      const callback = (err: any, ...results: any[]) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(results);
+      };
+      
+      // Add callback to args and call method
+      iface[member](...args, callback);
+    });
+  });
+}
+
+export async function dbusResolveDeviceIdByUuid(uuid: string): Promise<{ ok: boolean; deviceId?: string; error?: string }> {
+  try {
+    const requestJson = JSON.stringify({ uuid });
+    const result = await callDbusMethod(CORE_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'ResolveDeviceIdByUuid', requestJson);
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
+    return {
+      ok: response.success,
+      deviceId: response.deviceId || undefined,
+      error: response.error || undefined
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
 }
 
 export async function resolveDeviceIdByUuid(uuid: string): Promise<string | null> {
-  const iface = await getDevicesInterface();
-  const [ok, deviceId, err] = await iface.ResolveDeviceIdByUUID(uuid);
-  if (!ok) return null;
-  return deviceId || null;
+  try {
+    const result = await dbusResolveDeviceIdByUuid(uuid);
+    if (!result.ok || !result.deviceId) {
+      return null;
+    }
+    return result.deviceId;
+  } catch (error) {
+    console.error('[translator-service] Error resolving UUID to deviceId:', error);
+    return null;
+  }
 }

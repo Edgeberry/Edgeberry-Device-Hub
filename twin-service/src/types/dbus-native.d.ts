@@ -1,6 +1,8 @@
 declare module 'dbus-native' {
   export interface DBusConnection {
     getService(serviceName: string): DBusService;
+    requestName(serviceName: string, flags: number, callback: (err: any, retCode: number) => void): void;
+    exportInterface(serviceObject: any, objectPath: string, interfaceDesc: any): void;
     systemBus(): DBusConnection;
     sessionBus(): DBusConnection;
   }

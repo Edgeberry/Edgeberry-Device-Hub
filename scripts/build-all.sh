@@ -60,14 +60,71 @@ build_node_service() {
       npm install
     fi
     
+    # Verify critical dependencies are installed for TypeScript projects
+    if [[ -f "tsconfig.json" ]]; then
+      if [[ ! -d "node_modules/typescript" ]]; then
+        echo "ERROR: TypeScript not installed in node_modules for ${svc}" >&2
+        echo "Installing TypeScript..." >&2
+        npm install typescript
+        if [[ ! -d "node_modules/typescript" ]]; then
+          echo "ERROR: Failed to install TypeScript for ${svc}" >&2
+          exit 1
+        fi
+      fi
+    fi
+    
     # Build if script exists
     if npm run | grep -qE '^\s*build\s'; then
       # Ensure a clean build to prevent stale dist/ from being packaged
       rm -rf dist 2>/dev/null || true
       # Clear TypeScript incremental cache
       rm -rf .tsbuildinfo tsconfig.tsbuildinfo 2>/dev/null || true
+      
+      # Check if TypeScript is available for TypeScript projects
+      if [[ -f "tsconfig.json" ]]; then
+        if ! npx tsc --version >/dev/null 2>&1; then
+          echo "ERROR: TypeScript compiler not available but tsconfig.json found" >&2
+          echo "Run: npm install typescript" >&2
+          exit 1
+        fi
+      fi
+      
       # Force clean build without cache
       npm run build -- --force
+      
+      # Validate build output for TypeScript projects
+      if [[ -f "tsconfig.json" && -f "package.json" ]]; then
+        # Ensure dist directory exists and has content
+        if [[ ! -d "dist" ]]; then
+          echo "ERROR: TypeScript compilation failed - no dist/ directory created for ${svc}" >&2
+          echo "Build command may have failed silently" >&2
+          exit 1
+        fi
+        
+        if [[ -z "$(ls -A dist 2>/dev/null)" ]]; then
+          echo "ERROR: TypeScript compilation produced empty dist/ directory for ${svc}" >&2
+          echo "Check TypeScript configuration and source files" >&2
+          exit 1
+        fi
+        
+        # Check if main entry point was compiled
+        local main_entry=$(node -pe "require('./package.json').main || 'dist/index.js'" 2>/dev/null)
+        if [[ -n "$main_entry" && ! -f "$main_entry" ]]; then
+          echo "ERROR: TypeScript compilation failed - missing expected output: $main_entry for ${svc}" >&2
+          echo "Available files in dist/: $(ls -la dist/ 2>/dev/null || echo 'none')" >&2
+          exit 1
+        fi
+        
+        # Verify TypeScript actually compiled by checking for .js files
+        local js_count=$(find dist -name "*.js" 2>/dev/null | wc -l)
+        if [[ "$js_count" -eq 0 ]]; then
+          echo "ERROR: TypeScript compilation produced no .js files in dist/ for ${svc}" >&2
+          echo "Contents of dist/: $(ls -la dist/ 2>/dev/null || echo 'empty')" >&2
+          exit 1
+        fi
+        
+        echo "✓ TypeScript compilation validated: ${js_count} .js files in dist/"
+      fi
     fi
     
     # Prune dev deps for artifact

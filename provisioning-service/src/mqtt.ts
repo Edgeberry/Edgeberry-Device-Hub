@@ -1,7 +1,7 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync, existsSync } from 'fs';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
-import { dbusCheckUUID, dbusMarkUsed, dbusIssueFromCSR } from './dbus.js';
+import { dbusCheckUUID, dbusMarkUsed, dbusIssueFromCSR, dbusRegisterDevice } from './dbus.js';
 import type { Json } from './types.js';
 
 // Topic helpers and constants
@@ -138,6 +138,20 @@ export function startMqtt(): MqttClient {
         .then(async (res) => {
           if (!res.ok || !res.certPem || !res.caChainPem) throw new Error(res.error || 'issue_failed');
           const { certPem, caChainPem } = res;
+          
+          // Register device in database after successful certificate issuance
+          try {
+            const metaJson = JSON.stringify(meta || {});
+            const regRes = await dbusRegisterDevice(uuid, name || `Device ${uuid}`, token || '', metaJson);
+            if (regRes.ok) {
+              console.log(`[${SERVICE}] device registered: ${uuid}`);
+            } else {
+              console.warn(`[${SERVICE}] device registration failed for ${uuid}: ${regRes.error}`);
+            }
+          } catch (regErr) {
+            console.warn(`[${SERVICE}] device registration error for ${uuid}:`, regErr);
+          }
+          
           if (ENFORCE_WHITELIST && uuid) {
             try { await dbusMarkUsed(uuid); } catch {}
           }

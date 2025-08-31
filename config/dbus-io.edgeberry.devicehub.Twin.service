@@ -1,0 +1,5 @@
+# Install to: /usr/share/dbus-1/system-services/io.edgeberry.devicehub.Twin.service
+# Twin service is systemd-activated over D-Bus
+[D-BUS Service]
+Name=io.edgeberry.devicehub.Twin
+SystemdService=devicehub-twin.service

@@ -335,21 +335,41 @@ function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?:
     key,
     rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
   };
-  const client: MqttClient = connect(MQTT_URL, opts);
-  const teleTopic = `devices/${deviceId}/telemetry`;
-  let timer: NodeJS.Timeout | null = null;
 
-  client.on('connect', () => {
-    console.log(`[virtual-device] runtime CONNECT accepted with device cert → ${MQTT_URL}`);
-    timer = setInterval(() => {
-      const m = { ts: Date.now(), temperature: 20 + Math.random() * 5, voltage: 3.3 + Math.random() * 0.1, status: 'ok' };
-      client.publish(teleTopic, JSON.stringify(m), { qos: 0 });
-      console.log(`[virtual-device] -> ${teleTopic} ${JSON.stringify(m)}`);
-    }, TELEMETRY_PERIOD_MS);
+  // Connect to MQTT for runtime operations with Last Will and Testament
+  const runtimeClient = connect(MQTT_URL, {
+    clientId: deviceId,
+    will: {
+      topic: `$devicehub/devices/${deviceId}/status`,
+      payload: JSON.stringify({ status: 'offline', ts: Date.now() }),
+      qos: 1,
+      retain: true
+    },
+    ...tlsOptions,
+  });
+
+  runtimeClient.on('connect', () => {
+    console.log(`[virtual-device] runtime CONNACK accepted with device cert → ${MQTT_URL}`);
+    
+    // Publish online status immediately upon connection
+    const onlinePayload = { status: 'online', ts: Date.now() };
+    runtimeClient.publish(`$devicehub/devices/${deviceId}/status`, JSON.stringify(onlinePayload), { qos: 1, retain: true });
+    console.log(`[virtual-device] -> $devicehub/devices/${deviceId}/status`, onlinePayload);
+
+    // Handle graceful shutdown
+    process.on('SIGINT', () => {
+      console.log('[virtual-device] shutting down...');
+      // Publish offline status before disconnecting
+      const offlinePayload = { status: 'offline', ts: Date.now() };
+      runtimeClient.publish(`$devicehub/devices/${deviceId}/status`, JSON.stringify(offlinePayload), { qos: 1, retain: true }, () => {
+        runtimeClient.end();
+        process.exit(0);
+      });
+    });
   });
 
   // Inspect CONNACK for runtime session too
-  client.on('packetreceive', (packet: any) => {
+  runtimeClient.on('packetreceive', (packet: any) => {
     if (packet && packet.cmd === 'connack') {
       const reason = typeof packet.reasonCode !== 'undefined' ? packet.reasonCode : packet.returnCode;
       const sp = packet.sessionPresent;

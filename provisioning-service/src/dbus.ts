@@ -3,11 +3,15 @@ import * as dbus from 'dbus-native';
 // D-Bus service configuration
 const WHITELIST_BUS_NAME = 'io.edgeberry.devicehub.Core';
 const WHITELIST_OBJECT_PATH = '/io/edgeberry/devicehub/WhitelistService';
-const WHITELIST_IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService1';
+const WHITELIST_IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService';
 
 const CERT_BUS_NAME = 'io.edgeberry.devicehub.Core';
 const CERT_OBJECT_PATH = '/io/edgeberry/devicehub/CertificateService';
-const CERT_IFACE_NAME = 'io.edgeberry.devicehub.CertificateService1';
+const CERT_IFACE_NAME = 'io.edgeberry.devicehub.CertificateService';
+
+const DEVICES_BUS_NAME = 'io.edgeberry.devicehub.Core';
+const DEVICES_OBJECT_PATH = '/io/edgeberry/devicehub/DevicesService';
+const DEVICES_IFACE_NAME = 'io.edgeberry.devicehub.DevicesService';
 
 let bus: any | null = null;
 
@@ -87,6 +91,19 @@ export async function dbusIssueFromCSR(deviceId: string, csrPem: string, validit
       certPem: response.certPem || undefined, 
       caChainPem: response.caChainPem || undefined, 
       error: response.error || undefined 
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+export async function dbusRegisterDevice(deviceId: string, name: string, token: string, metaJson: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const result = await callDbusMethod(DEVICES_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'RegisterDevice', deviceId, name, token, metaJson);
+    const [success, message] = result;
+    return { 
+      ok: success, 
+      error: success ? undefined : message 
     };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };

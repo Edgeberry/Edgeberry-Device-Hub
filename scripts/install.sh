@@ -16,6 +16,7 @@ fi
 require_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
     echo "[install] ERROR: This script must be run as root (sudo)." >&2
+    echo "[install] Usage: sudo bash scripts/install.sh [ARTIFACTS_DIR]" >&2
     exit 1
   fi
 }
@@ -31,12 +32,11 @@ configure_service_envs() {
     # Create file if missing and set URL
     ensure_env_kv "$f" "MQTT_URL" "mqtt://127.0.0.1:1883"
     # Remove obsolete or conflicting keys
-    sed -i -E '/^\s*MQTT_TLS_CA\s*=.*/d' "$f" 2>/dev/null || true
-    sed -i -E '/^\s*MQTT_TLS_CERT\s*=.*/d' "$f" 2>/dev/null || true
-    sed -i -E '/^\s*MQTT_TLS_KEY\s*=.*/d' "$f" 2>/dev/null || true
-    sed -i -E '/^\s*MQTT_TLS_REJECT_UNAUTHORIZED\s*=.*/d' "$f" 2>/dev/null || true
-    sed -i -E '/^\s*MQTT_USERNAME\s*=.*/d' "$f" 2>/dev/null || true
-    sed -i -E '/^\s*MQTT_PASSWORD\s*=.*/d' "$f" 2>/dev/null || true
+    # Remove obsolete TLS and auth keys (use grep -v for safer removal)
+    if [[ -f "$f" ]]; then
+      grep -vE '^\s*(MQTT_TLS_CA|MQTT_TLS_CERT|MQTT_TLS_KEY|MQTT_TLS_REJECT_UNAUTHORIZED|MQTT_USERNAME|MQTT_PASSWORD)\s*=' "$f" > "$f.tmp" 2>/dev/null || cp "$f" "$f.tmp"
+      mv "$f.tmp" "$f"
+    fi
   done
 }
 
@@ -47,8 +47,10 @@ ensure_env_kv() {
   touch "$file"
   chmod 0644 "$file" || true
   if grep -qE "^#?\s*${key}=.*$" "$file" 2>/dev/null; then
-    # Replace existing line
-    sed -i -E "s|^#?\s*${key}=.*$|${key}=${val}|" "$file"
+    # Replace existing line (escape special chars in val)
+    local escaped_val
+    escaped_val="$(printf '%s\n' "$val" | sed 's/[[\.*^$()+?{|]/\\&/g')"
+    sed -i -E "s|^#?\s*${key}=.*$|${key}=${escaped_val}|" "$file"
   else
     echo "${key}=${val}" >> "$file"
   fi
@@ -179,7 +181,7 @@ ALLOWED_NAMES=(
   scripts
 )
 
-log() { echo "[install] $*"; }
+log() { echo "[install] $*" >&2; }
 
 have_systemd() {
   command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
@@ -303,11 +305,13 @@ install_systemd_units() {
   done
   systemctl_safe daemon-reload || true
 
-  # Install D-Bus system service and policy for Core (bus-activated primary service)
-  local DBUS_SERVICE_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.service"
-  local DBUS_POLICY_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.conf"
+  # Install D-Bus system service and policy files
   local DBUS_SYSTEM_SERVICES_DIR="/usr/share/dbus-1/system-services"
   local DBUS_SYSTEM_POLICY_DIR="/etc/dbus-1/system.d"
+  
+  # Core service D-Bus files
+  local DBUS_SERVICE_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.service"
+  local DBUS_POLICY_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.conf"
   if [[ -f "$DBUS_SERVICE_SRC" ]]; then
     mkdir -p "$DBUS_SYSTEM_SERVICES_DIR"
     install -m 0644 "$DBUS_SERVICE_SRC" "$DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Core.service"
@@ -321,6 +325,24 @@ install_systemd_units() {
     log "installed D-Bus policy: $DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Core.conf"
   else
     log "WARN: missing $DBUS_POLICY_SRC"
+  fi
+  
+  # Twin service D-Bus files
+  local TWIN_DBUS_SERVICE_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Twin.service"
+  local TWIN_DBUS_POLICY_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Twin.conf"
+  if [[ -f "$TWIN_DBUS_SERVICE_SRC" ]]; then
+    mkdir -p "$DBUS_SYSTEM_SERVICES_DIR"
+    install -m 0644 "$TWIN_DBUS_SERVICE_SRC" "$DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Twin.service"
+    log "installed D-Bus system service: $DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Twin.service"
+  else
+    log "WARN: missing $TWIN_DBUS_SERVICE_SRC"
+  fi
+  if [[ -f "$TWIN_DBUS_POLICY_SRC" ]]; then
+    mkdir -p "$DBUS_SYSTEM_POLICY_DIR"
+    install -m 0644 "$TWIN_DBUS_POLICY_SRC" "$DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Twin.conf"
+    log "installed D-Bus policy: $DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Twin.conf"
+  else
+    log "WARN: missing $TWIN_DBUS_POLICY_SRC"
   fi
 }
 

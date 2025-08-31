@@ -58,3 +58,12 @@ export const PROVISIONING_KEY_PATH: string = process.env.PROVISIONING_KEY_PATH |
 // MVP: Always enable serving provisioning cert/key over HTTP
 export const PROVISIONING_HTTP_ENABLE_CERT_API: boolean = true;
 
+// MQTT configuration for telemetry capture
+export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';
+export const MQTT_USERNAME: string | undefined = process.env.MQTT_USERNAME;
+export const MQTT_PASSWORD: string | undefined = process.env.MQTT_PASSWORD;
+export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA;
+export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT;
+export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY;
+export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = process.env.MQTT_TLS_REJECT_UNAUTHORIZED !== 'false';
+

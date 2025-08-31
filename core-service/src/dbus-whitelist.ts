@@ -7,7 +7,7 @@ import { PROVISIONING_DB } from './config.js';
 // D-Bus constants
 const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/WhitelistService';
-const IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService1';
+const IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService';
 
 // Database helper function
 function openDb(file: string): any {

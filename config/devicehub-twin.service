@@ -9,6 +9,7 @@ WorkingDirectory=/opt/Edgeberry/devicehub/twin-service
 EnvironmentFile=-/etc/Edgeberry/devicehub/twin.env
 Environment=NODE_ENV=production
 Environment=MQTT_URL=mqtt://127.0.0.1:1883
+Environment=REGISTRY_DB=/opt/Edgeberry/devicehub/config/registry.db
 ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/twin-service/dist/index.js
 Restart=on-failure
 RestartSec=3

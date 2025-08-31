@@ -31,7 +31,7 @@
 import { SERVICE, DB_PATH } from './config.js';
 import { initDb } from './db.js';
 import { startMqtt } from './mqtt.js';
-import { startTwinDbusServer } from './dbus.js';
+import { startTwinDbusClient } from './dbus.js';
 import { registerShutdown } from './shutdown.js';
 
 type Json = Record<string, unknown>;
@@ -50,7 +50,7 @@ async function main() {
   console.log(`[${SERVICE}] starting...`);
   const db = initDb(DB_PATH);
   const client = startMqtt(db);
-  await startTwinDbusServer(db);
+  await startTwinDbusClient();
   registerShutdown(db, client);
 }
 
