@@ -1,7 +1,8 @@
-import * as dbus from 'dbus-native';
-import { getTwin, setDoc } from './db.js';
+import fs from 'fs';
+import dbus from 'dbus-native';
 import type { Json } from './types.js';
-import fs from 'node:fs';
+
+const SERVICE = 'twin-service';
 
 // D-Bus client configuration - connect to Core service, don't claim bus name
 const CORE_BUS_NAME = 'io.edgeberry.devicehub.Core';
@@ -94,15 +95,38 @@ export async function dbusSetReported(deviceId: string, reportedJson: string): P
   }
 }
 
+export async function dbusUpdateDeviceStatus(deviceId: string, status: string, timestamp: number): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const result = await callDbusMethod(CORE_BUS_NAME, TWIN_OBJECT_PATH, TWIN_IFACE_NAME, 'UpdateDeviceStatus', deviceId, status, timestamp);
+    const success = result[0];
+    return { ok: success };
+  } catch (error) {
+    console.error(`[twin-service] Failed to update device status via D-Bus:`, error);
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
 // Initialize D-Bus client connection (no server functionality)
 export async function startTwinDbusClient(): Promise<void> {
   let version = 'unknown';
   try {
     const pkgJsonPath = new URL('../package.json', import.meta.url);
     const pkgRaw = fs.readFileSync(pkgJsonPath, 'utf-8');
-    const pkg = JSON.parse(pkgRaw) as { version?: string };
-    version = pkg.version ?? version;
-  } catch {}
-  console.log(`[twin-service] v${version} D-Bus client initialized for ${CORE_BUS_NAME}`);
+    const pkg = JSON.parse(pkgRaw);
+    version = pkg.version;
+  } catch (error) {
+    console.warn(`[${SERVICE}] could not read package.json for version:`, error);
+  }
+  
+  // Add global error handler for unhandled D-Bus errors
+  process.on('uncaughtException', (error) => {
+    if (error.message && error.message.includes('No root XML node')) {
+      console.error(`[${SERVICE}] D-Bus XML introspection error (non-fatal):`, error.message);
+      return; // Don't crash the service for D-Bus introspection errors
+    }
+    // Re-throw other uncaught exceptions
+    throw error;
+  });
+  
+  console.log(`[${SERVICE}] v${version} D-Bus client initialized for ${CORE_BUS_NAME}`);
 }
-

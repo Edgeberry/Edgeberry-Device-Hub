@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'fs';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, REGISTRY_DB } from './config.js';
 import { Json } from './types.js';
 import { getTwin, setDoc } from './db.js';
+import { dbusUpdateDeviceStatus } from './dbus.js';
 import Database from 'better-sqlite3';
 
 // Topic helpers and constants
@@ -53,12 +54,22 @@ function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean): void
     
     // Record connection status as device event
     const status = isOnline ? 'online' : 'offline';
-    const payload = JSON.stringify({ status, ts: Date.now() });
+    const timestamp = Date.now();
+    const payload = JSON.stringify({ status, ts: timestamp });
     db.prepare(`INSERT INTO device_events (device_id, topic, payload, ts) VALUES (?, ?, ?, datetime('now'))`)
       .run(deviceId, `$SYS/broker/clients/${deviceId}`, payload);
     
     db.close();
     console.log(`[${SERVICE}] Device ${deviceId} is now ${status}`);
+    
+    // Report status change to core-service via D-Bus
+    dbusUpdateDeviceStatus(deviceId, status, timestamp).then((result) => {
+      if (!result.ok) {
+        console.error(`[${SERVICE}] Failed to report device status to core-service: ${result.error}`);
+      }
+    }).catch((error) => {
+      console.error(`[${SERVICE}] Error reporting device status to core-service:`, error);
+    });
   } catch (error) {
     console.error(`[${SERVICE}] Failed to record connection status for device ${deviceId}:`, error);
   }
@@ -137,7 +148,7 @@ export function startMqtt(db: any): MqttClient {
       if (err) console.error(`[${SERVICE}] subscribe update error`, err);
     });
     // Subscribe to Mosquitto client connection events for device tracking
-    client.subscribe('$SYS/broker/log/M/clients/+', (err) => {
+    client.subscribe('$SYS/broker/log/N', (err) => {
       if (err) {
         console.error(`[${SERVICE}] failed to subscribe to client events:`, err);
       } else {
@@ -150,14 +161,33 @@ export function startMqtt(db: any): MqttClient {
   client.on('message', (topic: string, payload: Buffer) => {
     try {
       // Handle Mosquitto client connection events
-      if (topic.startsWith('$SYS/broker/log/M/clients/')) {
-        const clientId = topic.split('/').pop();
-        if (!clientId || !isValidDeviceId(clientId)) return;
-        
+      if (topic === '$SYS/broker/log/N') {
         const message = payload.toString();
-        if (message.includes('connected') || message.includes('disconnected')) {
-          const isOnline = message.includes('connected');
-          recordDeviceConnectionStatus(clientId, isOnline);
+        console.log(`[${SERVICE}] Received $SYS message: ${message}`);
+        
+        // Parse connection messages: "New client connected from <ip>:<port> as <clientId>"
+        // Parse disconnection messages: "Client <clientId> closed its connection" or "Client <clientId> disconnected"
+        const connectMatch = message.match(/New client connected from [^\s]+ as ([^\s]+)/);
+        const disconnectMatch = message.match(/Client ([^\s]+) (?:closed its connection|disconnected)/);
+        
+        if (connectMatch) {
+          const clientId = connectMatch[1];
+          console.log(`[${SERVICE}] Detected client connection: ${clientId}`);
+          if (isValidDeviceId(clientId)) {
+            console.log(`[${SERVICE}] Valid device ID, recording online status`);
+            recordDeviceConnectionStatus(clientId, true);
+          } else {
+            console.log(`[${SERVICE}] Invalid device ID format: ${clientId}`);
+          }
+        } else if (disconnectMatch) {
+          const clientId = disconnectMatch[1];
+          console.log(`[${SERVICE}] Detected client disconnection: ${clientId}`);
+          if (isValidDeviceId(clientId)) {
+            console.log(`[${SERVICE}] Valid device ID, recording offline status`);
+            recordDeviceConnectionStatus(clientId, false);
+          } else {
+            console.log(`[${SERVICE}] Invalid device ID format: ${clientId}`);
+          }
         }
         return;
       }

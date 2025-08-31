@@ -1833,6 +1833,8 @@ async function startDbusServices() {
     await startWhitelistDbusServer(bus);
     console.log(`[core-service] Starting CertificateService...`);
     await startCertificateDbusServer(bus);
+    console.log(`[core-service] Starting TwinService...`);
+    await startCoreTwinDbusServer(bus);
     console.log(`[core-service] Starting DevicesService...`);
     await startDevicesDbusServer(bus);
     console.log(`[core-service] D-Bus services started successfully`);

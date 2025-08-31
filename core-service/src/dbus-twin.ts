@@ -1,6 +1,5 @@
 import * as dbus from 'dbus-native';
 
-const BUS_NAME = 'io.edgeberry.devicehub.TwinService';
 const OBJECT_PATH = '/io/edgeberry/devicehub/TwinService';
 const IFACE_NAME = 'io.edgeberry.devicehub.TwinService';
 
@@ -20,22 +19,18 @@ class CoreTwinInterface {
   async ListDevices(): Promise<string[]> {
     return [];
   }
+
+  async UpdateDeviceStatus(deviceId: string, status: string, timestamp: number): Promise<boolean> {
+    console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${new Date(timestamp).toISOString()}`);
+    // TODO: Store device status in registry database or broadcast via WebSocket
+    return true;
+  }
 }
 
-export async function startCoreTwinDbusServer(): Promise<any> {
-  const bus = dbus.systemBus();
+export async function startCoreTwinDbusServer(bus: any): Promise<any> {
   const twinService = new CoreTwinInterface();
   
   console.log('Starting Twin D-Bus server with dbus-native');
-  
-  // Request bus name
-  bus.requestName(BUS_NAME, 0, (err: any, res: any) => {
-    if (err) {
-      console.error('D-Bus service name acquisition failed:', err);
-    } else {
-      console.log(`D-Bus service name "${BUS_NAME}" successfully acquired`);
-    }
-  });
 
   // Create the service object with actual method implementations
   const serviceObject = {
@@ -70,6 +65,14 @@ export async function startCoreTwinDbusServer(): Promise<any> {
       } catch (error) {
         throw error;
       }
+    },
+    UpdateDeviceStatus: async (deviceId: string, status: string, timestamp: number) => {
+      try {
+        const result = await twinService.UpdateDeviceStatus(deviceId, status, timestamp);
+        return result;
+      } catch (error) {
+        throw error;
+      }
     }
   };
 
@@ -80,11 +83,12 @@ export async function startCoreTwinDbusServer(): Promise<any> {
       GetTwin: ['s', 'suss'],
       SetDesired: ['ss', 'bus'],
       SetReported: ['ss', 'bus'],
-      ListDevices: ['', 'as']
+      ListDevices: ['', 'as'],
+      UpdateDeviceStatus: ['sst', 'b']
     },
     signals: {}
   });
   
-  console.log(`Twin D-Bus server started on ${BUS_NAME} at ${OBJECT_PATH}`);
+  console.log(`Twin D-Bus server started on io.edgeberry.devicehub.Core at ${OBJECT_PATH}`);
   return bus;
 }
