@@ -336,6 +336,8 @@ function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?:
     rejectUnauthorized: MQTT_TLS_REJECT_UNAUTHORIZED,
   };
 
+  let timer: NodeJS.Timeout | null = null;
+
   // Connect to MQTT for runtime operations with Last Will and Testament
   const runtimeClient = connect(MQTT_URL, {
     clientId: deviceId,
@@ -345,7 +347,7 @@ function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?:
       qos: 1,
       retain: true
     },
-    ...tlsOptions,
+    ...opts,
   });
 
   runtimeClient.on('connect', () => {
@@ -383,10 +385,10 @@ function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?:
 
   function shutdown() {
     if (timer) { clearInterval(timer); timer = null; }
-    try { client.end(true, {}, () => process.exit(0)); } catch { process.exit(0); }
+    try { runtimeClient.end(true, {}, () => process.exit(0)); } catch { process.exit(0); }
   }
 
-  client.on('error', (e) => console.error('[virtual-device] runtime error', e));
+  runtimeClient.on('error', (e) => console.error('[virtual-device] runtime error', e));
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }

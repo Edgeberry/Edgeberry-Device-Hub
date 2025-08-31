@@ -36,17 +36,15 @@
  */
 import express, { type Request, type Response, type NextFunction } from 'express';
 import http from 'http';
-import { readFileSync, existsSync } from 'fs';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { spawn } from 'child_process';
+import { WebSocketServer } from 'ws';
 import Database from 'better-sqlite3';
-import express from 'express';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
-import cookieParser from 'cookie-parser';
-import cors from 'cors';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { connect as mqttConnect } from 'mqtt';
+import morgan from 'morgan';
+import serveStatic from 'serve-static';
 import {
   PORT,
   NODE_ENV,
@@ -256,8 +254,15 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.headers.upgrade?.toLowerCase() === 'websocket') {
     return next();
   }
-  // Apply CORS to regular HTTP requests
-  cors()(req, res, next);
+  // Apply CORS to regular HTTP requests - simple implementation
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
 });
 app.use(express.json({ limit: '1mb' }));
 app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' }));

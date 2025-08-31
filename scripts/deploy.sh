@@ -1,201 +1,137 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-IFS=$'\n\t'
+set -euo pipefail
 
-##
-# Edgeberry Device Hub — Simple Deploy Script (SSH)
-# - Builds local artifacts into dist-artifacts/ (unless --skip-build)
-# - Copies artifacts + config + installer to the remote host
-# - Runs the installer with sudo remotely
-# - Cleans up the staging directory
-##
+# Deploy Edgeberry Device Hub to remote host via SSH
+# Usage: deploy.sh -h <host> [-u <user>] [-i <key>] [--skip-build]
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ART_DIR="$ROOT_DIR/dist-artifacts"
 
-HOST="${HOST:-}"
-USER="${USER:-}"
-IDENTITY_FILE="${IDENTITY_FILE:-}"
-REMOTE_DIR=""
+# Default values
+HOST=""
+USER="$(whoami)"
+IDENTITY_FILE=""
+PASSWORD=""
 SKIP_BUILD=0
 VERBOSE=0
-PASSWORD="${PASSWORD:-}"
 
-SSH_COMMON_OPTS=(
-  -o StrictHostKeyChecking=no
-  -o UserKnownHostsFile=/dev/null
-  -o ConnectTimeout=10
-)
-
-trap 'echo "[deploy] error on line ${LINENO}" >&2' ERR
+log() { echo "[deploy] $*"; }
+error() { echo "[deploy] ERROR: $*" >&2; exit 1; }
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") -h <host> [-u <user>] [-i <identity_file>] [--remote-dir <dir>] [--skip-build] [-v]
+Usage: $(basename "$0") -h <host> [-u <user>] [-i <key>] [-p <password>] [--skip-build] [-v]
 
 Options:
-  -h, --host           Remote host or IP (required)
-  -u, --user           SSH username (default: current user)
-  -i, --identity       SSH private key file
-      --remote-dir     Remote staging dir (default: ~/.edgeberry-deploy-<ts>)
-      --skip-build     Do not run scripts/build-all.sh
-  -v, --verbose        Verbose SSH/rsync output
-  -h, --help           Show this help
-
-Environment overrides:
-  HOST, USER, IDENTITY_FILE
+  -h <host>      Remote host (required)
+  -u <user>      SSH username (default: current user)
+  -i <key>       SSH private key file
+  -p <password>  SSH password (will prompt if not provided)
+  --skip-build   Skip local build
+  -v             Verbose output
+  --help         Show help
 EOF
 }
 
-log() { echo "[deploy] $*"; }
-require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1" >&2; exit 1; }; }
 
-parse_args() {
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -h|--host) HOST="$2"; shift 2;;
-      -u|--user) USER="$2"; shift 2;;
-      -i|--identity) IDENTITY_FILE="$2"; shift 2;;
-      --remote-dir) REMOTE_DIR="$2"; shift 2;;
-      --skip-build) SKIP_BUILD=1; shift;;
-      -v|--verbose) VERBOSE=1; shift;;
-      --help) usage; exit 0;;
-      *) echo "Unknown arg: $1" >&2; usage; exit 1;;
-    esac
-  done
-  if [[ -z "${HOST}" ]]; then echo "--host is required" >&2; usage; exit 1; fi
-  if [[ -z "${USER:-}" ]]; then
-    read -r -p "SSH user: " USER
-    if [[ -z "${USER:-}" ]]; then USER="$(id -un)"; fi
-  fi
-  if [[ -z "${PASSWORD:-}" ]]; then
-    read -r -s -p "Password for ${USER}@${HOST}: " PASSWORD
-    echo ""
-  fi
-}
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h) HOST="$2"; shift 2;;
+    -u) USER="$2"; shift 2;;
+    -i) IDENTITY_FILE="$2"; shift 2;;
+    -p) PASSWORD="$2"; shift 2;;
+    --skip-build) SKIP_BUILD=1; shift;;
+    -v) VERBOSE=1; shift;;
+    --help) usage; exit 0;;
+    *) error "Unknown option: $1";;
+  esac
+done
 
-build_local() {
-  if (( SKIP_BUILD )); then
-    log "skip build requested"
-    return
-  fi
+[[ -n "$HOST" ]] || { usage; error "Host required (-h <host>)"; }
+
+# Prompt for password if not provided and no identity file
+if [[ -z "$PASSWORD" && -z "$IDENTITY_FILE" ]]; then
+  read -r -s -p "Password for $USER@$HOST: " PASSWORD
+  echo
+  [[ -n "$PASSWORD" ]] || error "Password required"
+fi
+
+# Build SSH command
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
+[[ -n "$IDENTITY_FILE" ]] && SSH_OPTS+=(-i "$IDENTITY_FILE")
+[[ $VERBOSE -eq 1 ]] && SSH_OPTS+=(-v)
+
+# SSH command wrappers
+if [[ -n "$PASSWORD" ]]; then
+  # Check for sshpass
+  command -v sshpass >/dev/null || error "sshpass required for password authentication"
+  ssh_run() { sshpass -p "$PASSWORD" ssh "${SSH_OPTS[@]}" "$USER@$HOST" "$@"; }
+  scp_copy() { sshpass -p "$PASSWORD" scp "${SSH_OPTS[@]}" "$1" "$USER@$HOST:$2"; }
+else
+  ssh_run() { ssh "${SSH_OPTS[@]}" "$USER@$HOST" "$@"; }
+  scp_copy() { scp "${SSH_OPTS[@]}" "$1" "$USER@$HOST:$2"; }
+fi
+
+# Check dependencies
+command -v ssh >/dev/null || error "ssh not found"
+command -v scp >/dev/null || error "scp not found"
+
+# Test SSH connectivity FIRST before building
+log "testing connection to $USER@$HOST..."
+ssh_run true || error "Cannot connect to $USER@$HOST"
+
+# Test sudo access
+log "testing sudo access..."
+ssh_run "sudo -n true" || error "Sudo access required on remote host"
+
+# Build artifacts locally
+if [[ $SKIP_BUILD -eq 0 ]]; then
   log "building artifacts..."
-  bash "$ROOT_DIR/scripts/build-all.sh"
-}
+  bash "$ROOT_DIR/scripts/build-all.sh" || error "Build failed"
+else
+  log "skipping build"
+fi
 
-mk_ssh_arrays() {
-  # Always use sshpass for remote actions per requirement
-  SSH_BASE=(sshpass -p "$PASSWORD" ssh "${SSH_COMMON_OPTS[@]}")
-  SCP_BASE=(sshpass -p "$PASSWORD" scp -C "${SSH_COMMON_OPTS[@]}")
-  if [[ -n "${IDENTITY_FILE}" ]]; then
-    SSH_BASE+=(-i "$IDENTITY_FILE")
-    SCP_BASE+=(-i "$IDENTITY_FILE")
-  fi
-  if (( VERBOSE )); then
-    SSH_BASE+=(-vv)
-  fi
-}
+# Check artifacts exist
+ls "$ART_DIR"/devicehub-*.tar.gz >/dev/null 2>&1 || error "No artifacts found in $ART_DIR"
 
-ensure_artifacts() {
-  if ! ls -1 "$ART_DIR"/devicehub-*.tar.gz >/dev/null 2>&1; then
-    echo "No artifacts found in $ART_DIR. Run build or remove --skip-build." >&2
-    exit 1
-  fi
-}
+# Create remote staging directory
+REMOTE_STAGING="/tmp/edgeberry-deploy-$(date +%s)"
 
-pick_remote_dir() {
-  if [[ -n "$REMOTE_DIR" ]]; then
-    REMOTE_STAGING="$REMOTE_DIR"
-    return
-  fi
-  local ts; ts="$(date +%s)"
-  # Resolve remote $HOME to avoid literal ~ issues
-  local home_remote
-  home_remote="$(${SSH_BASE[@]} "${USER}@${HOST}" 'printf %s "$HOME"')"
-  REMOTE_STAGING="$home_remote/.edgeberry-deploy-$ts"
-}
+# Create remote staging directory
+log "creating staging directory: $REMOTE_STAGING"
+ssh_run "mkdir -p '$REMOTE_STAGING'/{dist-artifacts,config,scripts}" || error "Failed to create staging directory"
 
-main() {
-  parse_args "$@"
-  require_cmd ssh
-  require_cmd scp
-  require_cmd sshpass
-  mk_ssh_arrays
-  build_local
-  ensure_artifacts
+# Copy files
+log "copying artifacts..."
+for artifact in "$ART_DIR"/devicehub-*.tar.gz; do
+  scp_copy "$artifact" "$REMOTE_STAGING/dist-artifacts/"
+done || error "Failed to copy artifacts"
 
-  log "checking remote connectivity..."
-  if ! ${SSH_BASE[@]} "${USER}@${HOST}" true >/dev/null 2>&1; then
-    echo "Cannot connect to ${USER}@${HOST} via SSH" >&2
-    exit 1
-  fi
+if [[ -d "$ROOT_DIR/config" ]]; then
+  for config_file in "$ROOT_DIR/config/"*; do
+    [[ -f "$config_file" ]] && scp_copy "$config_file" "$REMOTE_STAGING/config/"
+  done
+fi || error "Failed to copy config"
 
-  pick_remote_dir
-  log "using remote staging: ${REMOTE_STAGING}"
-  
-  # Test sudo access first
-  log "testing sudo access..."
-  if ! ${SSH_BASE[@]} "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' whoami" >/dev/null 2>&1; then
-    echo "[deploy] ERROR: Cannot authenticate with sudo on remote host" >&2
-    echo "[deploy] Check that user '$USER' has sudo privileges and the password is correct" >&2
-    exit 1
-  fi
-  
-  ${SSH_BASE[@]} "${USER}@${HOST}" "mkdir -p '${REMOTE_STAGING}/dist-artifacts' '${REMOTE_STAGING}/config' '${REMOTE_STAGING}/scripts'"
+scp_copy "$ROOT_DIR/scripts/install.sh" "$REMOTE_STAGING/scripts/" || error "Failed to copy installer"
 
-  # Copy (prefer rsync)
-  local rsync_ok=0
-  if command -v rsync >/dev/null 2>&1 && ${SSH_BASE[@]} "${USER}@${HOST}" "command -v rsync >/dev/null 2>&1" >/dev/null 2>&1; then
-    rsync_ok=1
-  fi
-  ART_FILES=("$ART_DIR"/devicehub-*.tar.gz)
-  if (( rsync_ok )); then
-    log "copying files via rsync..."
-    # Use an array for options since IFS excludes space; avoid collapsing into a single arg
-    local RSYNC_OPTS
-    RSYNC_OPTS=(-az)
-    if (( VERBOSE )); then RSYNC_OPTS+=('--info=progress2'); fi
-    # Build RSH command as a string for rsync
-    local RSH_CMD="sshpass -p '$PASSWORD' ssh"
-    local opt
-    for opt in "${SSH_COMMON_OPTS[@]}"; do
-      RSH_CMD="$RSH_CMD $opt"
-    done
-    if [[ -n "${IDENTITY_FILE}" ]]; then
-      RSH_CMD="$RSH_CMD -i '$IDENTITY_FILE'"
-    fi
-    rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" "${ART_FILES[@]}" "${USER}@${HOST}:${REMOTE_STAGING}/dist-artifacts/"
-    rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" -r "$ROOT_DIR/config/" "${USER}@${HOST}:${REMOTE_STAGING}/config/"
-    rsync "${RSYNC_OPTS[@]}" --rsh "$RSH_CMD" "$ROOT_DIR/scripts/install.sh" "${USER}@${HOST}:${REMOTE_STAGING}/scripts/install.sh"
-  else
-    log "rsync not available on one side; falling back to scp..."
-    ${SCP_BASE[@]} "${ART_FILES[@]}" "${USER}@${HOST}:${REMOTE_STAGING}/dist-artifacts/"
-    ${SCP_BASE[@]} -r "$ROOT_DIR/config/"* "${USER}@${HOST}:${REMOTE_STAGING}/config/"
-    ${SCP_BASE[@]} "$ROOT_DIR/scripts/install.sh" "${USER}@${HOST}:${REMOTE_STAGING}/scripts/install.sh"
-  fi
+# Run installer
+log "running installer..."
+if [[ $VERBOSE -eq 1 ]]; then
+  ssh_run "sudo DEBUG=1 bash '$REMOTE_STAGING/scripts/install.sh' '$REMOTE_STAGING/dist-artifacts'" || error "Installation failed"
+else
+  ssh_run "sudo bash '$REMOTE_STAGING/scripts/install.sh' '$REMOTE_STAGING/dist-artifacts'" || error "Installation failed"
+fi
 
-  # Run installer
-  log "running remote installer... (sudo)"
-  if (( VERBOSE )); then
-    ${SSH_BASE[@]} -tt "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' bash -c 'DEBUG=1 TMPDIR=\"${REMOTE_STAGING}\" bash \"${REMOTE_STAGING}/scripts/install.sh\" \"${REMOTE_STAGING}/dist-artifacts\"'"
-  else
-    if ! ${SSH_BASE[@]} -tt "${USER}@${HOST}" "echo '$PASSWORD' | sudo -S -p '' bash -c 'TMPDIR=\"${REMOTE_STAGING}\" bash \"${REMOTE_STAGING}/scripts/install.sh\" \"${REMOTE_STAGING}/dist-artifacts\"'" 2>/tmp/deploy_error.log; then
-      echo "[deploy] Remote installer failed. Captured stderr (local):" >&2
-      sed -n '1,200p' /tmp/deploy_error.log >&2 || true
-      echo "[deploy] Attempting to fetch remote logs (journalctl/syslog)..." >&2
-      ${SSH_BASE[@]} "${USER}@${HOST}" "journalctl -xe -n 100 --no-pager 2>/dev/null | tail -n 100 || tail -n 100 /var/log/syslog 2>/dev/null || echo 'No journal/syslog available'" >&2 || true
-      echo "[deploy] Try running with -v/--verbose for more details" >&2
-      exit 1
-    fi
-  fi
+# Cleanup
+log "cleaning up..."
+ssh_run "rm -rf '$REMOTE_STAGING'" || true
 
-  # Cleanup
-  log "cleaning up staging dir..."
-  ${SSH_BASE[@]} "${USER}@${HOST}" "rm -rf '${REMOTE_STAGING}'" >/dev/null 2>&1 || true
+# Check service status
+log "checking service status..."
+ssh_run "systemctl status devicehub-core.service --no-pager -l" || true
+ssh_run "journalctl -u devicehub-core.service -n 20 --no-pager" || true
 
-  log "deployment completed"
-}
-
-main "$@"
-
-# (old step-based UI and sshpass/password handling removed for simplicity)
+log "✅ Deployment complete"

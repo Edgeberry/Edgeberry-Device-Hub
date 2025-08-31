@@ -4,7 +4,13 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-08-31 11:31 CEST
+**Last updated:** 2025-08-31 15:36 CEST
+
+## Documentation Strategy
+
+- **README.md** - User-oriented documentation for end users, installation, and basic usage
+- **alignment.md** (this file) - Developer-oriented technical specifications, architecture, and contributor guidelines
+- **Other docs/** - Detailed technical documentation for specific components or processes
  ## Project Phase
 
  - Current status: MVP (active as of 2025-08-24).
