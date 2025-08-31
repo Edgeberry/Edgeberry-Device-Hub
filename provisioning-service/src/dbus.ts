@@ -1,10 +1,13 @@
 import * as dbus from 'dbus-native';
 
-const BUS_NAME = 'io.edgeberry.devicehub.Core';
-const WL_OBJECT_PATH = '/io/edgeberry/devicehub/WhitelistService';
-const WL_IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService';
+// D-Bus service configuration
+const WHITELIST_BUS_NAME = 'io.edgeberry.devicehub.Core';
+const WHITELIST_OBJECT_PATH = '/io/edgeberry/devicehub/WhitelistService';
+const WHITELIST_IFACE_NAME = 'io.edgeberry.devicehub.WhitelistService1';
+
+const CERT_BUS_NAME = 'io.edgeberry.devicehub.Core';
 const CERT_OBJECT_PATH = '/io/edgeberry/devicehub/CertificateService';
-const CERT_IFACE_NAME = 'io.edgeberry.devicehub.CertificateService';
+const CERT_IFACE_NAME = 'io.edgeberry.devicehub.CertificateService1';
 
 let bus: any | null = null;
 
@@ -15,10 +18,10 @@ function getBus(): any {
   return bus;
 }
 
-function callDbusMethod(objectPath: string, interfaceName: string, member: string, ...args: any[]): Promise<any> {
+function callDbusMethod(busName: string, objectPath: string, interfaceName: string, member: string, ...args: any[]): Promise<any> {
   return new Promise((resolve, reject) => {
     const connection = getBus();
-    const service = connection.getService(BUS_NAME);
+    const service = connection.getService(busName);
     
     service.getInterface(objectPath, interfaceName, (err: any, iface: any) => {
       if (err) {
@@ -43,30 +46,49 @@ function callDbusMethod(objectPath: string, interfaceName: string, member: strin
 
 export async function dbusCheckUUID(uuid: string): Promise<{ ok: boolean; note?: string; used_at?: string; error?: string }> {
   try {
-    const result = await callDbusMethod(WL_OBJECT_PATH, WL_IFACE_NAME, 'CheckUUID', uuid);
-    const [ok, note, used_at, error] = result;
-    return { ok: !!ok, note: note || undefined, used_at: used_at || undefined, error: error || undefined };
+    const requestJson = JSON.stringify({ uuid });
+    const result = await callDbusMethod(WHITELIST_BUS_NAME, WHITELIST_OBJECT_PATH, WHITELIST_IFACE_NAME, 'CheckUUID', requestJson);
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
+    return { 
+      ok: response.success, 
+      note: response.note || undefined, 
+      used_at: response.used_at || undefined,
+      error: response.error || undefined
+    };
   } catch (error) {
-    throw error;
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
 
 export async function dbusMarkUsed(uuid: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const result = await callDbusMethod(WL_OBJECT_PATH, WL_IFACE_NAME, 'MarkUsed', uuid);
-    const [ok, error] = result;
-    return { ok: !!ok, error: error || undefined };
+    const requestJson = JSON.stringify({ uuid });
+    const result = await callDbusMethod(WHITELIST_BUS_NAME, WHITELIST_OBJECT_PATH, WHITELIST_IFACE_NAME, 'MarkUsed', requestJson);
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
+    return { 
+      ok: response.success, 
+      error: response.error || undefined 
+    };
   } catch (error) {
-    throw error;
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
 
-export async function dbusIssueFromCSR(uuid: string, csrPem: string, validityDays: number): Promise<{ ok: boolean; certPem?: string; keyPem?: string; error?: string }> {
+export async function dbusIssueFromCSR(deviceId: string, csrPem: string, validityDays: number): Promise<{ ok: boolean; certPem?: string; caChainPem?: string; error?: string }> {
   try {
-    const result = await callDbusMethod(CERT_OBJECT_PATH, CERT_IFACE_NAME, 'IssueFromCSR', uuid, csrPem, validityDays);
-    const [ok, certPem, keyPem, error] = result;
-    return { ok: !!ok, certPem: certPem || undefined, keyPem: keyPem || undefined, error: error || undefined };
+    const requestJson = JSON.stringify({ deviceId, csrPem, days: validityDays });
+    const result = await callDbusMethod(CERT_BUS_NAME, CERT_OBJECT_PATH, CERT_IFACE_NAME, 'IssueFromCSR', requestJson);
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
+    return { 
+      ok: response.success, 
+      certPem: response.certPem || undefined, 
+      caChainPem: response.caChainPem || undefined, 
+      error: response.error || undefined 
+    };
   } catch (error) {
-    throw error;
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }

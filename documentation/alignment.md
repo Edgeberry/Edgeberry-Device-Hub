@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-08-24 14:23 CEST
+**Last updated:** 2025-08-31 11:10 CEST
  ## Project Phase
 
  - Current status: MVP (active as of 2025-08-24).
@@ -47,6 +47,7 @@ Simple rules so you can contribute confidently:
 
 ### Required Tools
 - **Core stack:** TypeScript, Node.js/Express, React, SQLite, Mosquitto (MQTT), D-Bus
+- **D-Bus library:** `dbus-native` (Node.js) for inter-service communication
 - **No extra frameworks** - Keep it simple
 
 ### Running Locally
@@ -537,20 +538,40 @@ Change policy:
 Bus: system bus in production.
 Common namespace: `io.edgeberry.devicehub.*`
 
+**Implementation Pattern**: All D-Bus interfaces use **JSON string communication** to avoid marshalling complexity and signature mismatch errors. Method signatures are simplified to single string input/output (`['s', 's']`), with structured data passed as JSON strings.
+
+**Bus Name Architecture**: Core service owns the single bus name `io.edgeberry.devicehub.Core` and exports multiple interfaces on different object paths. This eliminates bus name conflicts and security policy issues.
+
+**Library**: Uses `dbus-native` Node.js library with `exportInterface` pattern for service registration.
+
 #### Core Whitelist Service
 
+- Bus name: `io.edgeberry.devicehub.Core`
 - Object path: `/io/edgeberry/devicehub/WhitelistService`
 - Interface: `io.edgeberry.devicehub.WhitelistService`
-- Methods:
-  - `CheckUUID(s uuid) → (b ok, s note, s used_at, s error)`
-  - `MarkUsed(s uuid) → (b ok, s error)`
+- Methods (JSON string format):
+  - `CheckUUID(s requestJson) → (s responseJson)`
+    - Input: `{"uuid": "string"}`
+    - Output: `{"success": boolean, "note": "string", "used_at": "string", "error": "string"}`
+  - `MarkUsed(s requestJson) → (s responseJson)`
+    - Input: `{"uuid": "string"}`
+    - Output: `{"success": boolean, "error": "string"}`
+  - `List(s requestJson) → (s responseJson)`
+    - Input: `{}`
+    - Output: `{"success": boolean, "uuids": ["string"], "error": "string"}`
+  - `Add(s requestJson) → (s responseJson)`
+    - Input: `{"uuid": "string", "note": "string"}`
+    - Output: `{"success": boolean, "error": "string"}`
 
 #### Core Certificate Service
 
+- Bus name: `io.edgeberry.devicehub.Core`
 - Object path: `/io/edgeberry/devicehub/CertificateService`
 - Interface: `io.edgeberry.devicehub.CertificateService`
-- Methods:
-  - `IssueFromCSR(s deviceId, s csrPem, u days) → (b ok, s certPem, s caChainPem, s error)`
+- Methods (JSON string format):
+  - `IssueFromCSR(s requestJson) → (s responseJson)`
+    - Input: `{"deviceId": "string", "csrPem": "string", "days": number}`
+    - Output: `{"success": boolean, "certPem": "string", "caChainPem": "string", "error": "string"}`
 
 #### Provisioning Service
 
@@ -561,23 +582,32 @@ Common namespace: `io.edgeberry.devicehub.*`
 #### Device Twin Service
 
 - Core public proxy (primary surface)
+  - Bus name: `io.edgeberry.devicehub.Core`
   - Object path: `/io/edgeberry/devicehub/TwinService`
   - Interface: `io.edgeberry.devicehub.TwinService`
-  - Methods:
-    - `GetTwin(s deviceId) → (s desiredJson, u desiredVersion, s reportedJson, s error)`
-    - `SetDesired(s deviceId, s desiredJson) → (b ok, u newVersion, s error)`
-    - `SetReported(s deviceId, s reportedJson) → (b ok, u newVersion, s error)`
-    - `ListDevices() → (as deviceIds)`
+  - Methods (JSON string format):
+    - `GetTwin(s requestJson) → (s responseJson)`
+      - Input: `{"deviceId": "string"}`
+      - Output: `{"success": boolean, "desiredJson": "string", "desiredVersion": number, "reportedJson": "string", "error": "string"}`
+    - `SetDesired(s requestJson) → (s responseJson)`
+      - Input: `{"deviceId": "string", "desiredJson": "string"}`
+      - Output: `{"success": boolean, "newVersion": number, "error": "string"}`
+    - `SetReported(s requestJson) → (s responseJson)`
+      - Input: `{"deviceId": "string", "reportedJson": "string"}`
+      - Output: `{"success": boolean, "newVersion": number, "error": "string"}`
+    - `ListDevices(s requestJson) → (s responseJson)`
+      - Input: `{}`
+      - Output: `{"success": boolean, "deviceIds": ["string"], "error": "string"}`
 
 - Twin worker (internal)
   - Bus name: `io.edgeberry.devicehub.Twin`
   - Object path: `/io/edgeberry/devicehub/Twin`
   - Interface: `io.edgeberry.devicehub.Twin1`
-  - Methods:
-    - `GetTwin(s deviceId) → (s desiredJson, u desiredVersion, s reportedJson, s error)`
-    - `SetDesired(s deviceId, s desiredJson) → (u newVersion)`
-    - `SetReported(s deviceId, s reportedJson) → (u newVersion)`
-    - `ListDevices() → (as deviceIds)`
+  - Methods (JSON string format):
+    - `GetTwin(s requestJson) → (s responseJson)`
+    - `SetDesired(s requestJson) → (s responseJson)`
+    - `SetReported(s requestJson) → (s responseJson)`
+    - `ListDevices(s requestJson) → (s responseJson)`
 
 #### Device Registry (owned by Core)
 

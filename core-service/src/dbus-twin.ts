@@ -1,6 +1,6 @@
 import * as dbus from 'dbus-native';
 
-const BUS_NAME = 'io.edgeberry.devicehub.Core';
+const BUS_NAME = 'io.edgeberry.devicehub.TwinService';
 const OBJECT_PATH = '/io/edgeberry/devicehub/TwinService';
 const IFACE_NAME = 'io.edgeberry.devicehub.TwinService';
 
@@ -28,61 +28,61 @@ export async function startCoreTwinDbusServer(): Promise<any> {
   
   console.log('Starting Twin D-Bus server with dbus-native');
   
-  // Create service interface using dbus-native pattern
-  const service = bus.getService(BUS_NAME);
-  const obj = service.createObject(OBJECT_PATH);
-  const iface = obj.createInterface(IFACE_NAME);
-  
-  // Add GetTwin method
-  iface.addMethod('GetTwin', {
-    in: ['s'],
-    out: ['s', 'u', 's', 's']
-  }, async (deviceId: string, callback: Function) => {
-    try {
-      const result = await twinService.GetTwin(deviceId);
-      callback(null, ...result);
-    } catch (error) {
-      callback(error);
+  // Request bus name
+  bus.requestName(BUS_NAME, 0, (err: any, res: any) => {
+    if (err) {
+      console.error('D-Bus service name acquisition failed:', err);
+    } else {
+      console.log(`D-Bus service name "${BUS_NAME}" successfully acquired`);
     }
   });
-  
-  // Add SetDesired method
-  iface.addMethod('SetDesired', {
-    in: ['s', 's'],
-    out: ['b', 'u', 's']
-  }, async (deviceId: string, patchJson: string, callback: Function) => {
-    try {
-      const result = await twinService.SetDesired(deviceId, patchJson);
-      callback(null, ...result);
-    } catch (error) {
-      callback(error);
+
+  // Create the service object with actual method implementations
+  const serviceObject = {
+    GetTwin: async (deviceId: string) => {
+      try {
+        const result = await twinService.GetTwin(deviceId);
+        return result;
+      } catch (error) {
+        throw error;
+      }
+    },
+    SetDesired: async (deviceId: string, patchJson: string) => {
+      try {
+        const result = await twinService.SetDesired(deviceId, patchJson);
+        return result;
+      } catch (error) {
+        throw error;
+      }
+    },
+    SetReported: async (deviceId: string, patchJson: string) => {
+      try {
+        const result = await twinService.SetReported(deviceId, patchJson);
+        return result;
+      } catch (error) {
+        throw error;
+      }
+    },
+    ListDevices: async () => {
+      try {
+        const result = await twinService.ListDevices();
+        return result;
+      } catch (error) {
+        throw error;
+      }
     }
-  });
-  
-  // Add SetReported method
-  iface.addMethod('SetReported', {
-    in: ['s', 's'],
-    out: ['b', 'u', 's']
-  }, async (deviceId: string, patchJson: string, callback: Function) => {
-    try {
-      const result = await twinService.SetReported(deviceId, patchJson);
-      callback(null, ...result);
-    } catch (error) {
-      callback(error);
-    }
-  });
-  
-  // Add ListDevices method
-  iface.addMethod('ListDevices', {
-    in: [],
-    out: ['as']
-  }, async (callback: Function) => {
-    try {
-      const result = await twinService.ListDevices();
-      callback(null, result);
-    } catch (error) {
-      callback(error);
-    }
+  };
+
+  // Export the interface using the correct dbus-native pattern
+  bus.exportInterface(serviceObject, OBJECT_PATH, {
+    name: IFACE_NAME,
+    methods: {
+      GetTwin: ['s', 'suss'],
+      SetDesired: ['ss', 'bus'],
+      SetReported: ['ss', 'bus'],
+      ListDevices: ['', 'as']
+    },
+    signals: {}
   });
   
   console.log(`Twin D-Bus server started on ${BUS_NAME} at ${OBJECT_PATH}`);

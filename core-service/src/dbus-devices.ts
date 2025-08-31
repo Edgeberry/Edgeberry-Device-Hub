@@ -1,8 +1,8 @@
 import * as dbus from 'dbus-native';
 
-const BUS_NAME = 'io.edgeberry.devicehub.Core';
-const OBJECT_PATH = '/io/edgeberry/devicehub/Core/Devices1';
-const IFACE_NAME = 'io.edgeberry.devicehub.Core.Devices1';
+const BUS_NAME = 'io.edgeberry.devicehub.DevicesService';
+const OBJECT_PATH = '/io/edgeberry/devicehub/DevicesService';
+const IFACE_NAME = 'io.edgeberry.devicehub.DevicesService1';
 
 class DevicesInterface {
   async ResolveDeviceIdByUUID(uuid: string): Promise<[boolean, string, string]> {
@@ -27,35 +27,43 @@ export async function startDevicesDbusServer(): Promise<any> {
   
   console.log('Starting Devices D-Bus server with dbus-native');
   
-  // Create service interface using dbus-native pattern
-  const service = bus.getService(BUS_NAME);
-  const obj = service.createObject(OBJECT_PATH);
-  const iface = obj.createInterface(IFACE_NAME);
-  
-  // Add GetDeviceInfo method
-  iface.addMethod('GetDeviceInfo', {
-    in: ['s'],
-    out: ['b', 's', 's']
-  }, async (deviceId: string, callback: Function) => {
-    try {
-      const result = await devicesService.GetDeviceInfo(deviceId);
-      callback(null, ...result);
-    } catch (error) {
-      callback(error);
+  // Request bus name
+  bus.requestName(BUS_NAME, 0, (err: any, res: any) => {
+    if (err) {
+      console.error('D-Bus service name acquisition failed:', err);
+    } else {
+      console.log(`D-Bus service name "${BUS_NAME}" successfully acquired`);
     }
   });
-  
-  // Add ListDevices method
-  iface.addMethod('ListDevices', {
-    in: [],
-    out: ['as']
-  }, async (callback: Function) => {
-    try {
-      const result = await devicesService.ListDevices();
-      callback(null, result);
-    } catch (error) {
-      callback(error);
+
+  // Create the service object with actual method implementations
+  const serviceObject = {
+    GetDeviceInfo: async (deviceId: string) => {
+      try {
+        const result = await devicesService.GetDeviceInfo(deviceId);
+        return result;
+      } catch (error) {
+        throw error;
+      }
+    },
+    ListDevices: async () => {
+      try {
+        const result = await devicesService.ListDevices();
+        return result;
+      } catch (error) {
+        throw error;
+      }
     }
+  };
+
+  // Export the interface using the correct dbus-native pattern
+  bus.exportInterface(serviceObject, OBJECT_PATH, {
+    name: IFACE_NAME,
+    methods: {
+      GetDeviceInfo: ['s', 'bss'],
+      ListDevices: ['', 'as']
+    },
+    signals: {}
   });
   
   console.log(`Devices D-Bus server started on ${BUS_NAME} at ${OBJECT_PATH}`);

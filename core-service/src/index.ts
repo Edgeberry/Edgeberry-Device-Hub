@@ -1804,10 +1804,26 @@ setupShutdown();
 // Start D-Bus services and ensure provisioning certificates exist
 async function startDbusServices() {
   try {
-    console.log(`[core-service] Starting D-Bus WhitelistService...`);
-    const bus = await startWhitelistDbusServer();
-    console.log(`[core-service] WhitelistService started, starting CertificateService...`);
-    await startCertificateDbusServer();
+    console.log(`[core-service] Starting D-Bus services...`);
+    
+    // Create system bus connection and register the Core bus name
+    const dbus = await import('dbus-native');
+    const bus = dbus.systemBus();
+    
+    // Register the main bus name
+    bus.requestName('io.edgeberry.devicehub.Core', 0, (err: any, res: any) => {
+      if (err) {
+        console.error('D-Bus Core service name acquisition failed:', err);
+      } else {
+        console.log('D-Bus Core service name "io.edgeberry.devicehub.Core" successfully acquired');
+      }
+    });
+    
+    // Start individual services using the shared bus connection
+    console.log(`[core-service] Starting WhitelistService...`);
+    await startWhitelistDbusServer(bus);
+    console.log(`[core-service] Starting CertificateService...`);
+    await startCertificateDbusServer(bus);
     console.log(`[core-service] D-Bus services started successfully`);
     
     // Ensure provisioning certificates exist for device bootstrap
