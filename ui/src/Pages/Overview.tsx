@@ -75,11 +75,39 @@ export default function Overview(props:{user:any}){
         setDevices(list);
       }catch{}
     };
-    const topic = props.user ? 'devices.list' : 'devices.list.public';
-    wsSubscribe(topic, onDevices);
+    
+    const onDeviceStatus = (data: any) => {
+      if(!mounted || !data?.deviceId) return;
+      try{
+        setDevices(prevDevices => 
+          prevDevices.map(device => {
+            const deviceId = device.id || device._id || device.name;
+            if (String(deviceId) === String(data.deviceId)) {
+              return {
+                ...device,
+                online: data.status,
+                last_seen: data.status ? null : data.timestamp
+              };
+            }
+            return device;
+          })
+        );
+      }catch{}
+    };
+    
+    const devicesTopic = props.user ? 'devices.list' : 'devices.list.public';
+    const statusTopic = props.user ? 'device.status' : 'device.status.public';
+    
+    wsSubscribe(devicesTopic, onDevices);
+    wsSubscribe(statusTopic, onDeviceStatus);
+    
     (async()=>{ if(!wsIsConnected()){ try{ const d = await getDevices(); const list = Array.isArray(d?.devices) ? d.devices : (Array.isArray(d) ? d : []); if(mounted) setDevices(list); }catch{ if(mounted) setDevices([]); } } })();
-    return ()=>{ mounted = false; wsUnsubscribe(topic, onDevices); };
-  },[]);
+    return ()=>{ 
+      mounted = false; 
+      wsUnsubscribe(devicesTopic, onDevices); 
+      wsUnsubscribe(statusTopic, onDeviceStatus);
+    };
+  },[props.user]);
 
   return (
     <div>

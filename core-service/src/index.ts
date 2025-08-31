@@ -71,9 +71,9 @@ import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 import { startWhitelistDbusServer } from './dbus-whitelist.js';
 import { startCertificateDbusServer } from './dbus-certs.js';
-import { startCoreTwinDbusServer } from './dbus-twin.js';
-import { twinGetTwin } from './dbus-twin-client.js';
+import { startCoreTwinDbusServer, setBroadcastFunction } from './dbus-twin.js';
 import { startDevicesDbusServer } from './dbus-devices.js';
+import { twinGetTwin } from './dbus-twin-client.js';
 
 const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
@@ -1657,7 +1657,7 @@ wss.on('connection', (ws: any, req: any) => {
           if(typeof t !== 'string') continue;
           // Anonymous clients: allow only public metrics topics
           if(!ctx.authed){
-            if(t === 'metrics.history' || t === 'metrics.snapshots' || t === 'services.status' || t === 'devices.list.public'){
+            if(t === 'metrics.history' || t === 'metrics.snapshots' || t === 'services.status' || t === 'devices.list.public' || t === 'device.status.public'){
               ctx.topics.add(t);
               console.log(`[WS] Anonymous client subscribed to: ${t}`);
             } else {
@@ -1853,6 +1853,9 @@ async function startDbusServices() {
 }  
 // Initialize D-Bus services before starting HTTP server
 startDbusServices().then(() => {
+  // Set up the broadcast function for device status updates
+  setBroadcastFunction(broadcast);
+  
   server.listen(PORT, () => {
     // eslint-disable-next-line no-console
     console.log(`[core-service] listening on :${PORT}, UI_DIST=${UI_DIST}`);

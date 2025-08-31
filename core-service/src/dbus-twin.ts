@@ -3,6 +3,13 @@ import * as dbus from 'dbus-native';
 const OBJECT_PATH = '/io/edgeberry/devicehub/TwinService';
 const IFACE_NAME = 'io.edgeberry.devicehub.TwinService';
 
+// WebSocket broadcast function - will be set during initialization
+let broadcastFunction: ((topic: string, payload: any) => void) | null = null;
+
+export function setBroadcastFunction(fn: (topic: string, payload: any) => void) {
+  broadcastFunction = fn;
+}
+
 class CoreTwinInterface {
   async GetTwin(deviceId: string): Promise<[string, number, string, string]> {
     return ['{}', 0, '{}', ''];
@@ -22,7 +29,25 @@ class CoreTwinInterface {
 
   async UpdateDeviceStatus(deviceId: string, status: string, timestamp: number): Promise<boolean> {
     console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${new Date(timestamp).toISOString()}`);
-    // TODO: Store device status in registry database or broadcast via WebSocket
+    
+    // Broadcast device status update via WebSocket
+    if (broadcastFunction) {
+      const statusUpdate = {
+        deviceId,
+        status: status === 'online',
+        timestamp: new Date(timestamp).toISOString(),
+        last_seen: status === 'offline' ? new Date(timestamp).toISOString() : null
+      };
+      
+      // Broadcast to both authenticated and public device status topics
+      broadcastFunction('device.status', { type: 'device.status', data: statusUpdate });
+      broadcastFunction('device.status.public', { type: 'device.status.public', data: { 
+        deviceId, 
+        status: status === 'online',
+        timestamp: new Date(timestamp).toISOString()
+      }});
+    }
+    
     return true;
   }
 }
