@@ -236,11 +236,14 @@ async function start() {
         console.error('[virtual-device] CSR generation failed', e?.message || e);
         return;
       }
-      // Optionally persist generated device key/cert later
-      if (DEVICE_KEY_OUT) {
-        writeIfPath(keyPem, DEVICE_KEY_OUT);
-        console.log(`[virtual-device] wrote device key to ${DEVICE_KEY_OUT}`);
-      }
+      
+      // Save device key to temporary file for runtime use
+      const keyPath = DEVICE_KEY_OUT || path.join(tmpdir(), `${String(PROV_UUID)}.key`);
+      writeFileSync(keyPath, keyPem);
+      console.log(`[virtual-device] saved device key to ${keyPath}`);
+      
+      // Store the key path for later use in runtime
+      (client as any)._deviceKeyPath = keyPath;
       const provisionPayload: any = {
         csrPem,
         name: `Virtual Device ${runtimeDeviceId}`,
@@ -267,13 +270,19 @@ async function start() {
       // Persist cert if requested
       const certPath = DEVICE_CERT_OUT || path.join(tmpdir(), `${runtimeDeviceId}.crt`);
       writeFileSync(certPath, msg.certPem);
-      if (msg.caChainPem && MQTT_TLS_CA && !existsSync(MQTT_TLS_CA)) {
-        // If a CA path was provided but file missing, optionally write it
-        try { writeFileSync(MQTT_TLS_CA, msg.caChainPem); } catch {}
+      
+      // Save CA chain to a temporary file for runtime use
+      let caPath: string | undefined;
+      if (msg.caChainPem) {
+        caPath = path.join(tmpdir(), `${runtimeDeviceId}-ca.crt`);
+        writeFileSync(caPath, msg.caChainPem);
+        console.log(`[virtual-device] saved CA chain to ${caPath}`);
       }
+      
       // End bootstrap session and start runtime session using device cert
+      const deviceKeyPath = (client as any)._deviceKeyPath;
       try { client.end(true); } catch {}
-      startRuntime(runtimeDeviceId, certPath, DEVICE_KEY_OUT || undefined);
+      startRuntime(runtimeDeviceId, certPath, deviceKeyPath, caPath);
     } else if (topic === provRejTopic) {
       console.error(`[virtual-device] <- rejected: ${payload.toString()}`);
     }
@@ -309,8 +318,8 @@ async function start() {
   process.on('SIGTERM', shutdown);
 }
 
-function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?: string) {
-  const ca = MQTT_TLS_CA ? readFileSync(MQTT_TLS_CA) : undefined;
+function startRuntime(deviceId: string, deviceCertPath?: string, deviceKeyPath?: string, caPath?: string) {
+  const ca = caPath ? readFileSync(caPath) : (MQTT_TLS_CA && existsSync(MQTT_TLS_CA) ? readFileSync(MQTT_TLS_CA) : undefined);
   const cert = deviceCertPath ? readFileSync(deviceCertPath) : (MQTT_TLS_CERT ? readFileSync(MQTT_TLS_CERT) : undefined);
   const key = deviceKeyPath ? readFileSync(deviceKeyPath) : (MQTT_TLS_KEY ? readFileSync(MQTT_TLS_KEY) : undefined);
   const opts: IClientOptions = {

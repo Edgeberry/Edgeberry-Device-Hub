@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-08-31 11:10 CEST
+**Last updated:** 2025-08-31 11:31 CEST
  ## Project Phase
 
  - Current status: MVP (active as of 2025-08-24).
@@ -439,6 +439,7 @@ Anonymous access (Observer mode):
 - **`provisioning-service/`** — Long-running Node.js service
   - Subscribed to `$devicehub/#` topics for bootstrap flows
   - Handles CSR processing, delegates certificate issuance to Core over D-Bus (CertificateService), template provisioning
+  - **Whitelist enforcement enabled**: Validates UUIDs via D-Bus WhitelistService and marks them as used after successful provisioning
   - No device twin responsibility
   - MVP adds simplified provisioning request/ack flow on `$devicehub/devices/{deviceId}/provision/request` for development
 
@@ -494,7 +495,7 @@ Responsibilities and boundaries:
 
 - `ui/` calls HTTP APIs served by `core-service` only. It should never talk to MQTT directly.
 - `core-service` is the single writer to the database and the HTTP surface area for external clients. It exposes the D-Bus `WhitelistService` and `CertificateService` used by internal workers and must enforce the permission model.
-- `provisioning-service/` owns MQTT bootstrap and delegates certificate issuance to Core over D-Bus (`CertificateService`). It validates provisioning UUIDs by calling Core's D-Bus `WhitelistService` and no longer exposes its own whitelist API.
+- `provisioning-service/` owns MQTT bootstrap and delegates certificate issuance to Core over D-Bus (`CertificateService`). It validates provisioning UUIDs by calling Core's D-Bus `WhitelistService` and marks them as used after successful provisioning. Whitelist enforcement is enabled by default via `ENFORCE_WHITELIST=true`.
 - `twin-service/` maintains digital twins (desired/reported state, deltas, reconciliation). Subscribes/publishes to twin topics and updates the DB via shared repositories.
 - `mqtt-broker/` config enforces mTLS, maps cert subject → device identity, and defines ACLs per topic family.
     - Provisioning topics are open to any authenticated client (mTLS) at the broker layer; authorization is enforced by `provisioning-service` via whitelist UUID validation. This supports shared provisioning certificates.
@@ -544,6 +545,10 @@ Common namespace: `io.edgeberry.devicehub.*`
 
 **Library**: Uses `dbus-native` Node.js library with `exportInterface` pattern for service registration.
 
+**Database Integration**: D-Bus services connect directly to SQLite databases for persistent storage. Whitelist functions use the `uuid_whitelist` table in the provisioning database with proper transaction handling and error management.
+
+**Production Status**: All D-Bus interfaces are fully implemented and production-ready. Whitelist enforcement is enabled by default in the provisioning service.
+
 #### Core Whitelist Service
 
 - Bus name: `io.edgeberry.devicehub.Core`
@@ -576,8 +581,13 @@ Common namespace: `io.edgeberry.devicehub.*`
 #### Provisioning Service
 
 - D-Bus interface: none (MVP)
-- Notes:
-  - Uses Core's `WhitelistService` and `CertificateService` over D-Bus.
+- **Whitelist Enforcement**: Enabled by default with `ENFORCE_WHITELIST=true` environment variable
+- **D-Bus Integration**: Uses Core's `WhitelistService` and `CertificateService` over D-Bus
+- **Provisioning Workflow**:
+  1. Validates UUID via `WhitelistService.CheckUUID()`
+  2. Issues certificate via `CertificateService.IssueFromCSR()`
+  3. Marks UUID as used via `WhitelistService.MarkUsed()`
+- **Configuration**: Set `ENFORCE_WHITELIST=false` to disable whitelist validation (not recommended for production)
 
 #### Device Twin Service
 
