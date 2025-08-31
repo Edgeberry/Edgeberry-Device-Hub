@@ -87,7 +87,12 @@ app.set('etag', false);
 // - ADMIN_USER / ADMIN_PASSWORD: single-user admin credentials (dev defaults; MUST change in prod)
 // - JWT_SECRET / JWT_TTL_SECONDS: cookie token signing and expiration
 
-app.use(morgan('dev'));
+// Disable all colors globally to prevent ANSI escape codes in logs
+process.env.NO_COLOR = '1';
+process.env.FORCE_COLOR = '0';
+
+// Configure morgan logging - use 'combined' format without colors to avoid ANSI escape codes in logs
+app.use(morgan('combined'));
 // Ensure API responses are not cached (avoid 304 for JSON endpoints)
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/api/')) {
@@ -1427,6 +1432,101 @@ function actionHandler(action: 'start'|'stop'|'restart') {
 app.post('/api/services/:unit/start', actionHandler('start'));
 app.post('/api/services/:unit/stop', actionHandler('stop'));
 app.post('/api/services/:unit/restart', actionHandler('restart'));
+
+// System power management endpoints (admin-only)
+// POST /api/system/reboot -> reboot the server
+app.post('/api/system/reboot', authRequired, async (req: Request, res: Response) => {
+  try {
+    console.log('[core-service] System reboot requested by admin');
+    
+    // Schedule reboot with a 1-minute delay to allow response to be sent
+    const proc = spawn('shutdown', ['-r', 'now'], { 
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true
+    });
+    
+    let stdout = '';
+    let stderr = '';
+    
+    proc.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    
+    proc.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+    
+    proc.on('close', (code: number | null) => {
+      if (code === 0) {
+        console.log('[core-service] System reboot scheduled successfully');
+      } else {
+        console.error('[core-service] Failed to schedule reboot:', stderr);
+      }
+    });
+    
+    // Respond immediately
+    res.json({ 
+      ok: true, 
+      message: 'System reboot scheduled in 1 minute',
+      action: 'reboot'
+    });
+    
+  } catch (e: any) {
+    console.error('[core-service] Error scheduling reboot:', e);
+    res.status(500).json({ 
+      ok: false, 
+      error: e?.message || 'Failed to schedule reboot',
+      action: 'reboot'
+    });
+  }
+});
+
+// POST /api/system/shutdown -> shutdown the server
+app.post('/api/system/shutdown', authRequired, async (req: Request, res: Response) => {
+  try {
+    console.log('[core-service] System shutdown requested by admin');
+    
+    // Schedule shutdown with a 1-minute delay to allow response to be sent
+    const proc = spawn('shutdown', ['-h', 'now'], { 
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true
+    });
+    
+    let stdout = '';
+    let stderr = '';
+    
+    proc.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    
+    proc.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+    
+    proc.on('close', (code: number | null) => {
+      if (code === 0) {
+        console.log('[core-service] System shutdown scheduled successfully');
+      } else {
+        console.error('[core-service] Failed to schedule shutdown:', stderr);
+      }
+    });
+    
+    // Respond immediately
+    res.json({ 
+      ok: true, 
+      message: 'System shutdown scheduled in 1 minute',
+      action: 'shutdown'
+    });
+    
+  } catch (e: any) {
+    console.error('[core-service] Error scheduling shutdown:', e);
+    res.status(500).json({ 
+      ok: false, 
+      error: e?.message || 'Failed to schedule shutdown',
+      action: 'shutdown'
+    });
+  }
+});
 
 // GET /api/logs/stream -> SSE stream of logs
 // Query: units=comma,separated (optional), since=systemd-time (optional)
