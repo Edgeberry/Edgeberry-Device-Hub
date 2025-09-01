@@ -24,7 +24,7 @@ import DeviceDetailModal from '../components/DeviceDetailModal';
 import CertificateSettingsModal from '../components/CertificateSettingsModal';
 import WhitelistModal from '../components/WhitelistModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTrash, faRightLeft, faLocationDot } from '@fortawesome/free-solid-svg-icons';
+import { faTrash, faRightLeft, faLocationDot, faEye, faExchange } from '@fortawesome/free-solid-svg-icons';
 
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
@@ -81,8 +81,8 @@ export default function Overview(props:{user:any}){
       try{
         setDevices(prevDevices => 
           prevDevices.map(device => {
-            const deviceId = device.id || device._id || device.name;
-            if (String(deviceId) === String(data.deviceId)) {
+            const deviceUuid = device.uuid;
+            if (String(deviceUuid) === String(data.deviceId)) {
               return {
                 ...device,
                 online: data.status,
@@ -131,32 +131,30 @@ export default function Overview(props:{user:any}){
             <thead>
               <tr>
                 {props.user ? (<th>UUID</th>) : null}
-                <th>ID</th>
                 <th>Name</th>
                 <th>Status</th>
-                <th style={{width:140}}>Actions</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {(devices||[]).map((d:any)=> {
-                const id = d.id || d._id || d.name;
-                const open = () => setSelected(String(id));
-                const onKeyDown = (e: KeyboardEvent<HTMLTableRowElement>) => {
-                  if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
-                };
+                const uuid = d.uuid;
+                const name = d.name;
+                const status = d.online ? 'online' : 'offline';
+                const open = () => setSelected(String(uuid));
                 const onDecommission = async (e: React.MouseEvent) => {
                   e.stopPropagation();
-                  if (!id) return;
-                  if (!confirm(`Decommission device "${id}"? This removes it from the devices list.`)) return;
+                  if (!uuid) return;
+                  if (!confirm(`Decommission device "${name || uuid}"? This removes it from the devices list.`)) return;
                   try{
-                    setActionBusy(String(id));
-                    const res:any = await decommissionDevice(String(id));
+                    setActionBusy(String(uuid));
+                    const res:any = await decommissionDevice(String(uuid));
                     // If whitelist entries remain, offer to remove them
                     const wlCount = Number(res?.whitelist_entries || 0);
                     if (wlCount > 0) {
                       const also = confirm(`There are ${wlCount} whitelist entr${wlCount===1?'y':'ies'} for this device. Remove them now?`);
                       if (also) {
-                        await deleteWhitelistByDevice(String(id));
+                        await deleteWhitelistByDevice(String(uuid));
                       }
                     }
                     // Refresh devices list
@@ -177,69 +175,30 @@ export default function Overview(props:{user:any}){
                   alert('Identify device: feature not yet implemented. This will allow selecting another device to identify this one.');
                 };
                 
+                const displayName = name || `EDGB-${uuid.substring(0, 4).toUpperCase()}`;
+
                 return (
-                  <tr key={id}
-                      tabIndex={0}
-                      role="button"
-                      onClick={open}
-                      onKeyDown={onKeyDown}
-                      style={{ cursor:'pointer' }}>
-                    {props.user ? (
-                      <td>{(d.uuid || (d.meta && d.meta.uuid)) || '-'}</td>
-                    ) : null}
+                  <tr key={uuid} className={`${status === 'online' ? 'table-success' : status === 'offline' ? 'table-secondary' : ''}`}>
+                    {props.user ? (<td>{uuid || '-'}</td>) : null}
                     <td>
-                      {/* Keep deep-link for optional navigation, but clicking row opens modal */}
-                      <Link to={`/devices/${encodeURIComponent(id)}`} onClick={(e)=>{ e.preventDefault(); open(); }}>{id}</Link>
+                      <Link to={`/devices/${encodeURIComponent(uuid)}`} className="text-decoration-none">{displayName}</Link>
                     </td>
-                    <td>{d.name || '-'}</td>
+                    <td>{status || 'unknown'}</td>
                     <td>
-                      {d.online ? (
-                        <Badge bg="success">Online</Badge>
-                      ) : (
-                        <>
-                          <Badge bg="secondary" className="me-2">Offline</Badge>
-                          {d.last_seen && (
-                            <span className="text-muted small align-middle">{formatOfflineSince(d.last_seen)}</span>
-                          )}
-                        </>
-                      )}
-                    </td>
-                    <td>
-                      <div className="d-flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline-danger"
-                          aria-label="Decommission device"
-                          title="Decommission device"
-                          disabled={!props.user || actionBusy===String(id)}
-                          onClick={onDecommission}
-                        >
-                          {actionBusy===String(id) ? (
-                            <Spinner as="span" animation="border" size="sm" />
-                          ) : (
-                            <FontAwesomeIcon icon={faTrash} />
-                          )}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline-secondary"
-                          aria-label="Replace device"
-                          title="Replace device"
-                          disabled={!props.user}
-                          onClick={onReplace}
-                        >
-                          <FontAwesomeIcon icon={faRightLeft} />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline-secondary"
-                          aria-label="Identify device"
-                          title="Identify device"
-                          disabled={!props.user}
-                          onClick={onIdentify}
-                        >
-                          <FontAwesomeIcon icon={faLocationDot} />
-                        </Button>
+                      <div className="btn-group" role="group">
+                        <button type="button" className="btn btn-sm btn-outline-primary" onClick={open}>
+                          <FontAwesomeIcon icon={faEye} />
+                        </button>
+                        {props.user ? (
+                          <>
+                            <button type="button" className="btn btn-sm btn-outline-warning" onClick={onDecommission}>
+                              <FontAwesomeIcon icon={faTrash} />
+                            </button>
+                            <button type="button" className="btn btn-sm btn-outline-info" onClick={onReplace}>
+                              <FontAwesomeIcon icon={faExchange} />
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </td>
                   </tr>

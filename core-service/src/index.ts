@@ -47,27 +47,35 @@ import morgan from 'morgan';
 import serveStatic from 'serve-static';
 import {
   PORT,
-  NODE_ENV,
+  ADMIN_USER,
+  ADMIN_PASSWORD,
+  SESSION_COOKIE,
+  JWT_SECRET,
+  JWT_TTL_SECONDS,
+  UI_DIST,
   CERTS_DIR,
+  ROOT_DIR,
+  PROV_DIR,
   CA_KEY,
   CA_CRT,
-  UI_DIST,
-  PROVISIONING_DB,
+  DEVICEHUB_DB,
   REGISTRY_DB,
+  PROVISIONING_DB,
   ONLINE_THRESHOLD_SECONDS,
-  SERVICE,
+  DEFAULT_LOG_UNITS,
   PROVISIONING_CERT_PATH,
   PROVISIONING_KEY_PATH,
   PROVISIONING_HTTP_ENABLE_CERT_API,
-  PROV_DIR,
-  ADMIN_USER,
-  ADMIN_PASSWORD,
-  JWT_SECRET,
-  JWT_TTL_SECONDS,
-  SESSION_COOKIE,
+  MQTT_URL,
+  MQTT_USERNAME,
+  MQTT_PASSWORD,
+  MQTT_TLS_CA,
+  MQTT_TLS_CERT,
+  MQTT_TLS_KEY,
+  MQTT_TLS_REJECT_UNAUTHORIZED,
 } from './config.js';
 import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert } from './certs.js';
-import { buildJournalctlArgs, DEFAULT_LOG_UNITS } from './logs.js';
+import { buildJournalctlArgs } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 import { startWhitelistDbusServer } from './dbus-whitelist.js';
 import { startCertificateDbusServer } from './dbus-certs.js';
@@ -276,15 +284,15 @@ app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' })
 // GET /api/health
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
-// GET /api/devices/:id/twin -> fetch twin from Twin service via D-Bus
-app.get('/api/devices/:id/twin', authRequired, async (req: Request, res: Response) => {
+// GET /api/devices/:uuid/twin -> fetch twin from Twin service via D-Bus
+app.get('/api/devices/:uuid/twin', authRequired, async (req: Request, res: Response) => {
   try {
-    const deviceId = String(req.params.id || '').trim();
-    if (!deviceId) { res.status(400).json({ error: 'invalid device id' }); return; }
-    const [desiredJson, desiredVersion, reportedJson, err] = await twinGetTwin(deviceId);
+    const deviceUuid = String(req.params.uuid || '').trim();
+    if (!deviceUuid) { res.status(400).json({ error: 'invalid device uuid' }); return; }
+    const [desiredJson, desiredVersion, reportedJson, err] = await twinGetTwin(deviceUuid);
     if (err) { res.status(502).json({ error: 'twin_error', detail: err }); return; }
     res.json({
-      deviceId,
+      deviceUuid,
       desired: { version: desiredVersion >>> 0, doc: desiredJson ? JSON.parse(desiredJson) : {} },
       reported: { doc: reportedJson ? JSON.parse(reportedJson) : {} }
     });
@@ -620,7 +628,11 @@ app.get('/diagnostics', (_req: Request, res: Response) => {
 // Log a startup hello from core-service
 console.log('[core-service] hello from Device Hub core-service');
 // Ensure provisioning DB schema exists (uuid_whitelist etc.) before exposing D-Bus API
-try { ensureProvisioningSchema(); } catch {}
+try { 
+  ensureDeviceHubSchema(); 
+} catch (error) {
+  console.error('[core-service] Failed to initialize database schema:', error);
+}
 // Start D-Bus services
 await startDbusServices();
 
@@ -687,45 +699,115 @@ function openDb(file: string){
   }
 }
 
-// Ensure provisioning database schema exists for features that rely on it (e.g., UUID whitelist).
-// This is especially helpful in local development where the DB may start empty.
-function ensureProvisioningSchema(){
-  const db = openDb(PROVISIONING_DB);
-  if(!db) return;
+// Ensure main devicehub database schema exists (whitelist, registry, events)
+// This consolidates all tables into a single database file
+function ensureDeviceHubSchema(){
+  console.log(`[ensureDeviceHubSchema] Initializing database schema: ${DEVICEHUB_DB}`);
+  const db = openDb(DEVICEHUB_DB);
+  if(!db) {
+    console.error(`[ensureDeviceHubSchema] Failed to open database: ${DEVICEHUB_DB}`);
+    return;
+  }
   try{
     // uuid_whitelist: tracks pre-approved provisioning UUIDs
-    // Columns: uuid PRIMARY KEY, device_id, name, note, created_at, used_at
-    db.prepare(
-      'CREATE TABLE IF NOT EXISTS uuid_whitelist ('+
-      ' uuid TEXT PRIMARY KEY,'+
-      ' device_id TEXT,'+
-      ' name TEXT,'+
-      ' note TEXT,'+
-      " created_at TEXT NOT NULL,"+
-      ' used_at TEXT)'
-    ).run();
-
-    // If an older schema exists with device_id NOT NULL, migrate to allow NULLs
-    try{
-      const cols: Array<{ name: string; notnull: number }>|undefined = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
-      const devCol = Array.isArray(cols) ? cols.find((c:any)=>c.name==='device_id') : undefined;
-      if (devCol && Number(devCol.notnull) === 1) {
-        db.exec('BEGIN');
+    // Current schema: uuid, note, created_at, used_at (no device_id or name)
+    try {
+      const whitelistInfo = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
+      const hasLegacyColumns = whitelistInfo.some((col: any) => col.name === 'device_id' || col.name === 'name');
+      
+      if (hasLegacyColumns) {
+        console.log('[ensureDeviceHubSchema] Migrating uuid_whitelist table to remove legacy columns');
+        // Backup data, drop table, recreate with correct schema
+        const existingData = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist').all();
+        db.prepare('DROP TABLE uuid_whitelist').run();
+        
         db.prepare(
-          'CREATE TABLE IF NOT EXISTS uuid_whitelist_new ('+
+          'CREATE TABLE uuid_whitelist ('+
           ' uuid TEXT PRIMARY KEY,'+
-          ' device_id TEXT,'+
-          ' name TEXT,'+
           ' note TEXT,'+
           ' created_at TEXT NOT NULL,'+
           ' used_at TEXT)'
         ).run();
-        db.prepare('INSERT OR IGNORE INTO uuid_whitelist_new (uuid, device_id, name, note, created_at, used_at) SELECT uuid, device_id, name, note, created_at, used_at FROM uuid_whitelist').run();
-        db.prepare('DROP TABLE uuid_whitelist').run();
-        db.prepare('ALTER TABLE uuid_whitelist_new RENAME TO uuid_whitelist').run();
-        db.exec('COMMIT');
+        
+        // Restore data with correct schema
+        const insertStmt = db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at, used_at) VALUES (?, ?, ?, ?)');
+        for (const row of existingData) {
+          insertStmt.run(row.uuid, row.note, row.created_at, row.used_at);
+        }
+        console.log(`[ensureDeviceHubSchema] Migrated ${existingData.length} whitelist entries`);
+      } else {
+        // Create table normally if no migration needed
+        db.prepare(
+          'CREATE TABLE IF NOT EXISTS uuid_whitelist ('+
+          ' uuid TEXT PRIMARY KEY,'+
+          ' note TEXT,'+
+          ' created_at TEXT NOT NULL,'+
+          ' used_at TEXT)'
+        ).run();
       }
-    }catch(e){ try{ db.exec('ROLLBACK'); }catch{} }
+    } catch (e) {
+      // Table doesn't exist, create it
+      db.prepare(
+        'CREATE TABLE IF NOT EXISTS uuid_whitelist ('+
+        ' uuid TEXT PRIMARY KEY,'+
+        ' note TEXT,'+
+        ' created_at TEXT NOT NULL,'+
+        ' used_at TEXT)'
+      ).run();
+    }
+
+    // devices: device registry table
+    // Columns: uuid, name, token, meta, created_at (consolidated schema)
+    // Check if devices table exists with wrong schema and migrate if needed
+    try {
+      const tableInfo = db.prepare('PRAGMA table_info(devices)').all() as Array<{ name: string; type: string; pk: number }>;
+      const hasUuidColumn = tableInfo.some(col => col.name === 'uuid');
+      const hasIdColumn = tableInfo.some(col => col.name === 'id');
+      
+      if (tableInfo.length > 0 && !hasUuidColumn && hasIdColumn) {
+        console.log('[ensureDeviceHubSchema] Migrating devices table from id to uuid schema');
+        // Drop old table and recreate with correct schema
+        db.prepare('DROP TABLE IF EXISTS devices').run();
+      }
+    } catch (e) {
+      // Table doesn't exist yet, which is fine
+    }
+    
+    try {
+      db.prepare(
+        'CREATE TABLE IF NOT EXISTS devices ('+
+        ' uuid TEXT PRIMARY KEY,'+
+        ' name TEXT NOT NULL,'+
+        ' token TEXT,'+
+        ' meta TEXT,'+
+        ' created_at TEXT DEFAULT CURRENT_TIMESTAMP)'
+      ).run();
+      console.log(`[ensureDeviceHubSchema] Successfully created devices table`);
+    } catch (error) {
+      console.error(`[ensureDeviceHubSchema] Failed to create devices table:`, error);
+      throw error;
+    }
+    
+    console.log(`[ensureDeviceHubSchema] Created devices table with schema:`, 
+      db.prepare('PRAGMA table_info(devices)').all().map((col: any) => col.name));
+
+    // device_events: telemetry and event data
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS device_events ('+
+      ' id INTEGER PRIMARY KEY AUTOINCREMENT,'+
+      ' device_id TEXT NOT NULL,'+
+      ' event_type TEXT NOT NULL,'+
+      ' payload TEXT,'+
+      ' ts TEXT NOT NULL,'+
+      ' FOREIGN KEY (device_id) REFERENCES devices(uuid))'
+    ).run();
+
+    // Create indices for performance
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_device_events_device_id ON device_events(device_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_device_events_ts ON device_events(ts)').run();
+    // Remove old index that references non-existent status column
+    // db.prepare('CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)').run();
+
   }catch{
     // ignore; routes will handle errors if schema still unavailable
   }finally{
@@ -734,7 +816,7 @@ function ensureProvisioningSchema(){
 }
 
 function getLastSeenMap(): Record<string,string> {
-  const db = openDb(REGISTRY_DB);
+  const db = openDb(DEVICEHUB_DB);
   if(!db) return {};
   try{
     const rows = db.prepare('SELECT device_id, MAX(ts) AS last_ts FROM device_events GROUP BY device_id').all();
@@ -768,35 +850,53 @@ app.get('/api/devices', (req: Request, res: Response) => {
   res.json(list);
 });
 
-// GET /api/devices/:id -> single device
-app.get('/api/devices/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const db = openDb(PROVISIONING_DB);
+// GET /api/devices/:uuid -> single device
+app.get('/api/devices/:uuid', (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(404).json({ error: 'not found' }); return; }
   try{
-    const row = db.prepare('SELECT id, name, token, meta, created_at FROM devices WHERE id = ?').get(id);
+    const row = db.prepare('SELECT uuid, name, token, meta, created_at FROM devices WHERE uuid = ?').get(uuid);
     if(!row){ res.status(404).json({ error: 'not found' }); return; }
     const lastSeen = getLastSeenMap();
-    const ls = lastSeen[id];
+    const ls = lastSeen[uuid];
     const online = ls ? (Date.now() - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
-    res.json({ id: row.id, name: row.name, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at, last_seen: ls || null, online });
-  }catch{
-    res.status(500).json({ error: 'failed to read device' });
+    res.json({ uuid: row.uuid, name: row.name, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at, last_seen: ls || null, online });
+  }catch(e){
+    console.error(`[ensureDeviceHubSchema] Error creating schema:`, e);
+    console.error(`[ensureDeviceHubSchema] Database path: ${DEVICEHUB_DB}`);
+    console.error(`[ensureDeviceHubSchema] Error details:`, {
+      name: (e as Error).name,
+      message: (e as Error).message,
+      code: (e as any).code
+    });
   }finally{
     try{ db.close(); }catch{}
   }
 });
 
-// DELETE /api/devices/:id -> decommission device (remove from provisioning DB)
-app.delete('/api/devices/:id', authRequired, (req: Request, res: Response) => {
-  const { id } = req.params;
-  if (!id) { res.status(400).json({ error: 'invalid_device_id' }); return; }
-  const db = openDb(PROVISIONING_DB);
+// DELETE /api/devices/:uuid -> decommission device
+app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
+  const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try {
-    const info = db.prepare('DELETE FROM devices WHERE id = ?').run(id);
+    const info = db.prepare('DELETE FROM devices WHERE uuid = ?').run(uuid);
     // Return also how many whitelist entries exist for this device so UI can prompt follow-up removal.
-    const wlCount = db.prepare('SELECT COUNT(1) as c FROM uuid_whitelist WHERE device_id = ?').get(id)?.c || 0;
+    const wlCount = db.prepare('SELECT COUNT(1) as c FROM uuid_whitelist WHERE device_id = ?').get(uuid)?.c || 0;
+    // Remove device from twin-service database
+    const twinDbPath = '/opt/Edgeberry/devicehub/twin-service/twin.db';
+    const twinDb = openDb(twinDbPath);
+    if (twinDb) {
+      try {
+        twinDb.prepare('DELETE FROM device_events WHERE device_id = ?').run(uuid);
+      } catch (e) {
+        console.error('[core-service] Failed to remove device from twin-service database:', e);
+      } finally {
+        try { twinDb.close(); } catch {}
+      }
+    }
     res.json({ ok: true, removed: info.changes || 0, whitelist_entries: Number(wlCount) });
   } catch (e:any) {
     res.status(500).json({ error: 'decommission_failed', message: e?.message || 'failed' });
@@ -805,14 +905,14 @@ app.delete('/api/devices/:id', authRequired, (req: Request, res: Response) => {
   }
 });
 
-// GET /api/devices/:id/events -> recent events from registry DB
-app.get('/api/devices/:id/events', (req: Request, res: Response) => {
-  const { id } = req.params;
+// GET /api/devices/:uuid/events -> recent events from registry DB
+app.get('/api/devices/:uuid/events', (req: Request, res: Response) => {
+  const { uuid } = req.params;
   const limit = Math.max(1, Math.min(500, Number(req.query.limit || 200)));
-  const db = openDb(REGISTRY_DB);
+  const db = openDb(DEVICEHUB_DB);
   if(!db){ res.json({ events: [] }); return; }
   try{
-    const rows = db.prepare('SELECT id, device_id, topic, payload, ts FROM device_events WHERE device_id = ? ORDER BY ts DESC LIMIT ?').all(id, limit);
+    const rows = db.prepare('SELECT id, device_id, topic, payload, ts FROM device_events WHERE device_id = ? ORDER BY ts DESC LIMIT ?').all(uuid, limit);
     const events = rows.map((r: any) => ({ id: r.id, device_id: r.device_id, topic: r.topic, payload: bufferToMaybeJson(r.payload), ts: r.ts }));
     res.json({ events });
   }catch{
@@ -897,22 +997,37 @@ async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; 
   return { services: checks };
 }
 
-function getDevicesListSync(): { devices: Array<{ id: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }{
-  const db = openDb(PROVISIONING_DB);
-  if(!db){ return { devices: [] }; }
+function getDevicesListSync(): { devices: Array<{ uuid: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }{
+  console.log(`[getDevicesListSync] Opening database: ${DEVICEHUB_DB}`);
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ 
+    console.error(`[getDevicesListSync] Failed to open database: ${DEVICEHUB_DB}`);
+    return { devices: [] }; 
+  }
   try{
-    const rows = db.prepare('SELECT id, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
+    // Validate database schema before querying
+    const tableInfo = db.prepare('PRAGMA table_info(devices)').all() as Array<{ name: string; type: string; pk: number }>;
+    console.log(`[getDevicesListSync] Database schema validation - devices table columns:`, tableInfo.map(col => col.name));
+    
+    const hasUuidColumn = tableInfo.some(col => col.name === 'uuid');
+    if (!hasUuidColumn) {
+      console.error(`[getDevicesListSync] SCHEMA ERROR: devices table missing uuid column. Available columns:`, tableInfo.map(col => col.name));
+      return { devices: [] };
+    }
+    
+    const rows = db.prepare('SELECT uuid, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
+    console.log(`[getDevicesListSync] Query returned ${rows.length} rows:`, rows);
     
     // Get device statuses from twin-service database
     const deviceStatuses = getTwinServiceDeviceStatuses();
     
     const devices = rows.map((r: any) => {
-      const deviceStatus = deviceStatuses[r.id];
+      const deviceStatus = deviceStatuses[r.uuid];
       const online = deviceStatus ? deviceStatus.online : false;
       const last_seen = deviceStatus ? deviceStatus.last_seen : null;
       
       return { 
-        id: r.id, 
+        uuid: r.uuid, 
         name: r.name, 
         token: r.token, 
         meta: tryParseJson(r.meta), 
@@ -921,8 +1036,16 @@ function getDevicesListSync(): { devices: Array<{ id: string; name: string; toke
         online 
       };
     });
+    console.log(`[getDevicesListSync] Returning ${devices.length} devices:`, devices);
     return { devices };
-  }catch{
+  }catch(error){
+    console.error(`[getDevicesListSync] Error querying devices:`, error);
+    console.error(`[getDevicesListSync] Database path: ${DEVICEHUB_DB}`);
+    console.error(`[getDevicesListSync] Error details:`, {
+      name: (error as Error).name,
+      message: (error as Error).message,
+      code: (error as any).code
+    });
     return { devices: [] };
   }finally{
     try{ db.close(); }catch{}
@@ -979,53 +1102,53 @@ function getTwinServiceDeviceStatuses(): Record<string, { online: boolean; last_
   }
 }
 
-async function getDevicesList(): Promise<{ devices: Array<{ id: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }> {
+async function getDevicesList(): Promise<{ devices: Array<{ uuid: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }> {
   return getDevicesListSync();
 }
 
 // ===== Device Actions (stub) =====
 // In future, wire these to MQTT/cloud connector to invoke direct methods on devices.
 // For now, return an ok message so the UI can integrate the flows.
-app.post('/api/devices/:id/actions/identify', authRequired, (req: Request, res: Response) => {
-  const { id } = req.params;
-  if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
-  res.json({ ok: true, message: `Identifying device ${id}` });
+app.post('/api/devices/:uuid/actions/identify', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  if (!uuid) { res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); return; }
+  res.json({ ok: true, message: `Identifying device ${uuid}` });
 });
 
-app.post('/api/devices/:id/actions/reboot', authRequired, (req: Request, res: Response) => {
-  const { id } = req.params;
-  if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
-  res.json({ ok: true, message: `Reboot requested for device ${id}` });
+app.post('/api/devices/:uuid/actions/reboot', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  if (!uuid) { res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); return; }
+  res.json({ ok: true, message: `Reboot requested for device ${uuid}` });
 });
 
 // Shutdown device (stub)
-app.post('/api/devices/:id/actions/shutdown', (req: Request, res: Response) => {
-  const { id } = req.params;
-  if (!id) { res.status(400).json({ ok: false, message: 'invalid_device_id' }); return; }
-  res.json({ ok: true, message: `Shutdown requested for device ${id}` });
+app.post('/api/devices/:uuid/actions/shutdown', (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  if (!uuid) { res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); return; }
+  res.json({ ok: true, message: `Shutdown requested for device ${uuid}` });
 });
 
 // Application controls
-app.post('/api/devices/:id/actions/application/restart', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, message:`Application restart requested for ${id}` });
+app.post('/api/devices/:uuid/actions/application/restart', (req: Request, res: Response) => {
+  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
+  res.json({ ok:true, message:`Application restart requested for ${uuid}` });
 });
-app.post('/api/devices/:id/actions/application/stop', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, message:`Application stop requested for ${id}` });
+app.post('/api/devices/:uuid/actions/application/stop', (req: Request, res: Response) => {
+  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
+  res.json({ ok:true, message:`Application stop requested for ${uuid}` });
 });
-app.post('/api/devices/:id/actions/application/info', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, payload:{ version:'n/a', state:'unknown' } });
+app.post('/api/devices/:uuid/actions/application/start', (req: Request, res: Response) => {
+  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
+  res.json({ ok:true, message:`Application start requested for ${uuid}` });
 });
-app.post('/api/devices/:id/actions/application/update', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, message:`Application update requested for ${id}` });
+app.post('/api/devices/:uuid/actions/application/update', (req: Request, res: Response) => {
+  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
+  res.json({ ok:true, message:`Application update requested for ${uuid}` });
 });
 
 // System info/network
-app.post('/api/devices/:id/actions/system/info', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
+app.post('/api/devices/:uuid/actions/system/info', (req: Request, res: Response) => {
+  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
   res.json({ ok:true, payload:{ platform:'unknown', state:'unknown' } });
 });
 app.post('/api/devices/:id/actions/system/network', (req: Request, res: Response) => {
@@ -1066,11 +1189,11 @@ app.post('/api/devices/:id/actions/provisioning/reprovision', (req: Request, res
 // (uuid PRIMARY KEY, device_id TEXT, name TEXT, note TEXT, created_at TEXT, used_at TEXT)
 
 // Ensure schema exists before exposing routes
-ensureProvisioningSchema();
+ensureDeviceHubSchema();
 
 // GET /api/admin/uuid-whitelist -> list entries
 app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
-  const db = openDb(PROVISIONING_DB);
+  const db = openDb(DEVICEHUB_DB);
   if(!db){ res.json({ entries: [] }); return; }
   try{
     // API contract: expose only uuid, note, created_at, used_at (device binding removed)
@@ -1081,15 +1204,14 @@ app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
   }finally{ try{ db.close(); }catch{} }
 });
 
-// POST /api/admin/uuid-whitelist { uuid?, note? }
-app.post('/api/admin/uuid-whitelist', (req: Request, res: Response) => {
-  const { note } = req.body || {};
-  let { uuid } = req.body || {} as any;
-  if(uuid && typeof uuid !== 'string'){ res.status(400).json({ error: 'invalid_uuid' }); return; }
-  if(!uuid){ uuid = crypto.randomUUID(); }
-  const db = openDb(PROVISIONING_DB);
+// POST /api/admin/uuid-whitelist -> add entry
+app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response) => {
+  let { uuid, note } = req.body;
+  const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try{
+    if(uuid && typeof uuid !== 'string'){ res.status(400).json({ error: 'invalid_uuid' }); return; }
+    if(!uuid){ uuid = crypto.randomUUID(); }
     const now = new Date().toISOString();
     // Store uuid, optional note, and timestamps
     db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at) VALUES (?, ?, ?)')
@@ -1103,11 +1225,11 @@ app.post('/api/admin/uuid-whitelist', (req: Request, res: Response) => {
   }finally{ try{ db.close(); }catch{} }
 });
 
-// DELETE /api/admin/uuid-whitelist/:uuid
-app.delete('/api/admin/uuid-whitelist/:uuid', (req: Request, res: Response) => {
+// DELETE /api/admin/uuid-whitelist/:uuid -> remove entry
+app.delete('/api/admin/uuid-whitelist/:uuid', authRequired, (req: Request, res: Response) => {
   const { uuid } = req.params;
   if(!uuid){ res.status(400).json({ error: 'invalid_uuid' }); return; }
-  const db = openDb(PROVISIONING_DB);
+  const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try{
     const info = db.prepare('DELETE FROM uuid_whitelist WHERE uuid = ?').run(uuid);
@@ -1117,10 +1239,10 @@ app.delete('/api/admin/uuid-whitelist/:uuid', (req: Request, res: Response) => {
 });
 
 // DELETE /api/admin/uuid-whitelist/by-device/:deviceId -> remove all whitelist entries for a device
-app.delete('/api/admin/uuid-whitelist/by-device/:deviceId', (req: Request, res: Response) => {
+app.delete('/api/admin/uuid-whitelist/by-device/:deviceId', authRequired, (req: Request, res: Response) => {
   const { deviceId } = req.params;
   if(!deviceId){ res.status(400).json({ error: 'invalid_device_id' }); return; }
-  const db = openDb(PROVISIONING_DB);
+  const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try{
     const info = db.prepare('DELETE FROM uuid_whitelist WHERE device_id = ?').run(deviceId);
@@ -1962,7 +2084,7 @@ setInterval(() => {
 // Graceful shutdown
 function setupShutdown(){
   const onSig = (sig: string) => () => {
-    try{ console.log(`[${SERVICE}] received ${sig}, shutting down`); }catch{}
+    try{ console.log(`[core-service] received ${sig}, shutting down`); }catch{}
     try{ server.close(() => { process.exit(0); }); }catch{ try{ process.exit(0); }catch{} }
     // Fallback exit if close hangs
     setTimeout(() => { try{ process.exit(0); }catch{} }, 3000);

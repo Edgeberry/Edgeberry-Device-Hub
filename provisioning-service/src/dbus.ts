@@ -100,10 +100,11 @@ export async function dbusIssueFromCSR(deviceId: string, csrPem: string, validit
 export async function dbusRegisterDevice(deviceId: string, name: string, token: string, metaJson: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const result = await callDbusMethod(DEVICES_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'RegisterDevice', deviceId, name, token, metaJson);
-    const [success, message] = result;
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
     return { 
-      ok: success, 
-      error: success ? undefined : message 
+      ok: response.success, 
+      error: response.error || undefined 
     };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };

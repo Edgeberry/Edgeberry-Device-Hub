@@ -9,7 +9,7 @@ WorkingDirectory=/opt/Edgeberry/devicehub/provisioning-service
 EnvironmentFile=-/etc/Edgeberry/devicehub/provisioning.env
 Environment=NODE_ENV=production
 Environment=MQTT_URL=mqtt://127.0.0.1:1883
-Environment=PROVISIONING_DB=/var/lib/edgeberry/devicehub/provisioning.db
+Environment=DEVICEHUB_DB=/var/lib/edgeberry/devicehub/devicehub.db
 ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/provisioning-service/dist/index.js
 Restart=on-failure
 RestartSec=3

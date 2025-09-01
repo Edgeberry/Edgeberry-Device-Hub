@@ -10,8 +10,18 @@ export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA || undefi
 export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT || undefined;
 export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY || undefined;
 export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
-// Root CA used to sign device certificates from CSRs (override via env in production)
-// Default to repo-level config/certs paths resolved relative to this file
+
+// Main Device Hub database path (consolidated whitelist and registry)
+// Keep defaults consistent with core-service/src/config.ts
+const NODE_ENV = process.env.NODE_ENV || 'development';
+export const DEVICEHUB_DB: string = process.env.DEVICEHUB_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/devicehub.db'
+    : new URL('../../core-service/data/devicehub.db', import.meta.url).pathname
+);
+
+// Legacy environment variable for backward compatibility
+export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || DEVICEHUB_DB;
 export const CA_CRT_PATH: string = process.env.CA_CRT_PATH || new URL('../../config/certs/ca.crt', import.meta.url).pathname;
 export const CA_KEY_PATH: string = process.env.CA_KEY_PATH || new URL('../../config/certs/ca.key', import.meta.url).pathname;
 export const CERT_DAYS: number = Number(process.env.CERT_DAYS || '825');

@@ -153,6 +153,9 @@ export default function DeviceDetailModal(props:{
             </Button>
           </div>
           <Modal.Title>{device?.name || deviceId}</Modal.Title>
+          {device?.uuid && device?.uuid !== deviceId && (
+            <div className="text-muted small">UUID: {device.uuid}</div>
+          )}
           <div className="text-subtitle">{info?.sys?.payload?.platform || 'No hardware platform'}</div>
         </div>
       </Modal.Header>

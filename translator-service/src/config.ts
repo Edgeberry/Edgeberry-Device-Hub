@@ -9,14 +9,16 @@ export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT || un
 export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY || undefined; // e.g., ../config/certs/translator.key
 export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
 
-// Provisioning DB path to resolve uuid -> device_id mapping.
+// Main Device Hub database path (consolidated whitelist and registry)
 // Keep defaults consistent with core-service/src/config.ts
 const NODE_ENV = process.env.NODE_ENV || 'development';
-export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || (
+export const DEVICEHUB_DB: string = process.env.DEVICEHUB_DB || (
   NODE_ENV === 'production'
-    ? '/var/lib/edgeberry/devicehub/provisioning.db'
-    : new URL('../../core-service/data/provisioning.db', import.meta.url).pathname
+    ? '/var/lib/edgeberry/devicehub/devicehub.db'
+    : new URL('../../core-service/data/devicehub.db', import.meta.url).pathname
 );
+// Legacy environment variable for backward compatibility
+export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || DEVICEHUB_DB;
 
 // Cache refresh interval for uuid->deviceId map
 export const CACHE_REFRESH_MS = Number(process.env.CACHE_REFRESH_MS || 30000);

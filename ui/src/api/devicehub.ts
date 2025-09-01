@@ -129,15 +129,15 @@ export async function runMqttSanityTest(body?: {
  */
 export async function getDevices(){ return jsonOrMessage(await fetch(base()+"/devices", { credentials:'include' })); }
 /**
- * Get a single device by id
- * @param id device id
+ * Get a single device by uuid
+ * @param uuid device uuid
  */
-export async function getDevice(id: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(id)}`, { credentials:'include' })); }
+export async function getDevice(uuid: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(uuid)}`, { credentials:'include' })); }
 /**
  * Get device events
- * @param id device id
+ * @param uuid device uuid
  */
-export async function getDeviceEvents(id: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(id)}/events`, { credentials:'include' })); }
+export async function getDeviceEvents(uuid: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(uuid)}/events`, { credentials:'include' })); }
 /**
  * Create a device (future)
  * @param body device data
@@ -150,25 +150,25 @@ export async function createDevice(body: any){
 /**
  * Decommission a device (remove from provisioning DB)
  */
-export async function decommissionDevice(id: string){
-  const res = await fetch(base()+`/devices/${encodeURIComponent(id)}`, { method:'DELETE', credentials:'include' });
+export async function decommissionDevice(uuid: string){
+  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}`, { method:'DELETE', credentials:'include' });
   return jsonOrMessage(res);
 }
 /**
  * Remove all whitelist entries for a device
  */
-export async function deleteWhitelistByDevice(deviceId: string){
-  const res = await fetch(base()+`/admin/uuid-whitelist/by-device/${encodeURIComponent(deviceId)}`, { method:'DELETE', credentials:'include' });
+export async function deleteWhitelistByDevice(deviceUuid: string){
+  const res = await fetch(base()+`/admin/uuid-whitelist/by-device/${encodeURIComponent(deviceUuid)}`, { method:'DELETE', credentials:'include' });
   return jsonOrMessage(res);
 }
 /**
  * Issue a short-lived provision token for a device
- * @param id device id
+ * @param uuid device uuid
  * @param hours token lifetime (optional)
  */
 // Ask backend to mint a short-lived provision token for device bootstrap.
 // If `hours` is omitted, backend chooses a default TTL.
-export async function createProvisionToken(id: string, hours?: number){
-  const res = await fetch(base()+`/devices/${encodeURIComponent(id)}/provision-token`+ (hours?`?hours=${encodeURIComponent(hours)}`:''), { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include' });
+export async function createProvisionToken(uuid: string, hours?: number){
+  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/provision-token`+ (hours?`?hours=${encodeURIComponent(hours)}`:''), { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include' });
   return jsonOrMessage(res);
 }

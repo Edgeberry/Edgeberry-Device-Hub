@@ -2,7 +2,7 @@ import * as dbus from 'dbus-native';
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { PROVISIONING_DB } from './config.js';
+import { DEVICEHUB_DB } from './config.js';
 
 // D-Bus constants
 const BUS_NAME = 'io.edgeberry.devicehub.Core';
@@ -25,7 +25,7 @@ export class WhitelistInterface {
   async CheckUUID(uuid: string): Promise<string> {
     console.log(`[WhitelistInterface] CheckUUID called for: ${uuid}`);
     
-    const db = openDb(PROVISIONING_DB);
+    const db = openDb(DEVICEHUB_DB);
     if (!db) {
       return JSON.stringify({
         success: false,
@@ -72,7 +72,7 @@ export class WhitelistInterface {
   async List(): Promise<string> {
     console.log('[WhitelistInterface] List called');
     
-    const db = openDb(PROVISIONING_DB);
+    const db = openDb(DEVICEHUB_DB);
     if (!db) {
       return JSON.stringify({
         success: false,
@@ -110,7 +110,7 @@ export class WhitelistInterface {
   async Add(uuid: string, note: string): Promise<string> {
     console.log(`[WhitelistInterface] Add called for: ${uuid} with note: ${note}`);
     
-    const db = openDb(PROVISIONING_DB);
+    const db = openDb(DEVICEHUB_DB);
     if (!db) {
       return JSON.stringify({
         success: false,
@@ -150,7 +150,7 @@ export class WhitelistInterface {
   async MarkUsed(uuid: string): Promise<string> {
     console.log(`[WhitelistInterface] MarkUsed called for: ${uuid}`);
     
-    const db = openDb(PROVISIONING_DB);
+    const db = openDb(DEVICEHUB_DB);
     if (!db) {
       return JSON.stringify({
         success: false,

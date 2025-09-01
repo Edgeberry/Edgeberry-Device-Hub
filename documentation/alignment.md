@@ -248,7 +248,7 @@ Installer & artifact notes (remote installs):
       - `scripts/update-broker-ca.sh` — installs an additional CA PEM into `edgeberry-ca.d`, rehashes, and reloads the broker.
       - `scripts/rotate-root-ca.sh` — replaces all prior trust with a new Root CA (and optionally rotates broker server cert/key), restarts services.
 - Provisioning data model:
-  - Provisioning-service does not maintain a local database.
+  - All data is stored in the main devicehub.db database.
   - Whitelist management and certificate issuance are owned by Core via D-Bus (`WhitelistService`, `CertificateService`).
   - The provisioning workflow is MQTT-driven only; authorization is enforced by calling Core.
 
@@ -555,7 +555,7 @@ Common namespace: `io.edgeberry.devicehub.*`
 
 **Library**: Uses `dbus-native` Node.js library with `exportInterface` pattern for service registration.
 
-**Database Integration**: D-Bus services connect directly to SQLite databases for persistent storage. Whitelist functions use the `uuid_whitelist` table in the provisioning database with proper transaction handling and error management.
+**Database Integration**: D-Bus services connect directly to the main devicehub.db SQLite database for persistent storage. Whitelist functions use the `uuid_whitelist` table with proper transaction handling and error management.
 
 **Production Status**: All D-Bus interfaces are fully implemented and production-ready. Whitelist enforcement is enabled by default in the provisioning service.
 
@@ -871,12 +871,12 @@ UI behavior in Certificates modal:
 
 Whitelist & lifecycle (MVP additions):
 - Overview includes a Provisioning Whitelist modal:
-  - Lists entries from `provisioning.db` table `uuid_whitelist` with fields `{ uuid, note, created_at, used_at }`.
+  - Lists entries from `devicehub.db` table `uuid_whitelist` with fields `{ uuid, note, created_at, used_at }`.
   - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated) with optional `{ note }`.
   - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
  - Install & persistence rules:
     - Fresh installs MUST NOT populate the whitelist. The `uuid_whitelist` table is created empty on first run.
-    - On re-install/update, the whitelist MUST persist. The provisioning DB lives under `/var/lib/edgeberry/devicehub/provisioning.db` by default and is not overwritten by the installer.
+    - On re-install/update, the whitelist MUST persist. The main DB lives under `/var/lib/edgeberry/devicehub/devicehub.db` by default and is not overwritten by the installer.
 - Overview includes a Device Lifecycle section:
   - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
 
@@ -911,15 +911,15 @@ MVP/dev model (implemented):
 1. Device connects to the broker and publishes to `$devicehub/devices/{deviceId}/provision/request` with JSON `{ name?, token?, meta?, uuid? }`.
 2. Provisioning service validates the whitelist when `ENFORCE_WHITELIST=true`:
    - Looks up `uuid` in `uuid_whitelist` and requires `used_at` null.
-   - On success, marks `used_at` and upserts the device row in `provisioning.db`.
+   - On success, marks `used_at` and upserts the device row in `devicehub.db`.
 3. Service replies on `$devicehub/devices/{deviceId}/provision/accepted|rejected`.
 
 Security posture:
 
 - Two gates protect bootstrap (production): provisioning client certificate and secret UUID whitelist (stored as salted hashes).
-- MVP stores plaintext UUIDs in a local SQLite table for speed of iteration; never log raw UUIDs where avoidable.
+- MVP stores plaintext UUIDs in the main SQLite database for speed of iteration; never log raw UUIDs where avoidable.
  - `ENFORCE_WHITELIST` (provisioning-service env) controls whether whitelist is required during provisioning.
- - Default production path for whitelist DB: `/var/lib/edgeberry/devicehub/provisioning.db` (override with `PROVISIONING_DB`).
+ - Default production path for main DB: `/var/lib/edgeberry/devicehub/devicehub.db` (override with `DEVICEHUB_DB`).
 - Production enforces mTLS at the broker. Devices never use HTTP(S) to communicate with the server.
 
 ### Provisioning Service (MVP, dev path) — Step-by-Step
@@ -1020,7 +1020,7 @@ Responsibilities:
 
 Storage (MVP):
 
-- SQLite tables for `twin_desired`, `twin_reported`, with `device_id`, `version`, `doc` (JSON), `updated_at`.
+- SQLite tables for `twin_desired`, `twin_reported` in separate twin.db, with `device_id`, `version`, `doc` (JSON), `updated_at`.
 
 Non-goals (MVP):
 
@@ -1039,7 +1039,7 @@ Responsibilities:
 
 Storage (MVP):
 
-- SQLite table `devices` with JSON `meta` column.
+- SQLite table `devices` in main devicehub.db with JSON `meta` column.
 
 Non-goals (MVP):
 

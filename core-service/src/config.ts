@@ -26,18 +26,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CANDIDATE_UI_DIST = path.resolve(__dirname, '../../ui/build');
 export const UI_DIST: string = process.env.UI_DIST || (fs.existsSync(CANDIDATE_UI_DIST) ? CANDIDATE_UI_DIST : '/opt/Edgeberry/devicehub/ui/build');
-// SQLite DBs owned by worker services (MVP direct-read from core-service)
-// Persist provisioning DB under system data dir by default so whitelist survives reinstalls
-export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || (
+// Main SQLite database for Device Hub (consolidates registry and whitelist)
+export const DEVICEHUB_DB: string = process.env.DEVICEHUB_DB || (
   NODE_ENV === 'production'
-    ? '/var/lib/edgeberry/devicehub/provisioning.db'
-    : path.resolve(process.cwd(), 'data', 'provisioning.db')
+    ? '/var/lib/edgeberry/devicehub/devicehub.db'
+    : path.resolve(process.cwd(), 'data', 'devicehub.db')
 );
-export const REGISTRY_DB: string = process.env.REGISTRY_DB || (
-  NODE_ENV === 'production'
-    ? '/var/lib/edgeberry/devicehub/registry.db'
-    : path.resolve(process.cwd(), 'data', 'registry.db')
-);
+
+// Legacy environment variables for backward compatibility
+export const REGISTRY_DB: string = process.env.REGISTRY_DB || DEVICEHUB_DB;
+export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || DEVICEHUB_DB;
 // Consider a device online if we've seen an event within this window (seconds)
 export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);
 

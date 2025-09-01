@@ -1,11 +1,10 @@
 import * as dbus from 'dbus-native';
 import Database from 'better-sqlite3';
+import { DEVICEHUB_DB } from './config.js';
 
-const BUS_NAME = 'io.edgeberry.devicehub.DevicesService';
+const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/DevicesService';
 const IFACE_NAME = 'io.edgeberry.devicehub.DevicesService';
-
-const PROVISIONING_DB = process.env.PROVISIONING_DB || 'provisioning.db';
 
 function openDb(path: string): Database.Database | null {
   try {
@@ -17,33 +16,48 @@ function openDb(path: string): Database.Database | null {
 }
 
 class DevicesInterface {
-  async RegisterDevice(deviceId: string, name: string, token: string, metaJson: string): Promise<string> {
-    const db = openDb(PROVISIONING_DB);
-    if (!db) return JSON.stringify({ success: false, error: 'Database unavailable' });
+  async RegisterDevice(uuid: string, name: string, token: string, metaJson: string): Promise<string> {
+    console.log(`[DevicesService] RegisterDevice called with uuid=${uuid}, name=${name}, token=${token}, metaJson=${metaJson}`);
+    const db = openDb(DEVICEHUB_DB);
+    if (!db) {
+      console.error(`[DevicesService] Failed to open database: ${DEVICEHUB_DB}`);
+      return JSON.stringify({ success: false, error: 'Database unavailable' });
+    }
     
     try {
       // Create devices table if it doesn't exist
+      console.log(`[DevicesService] Creating devices table if not exists`);
       db.prepare(`
         CREATE TABLE IF NOT EXISTS devices (
-          id TEXT PRIMARY KEY,
-          name TEXT,
+          uuid TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
           token TEXT,
           meta TEXT,
           created_at TEXT DEFAULT (datetime('now'))
         )
       `).run();
-      
+
+      // Generate automatic name if none provided: EDGB-<first 4 UUID chars>
+      const deviceName = name || `EDGB-${uuid.substring(0, 4).toUpperCase()}`;
+      console.log(`[DevicesService] Using device name: ${deviceName}`);
+
       // Insert or replace device record
       const stmt = db.prepare(`
-        INSERT OR REPLACE INTO devices (id, name, token, meta, created_at)
+        INSERT OR REPLACE INTO devices (uuid, name, token, meta, created_at)
         VALUES (?, ?, ?, ?, datetime('now'))
       `);
+      const result = stmt.run(uuid, deviceName, token || '', metaJson || '{}');
+      console.log(`[DevicesService] Database insert result:`, result);
       
-      stmt.run(deviceId, name || '', token || '', metaJson || '{}');
-      console.log(`[DevicesService] Registered device: ${deviceId}`);
+      // Verify the device was inserted
+      const verifyStmt = db.prepare('SELECT uuid, name FROM devices WHERE uuid = ?');
+      const verifyResult = verifyStmt.get(uuid);
+      console.log(`[DevicesService] Verification query result:`, verifyResult);
+      
+      console.log(`[DevicesService] Successfully registered device: ${uuid} (${deviceName})`);
       return JSON.stringify({ success: true, message: 'Device registered successfully' });
     } catch (error) {
-      console.error(`[DevicesService] Failed to register device ${deviceId}:`, error);
+      console.error(`[DevicesService] Failed to register device ${uuid}:`, error);
       return JSON.stringify({ success: false, error: `Registration failed: ${(error as Error).message}` });
     } finally {
       db.close();
@@ -51,7 +65,7 @@ class DevicesInterface {
   }
 
   async ResolveDeviceIdByUuid(uuid: string): Promise<string> {
-    const db = openDb(PROVISIONING_DB);
+    const db = openDb(DEVICEHUB_DB);
     if (!db) {
       return JSON.stringify({
         success: false,
@@ -62,9 +76,8 @@ class DevicesInterface {
     
     try {
       // Look up device by UUID in the devices table
-      // In the provisioning flow, devices are registered with their UUID as the device ID initially
-      // or we might have a separate uuid_to_device mapping table
-      const row = db.prepare('SELECT id FROM devices WHERE id = ?').get(uuid) as any;
+      // UUID is now the primary key
+      const row = db.prepare('SELECT uuid, name FROM devices WHERE uuid = ?').get(uuid) as any;
       
       if (!row) {
         return JSON.stringify({
@@ -76,7 +89,8 @@ class DevicesInterface {
       
       return JSON.stringify({
         success: true,
-        deviceId: row.id,
+        deviceId: row.uuid,
+        name: row.name,
         error: null
       });
     } catch (error) {
@@ -108,13 +122,11 @@ export async function startDevicesDbusServer(bus: any): Promise<any> {
 
   // Create the service object with actual method implementations
   const serviceObject = {
-    RegisterDevice: async (deviceId: string, name: string, token: string, metaJson: string) => {
-      try {
-        const result = await devicesService.RegisterDevice(deviceId, name, token, metaJson);
-        return result;
-      } catch (error) {
-        throw error;
-      }
+    RegisterDevice: (uuid: string, name: string, token: string, metaJson: string, callback: (err: any, result?: string) => void) => {
+      console.log(`[D-Bus DevicesService] RegisterDevice called with callback pattern`);
+      devicesService.RegisterDevice(uuid, name, token, metaJson)
+        .then(result => callback(null, result))
+        .catch(error => callback(error));
     },
     ResolveDeviceIdByUuid: async (requestJson: string) => {
       try {
