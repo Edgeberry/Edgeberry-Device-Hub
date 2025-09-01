@@ -24,7 +24,7 @@ import DeviceDetailModal from '../components/DeviceDetailModal';
 import CertificateSettingsModal from '../components/CertificateSettingsModal';
 import WhitelistModal from '../components/WhitelistModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTrash, faRightLeft } from '@fortawesome/free-solid-svg-icons';
+import { faTrash, faRightLeft, faLocationDot } from '@fortawesome/free-solid-svg-icons';
 
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
@@ -170,6 +170,13 @@ export default function Overview(props:{user:any}){
                   // Placeholder for device replacement flow (select another device to swap IDs/records)
                   alert('Replace device: feature not yet implemented. This will allow selecting another device to replace this one.');
                 };
+
+                const onIdentify = async (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  // Placeholder for device identification flow (select another device to swap IDs/records)
+                  alert('Identify device: feature not yet implemented. This will allow selecting another device to identify this one.');
+                };
+                
                 return (
                   <tr key={id}
                       tabIndex={0}
@@ -222,6 +229,16 @@ export default function Overview(props:{user:any}){
                           onClick={onReplace}
                         >
                           <FontAwesomeIcon icon={faRightLeft} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline-secondary"
+                          aria-label="Identify device"
+                          title="Identify device"
+                          disabled={!props.user}
+                          onClick={onIdentify}
+                        >
+                          <FontAwesomeIcon icon={faLocationDot} />
                         </Button>
                       </div>
                     </td>
