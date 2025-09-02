@@ -190,3 +190,11 @@ export async function replaceDevice(uuid: string, targetUuid: string){
   const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/replace`, { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ targetUuid }) });
   return jsonOrMessage(res);
 }
+
+/**
+ * Run comprehensive system sanity check
+ */
+export async function runSystemSanityCheck(){
+  const res = await fetch(base()+'/system/sanity-check', { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}

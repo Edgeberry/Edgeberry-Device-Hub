@@ -1738,6 +1738,139 @@ app.post('/api/system/shutdown', authRequired, async (req: Request, res: Respons
   }
 });
 
+// POST /api/system/sanity-check -> comprehensive system sanity check
+app.post('/api/system/sanity-check', authRequired, async (req: Request, res: Response) => {
+  try {
+    console.log('[core-service] System sanity check requested by admin');
+    
+    const results: any = {
+      timestamp: new Date().toISOString(),
+      checks: {},
+      summary: { passed: 0, failed: 0, warnings: 0 }
+    };
+
+    // Check system services
+    try {
+      const servicesRes = await getServicesSnapshot();
+      const services = Array.isArray(servicesRes?.services) ? servicesRes.services : [];
+      const activeServices = services.filter(s => s.status === 'active').length;
+      const failedServices = services.filter(s => s.status === 'failed').length;
+      
+      results.checks.services = {
+        status: failedServices === 0 ? 'pass' : 'fail',
+        message: `${activeServices} active, ${failedServices} failed services`,
+        details: { active: activeServices, failed: failedServices, total: services.length }
+      };
+      
+      if (failedServices === 0) results.summary.passed++;
+      else results.summary.failed++;
+    } catch (e: any) {
+      results.checks.services = {
+        status: 'fail',
+        message: 'Failed to check services',
+        error: e?.message
+      };
+      results.summary.failed++;
+    }
+
+    // Check system metrics
+    try {
+      const metricsRes = await fetch('http://localhost:3001/api/metrics');
+      const metrics = await metricsRes.json();
+      const cpuUsage = metrics?.cpu?.approxUsagePercent || 0;
+      const memUsage = metrics?.memory?.usedPercent || 0;
+      const diskUsage = metrics?.disk?.mounts?.[0]?.usedPercent || 0;
+      
+      let status = 'pass';
+      let warnings = [];
+      
+      if (cpuUsage > 90) { status = 'fail'; warnings.push('CPU usage critical'); }
+      else if (cpuUsage > 80) { status = 'warning'; warnings.push('CPU usage high'); }
+      
+      if (memUsage > 95) { status = 'fail'; warnings.push('Memory usage critical'); }
+      else if (memUsage > 85) { status = 'warning'; warnings.push('Memory usage high'); }
+      
+      if (diskUsage > 95) { status = 'fail'; warnings.push('Disk usage critical'); }
+      else if (diskUsage > 85) { status = 'warning'; warnings.push('Disk usage high'); }
+      
+      results.checks.metrics = {
+        status,
+        message: warnings.length ? warnings.join(', ') : 'System metrics healthy',
+        details: { cpu: cpuUsage, memory: memUsage, disk: diskUsage }
+      };
+      
+      if (status === 'pass') results.summary.passed++;
+      else if (status === 'warning') results.summary.warnings++;
+      else results.summary.failed++;
+    } catch (e: any) {
+      results.checks.metrics = {
+        status: 'fail',
+        message: 'Failed to check system metrics',
+        error: e?.message
+      };
+      results.summary.failed++;
+    }
+
+    // Check database connectivity
+    try {
+      const testDb = openDb(DEVICEHUB_DB);
+      if (!testDb) throw new Error('Database connection failed');
+      
+      const stmt = testDb.prepare('SELECT 1 as test');
+      const result = stmt.get();
+      testDb.close();
+      
+      results.checks.database = {
+        status: result?.test === 1 ? 'pass' : 'fail',
+        message: result?.test === 1 ? 'Database connectivity OK' : 'Database query failed'
+      };
+      
+      if (result?.test === 1) results.summary.passed++;
+      else results.summary.failed++;
+    } catch (e: any) {
+      results.checks.database = {
+        status: 'fail',
+        message: 'Database connectivity failed',
+        error: e?.message
+      };
+      results.summary.failed++;
+    }
+
+    // Check MQTT configuration (basic check)
+    try {
+      const mqttUrl = process.env.MQTT_URL || 'mqtt://localhost:1883';
+      results.checks.mqtt = {
+        status: 'pass',
+        message: `MQTT configured: ${mqttUrl}`,
+        details: { url: mqttUrl }
+      };
+      results.summary.passed++;
+    } catch (e: any) {
+      results.checks.mqtt = {
+        status: 'fail',
+        message: 'MQTT check failed',
+        error: e?.message
+      };
+      results.summary.failed++;
+    }
+
+    // Overall health determination
+    results.overall = results.summary.failed > 0 ? 'unhealthy' : 
+                     results.summary.warnings > 0 ? 'degraded' : 'healthy';
+
+    console.log(`[core-service] Sanity check completed: ${results.overall}`);
+    res.json(results);
+    
+  } catch (e: any) {
+    console.error('[core-service] Error during sanity check:', e);
+    res.status(500).json({ 
+      ok: false, 
+      error: e?.message || 'Sanity check failed',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // GET /api/logs/stream -> SSE stream of logs
 // Query: units=comma,separated (optional), since=systemd-time (optional)
 app.get('/api/logs/stream', (req: Request, res: Response) => {

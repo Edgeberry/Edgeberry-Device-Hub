@@ -2,7 +2,7 @@
  * Overview Page
  *
  * Purpose: Landing dashboard for authenticated users.
- *  - Renders `HealthWidget`, `ServiceStatusWidget`, and `SystemMetricsWidget`.
+ *  - Renders `SystemWidget` (merged services and metrics).
  *  - Shows a small devices table linking to `DeviceDetail`.
  *
  * Data:
@@ -15,8 +15,7 @@
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
-import ServiceStatusWidget from '../components/ServiceStatusWidget';
-import SystemMetricsWidget from '../components/SystemMetricsWidget';
+import SystemWidget from '../components/SystemWidget';
 import { getDevices, decommissionDevice, deleteWhitelistByDevice, updateDevice, replaceDevice } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
@@ -216,8 +215,7 @@ export default function Overview(props:{user:any}){
 
   return (
     <div>
-      <SystemMetricsWidget user={props.user} />
-      <ServiceStatusWidget user={props.user} />
+      <SystemWidget user={props.user} />
 
       <Card>
         <Card.Header className="d-flex justify-content-between align-items-center">

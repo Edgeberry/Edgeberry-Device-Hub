@@ -1173,4 +1173,59 @@ This project will remain open-source and GPL-licensed. It will always assume Edg
 
 ---
 
+## System Widget and Diagnostics
+
+### Unified System Management
+
+The Device Hub UI features a unified **System Widget** that consolidates system monitoring and management capabilities:
+
+**System Widget Components:**
+- **Overview Tab**: Health status, CPU/memory metrics with sparklines, uptime display
+- **Services Tab**: Systemd service status and control (start/stop/restart) with admin permissions
+- **System Actions**: Power management (reboot/shutdown) and comprehensive sanity check
+
+**System Action Buttons:**
+- **Sanity Check** (stethoscope icon): Runs comprehensive system diagnostics
+- **Power Management** (power icon): Access to reboot and shutdown functions
+
+### System Sanity Check Endpoint
+
+The system includes a comprehensive sanity check endpoint (`POST /api/system/sanity-check`) that performs:
+
+**Health Checks:**
+- **Services**: Validates systemd service status (active/failed counts)
+- **System Metrics**: Monitors CPU, memory, and disk usage with thresholds
+- **Database**: Tests SQLite connectivity and query execution
+- **MQTT Configuration**: Verifies MQTT broker configuration
+
+**Response Format:**
+```json
+{
+  "timestamp": "2025-01-02T15:04:29.000Z",
+  "checks": {
+    "services": { "status": "pass|warning|fail", "message": "...", "details": {...} },
+    "metrics": { "status": "pass|warning|fail", "message": "...", "details": {...} },
+    "database": { "status": "pass|warning|fail", "message": "..." },
+    "mqtt": { "status": "pass|warning|fail", "message": "...", "details": {...} }
+  },
+  "summary": { "passed": 3, "failed": 0, "warnings": 1 },
+  "overall": "healthy|degraded|unhealthy"
+}
+```
+
+**Thresholds:**
+- CPU: Warning >80%, Critical >90%
+- Memory: Warning >85%, Critical >95%
+- Disk: Warning >85%, Critical >95%
+
+### UI Integration
+
+The System Widget replaces the previous separate ServiceStatusWidget and SystemMetricsWidget, providing:
+- Tabbed interface for organized access to system information
+- Real-time metrics with WebSocket updates and polling fallback
+- Admin-only controls with proper permission enforcement
+- Integrated health status display with uptime and environment information
+
+---
+
 This file is meant to be read and followed by both people and artificial intelligence systems involved in the development of Edgeberry Device Hub. Any new features or decisions should be measured against the values described here.

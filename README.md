@@ -39,22 +39,43 @@ See `documentation/alignment.md` for architecture and interface details, includi
 - New endpoint in Core: `GET /api/devices/:id/twin` — returns desired/reported docs by calling Twin over D-Bus.
 
 **Device Management:**
-- Enhanced device list with search functionality (filter by name, UUID, or group)
-- Multiple view modes: traditional list view and visual tile view
-- Inline device name editing with immediate save/cancel
-- Device replacement: swap one device with another while preserving names
-- Delete devices from registry (with optional whitelist cleanup)
-- Real-time `online` status and `last_seen` timestamp for each device
-- Device status is fetched from twin-service database and updated in real-time via WebSocket broadcasts
+- `GET /api/devices` - List all registered devices with status
+- `GET /api/devices/:uuid` - Get single device details
+- `DELETE /api/devices/:uuid` - Remove device from registry (admin only)
+- `PUT /api/devices/:uuid` - Update device properties like name (admin only)
+- `POST /api/devices/:uuid/replace` - Replace device with another from registry (admin only)
+- `GET /api/devices/:uuid/events` - Get device event history
 
-**Device Actions API:**
-- `PUT /api/devices/:uuid` — Update device properties (name)
-- `POST /api/devices/:uuid/replace` — Replace device with another from registry
-- `DELETE /api/devices/:uuid` — Remove device from registry (decommission)
+**System Management:**
+- `POST /api/system/sanity-check` - Run comprehensive system diagnostics (admin only)
+- `POST /api/system/reboot` - Schedule system reboot (admin only)
+- `POST /api/system/shutdown` - Schedule system shutdown (admin only)
 
-**WebSocket API:**
-- Core service provides WebSocket endpoint at `/api/ws` for real-time updates.
-- Topics: `device.status` (authenticated), `device.status.public` (public) for live device online/offline notifications.
+**Whitelist Management:**
+- `GET /api/admin/uuid-whitelist` - List whitelist entries
+- `POST /api/admin/uuid-whitelist` - Add UUID to whitelist (requires hardware_version and manufacturer)
+- `DELETE /api/admin/uuid-whitelist/:uuid` - Remove UUID from whitelist
+- `DELETE /api/admin/uuid-whitelist/by-device/:deviceId` - Remove whitelist entries by device ID
+
+### UI Features
+
+**System Widget:**
+- Unified system monitoring and management interface
+- **Overview Tab**: Health status, CPU/memory metrics with real-time sparklines, system uptime
+- **Services Tab**: Systemd service status and control (start/stop/restart) with admin permissions
+- **System Actions**: Sanity check (stethoscope icon) and power management (power icon)
+
+**Device Management:**
+- List and tile view toggle for device display
+- Real-time search and filtering by device name, UUID, or group
+- Inline device name editing with keyboard shortcuts (Enter to save, Escape to cancel)
+- Device replacement functionality preserving original device names
+- Delete device with optional whitelist cleanup
+
+**System Diagnostics:**
+- Comprehensive sanity check covering services, metrics, database, and MQTT configuration
+- Real-time health monitoring with warning and critical thresholds
+- Admin-only power management with confirmation dialogs
 
 ## Internal MQTT (twin-service)
 
