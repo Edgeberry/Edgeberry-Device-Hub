@@ -17,6 +17,7 @@ import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
 import SystemWidget from '../components/SystemWidget';
 import { getDevices, decommissionDevice, deleteWhitelistByDevice, updateDevice, replaceDevice } from '../api/devicehub';
+import { direct_identifySystem } from '../api/directMethods';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
 import DeviceDetailModal from '../components/DeviceDetailModal';
@@ -213,6 +214,23 @@ export default function Overview(props:{user:any}){
     }
   };
 
+  const handleIdentifyDevice = async (uuid: string, name: string) => {
+    try {
+      setActionBusy(uuid);
+      const result = await direct_identifySystem(uuid);
+      if (result.ok) {
+        // Success - device should now be identifying itself
+        console.log(`Identify command sent to device "${name}"`);
+      } else {
+        alert(`Failed to identify device "${name}": ${result.message || 'Unknown error'}`);
+      }
+    } catch (error) {
+      alert(`Failed to identify device "${name}": ${error}`);
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   return (
     <div>
       <SystemWidget user={props.user} />
@@ -324,6 +342,15 @@ export default function Overview(props:{user:any}){
                             <>
                               <button 
                                 type="button" 
+                                className="btn btn-sm btn-outline-success" 
+                                onClick={() => handleIdentifyDevice(uuid, displayName)}
+                                disabled={isBusy}
+                                title="Identify Device"
+                              >
+                                <FontAwesomeIcon icon={faLocationDot} />
+                              </button>
+                              <button 
+                                type="button" 
                                 className="btn btn-sm btn-outline-secondary" 
                                 onClick={() => handleEditDevice(uuid, displayName)}
                                 disabled={isBusy || isEditing}
@@ -381,6 +408,15 @@ export default function Overview(props:{user:any}){
                             </button>
                             {props.user ? (
                               <>
+                                <button 
+                                  type="button" 
+                                  className="btn btn-sm btn-outline-success" 
+                                  onClick={() => handleIdentifyDevice(uuid, displayName)}
+                                  disabled={isBusy}
+                                  title="Identify Device"
+                                >
+                                  <FontAwesomeIcon icon={faLocationDot} />
+                                </button>
                                 <button 
                                   type="button" 
                                   className="btn btn-sm btn-outline-secondary" 

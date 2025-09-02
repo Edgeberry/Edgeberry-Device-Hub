@@ -45,7 +45,9 @@ import Database from 'better-sqlite3';
 import jwt from 'jsonwebtoken';
 import morgan from 'morgan';
 import serveStatic from 'serve-static';
+import { connect, type MqttClient, type IClientOptions } from 'mqtt';
 import {
+  SERVICE,
   PORT,
   ADMIN_USER,
   ADMIN_PASSWORD,
@@ -82,6 +84,91 @@ import { startCertificateDbusServer } from './dbus-certs.js';
 import { startCoreTwinDbusServer, setBroadcastFunction } from './dbus-twin.js';
 import { startDevicesDbusServer } from './dbus-devices.js';
 import { twinGetTwin } from './dbus-twin-client.js';
+
+// Function to get hardware UUID from device tree
+function getHardwareUUID(): string | null {
+  try {
+    const uuid = fs.readFileSync('/proc/device-tree/hat/uuid', 'utf8').replace(/\0.*$/g, '');
+    return uuid.trim();
+  } catch (err) {
+    console.warn(`[${SERVICE}] Could not read hardware UUID from /proc/device-tree/hat/uuid:`, err);
+    return null;
+  }
+}
+
+// MQTT client for direct method forwarding
+let mqttClient: MqttClient | null = null;
+
+function initMqttClient(): void {
+  const hardwareUUID = getHardwareUUID();
+  const clientId = hardwareUUID || `devicehub-${Math.random().toString(36).substring(2, 15)}`;
+  
+  const options: IClientOptions = {
+    clientId,
+    reconnectPeriod: 2000,
+  };
+
+  console.log(`[${SERVICE}] MQTT connecting to: ${MQTT_URL} with client_id: ${clientId}`);
+  if (hardwareUUID) {
+    console.log(`[${SERVICE}] Using hardware UUID as MQTT client_id: ${hardwareUUID}`);
+  } else {
+    console.warn(`[${SERVICE}] Hardware UUID not available, using random client_id: ${clientId}`);
+  }
+
+  mqttClient = connect(MQTT_URL, options);
+
+  mqttClient.on('connect', () => {
+    console.log(`[${SERVICE}] MQTT connected for direct method forwarding`);
+  });
+
+  mqttClient.on('error', (err) => {
+    console.error(`[${SERVICE}] MQTT error:`, err);
+  });
+
+  mqttClient.on('close', () => {
+    console.warn(`[${SERVICE}] MQTT connection closed`);
+  });
+
+  mqttClient.on('reconnect', () => {
+    console.log(`[${SERVICE}] MQTT reconnecting...`);
+  });
+}
+
+async function sendDirectMethod(deviceId: string, methodName: string, payload: any = {}): Promise<boolean> {
+  if (!mqttClient || !mqttClient.connected) {
+    console.error(`[${SERVICE}] MQTT client not connected, cannot send direct method`);
+    return false;
+  }
+
+  const topic = `$devicehub/devices/${deviceId}/methods/post`;
+  const message = {
+    name: methodName,
+    payload: payload,
+    timestamp: new Date().toISOString(),
+    requestId: Math.random().toString(36).substring(2, 15)
+  };
+
+  console.log(`[${SERVICE}] Sending direct method to topic: ${topic}`);
+  console.log(`[${SERVICE}] Message:`, JSON.stringify(message, null, 2));
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      mqttClient!.publish(topic, JSON.stringify(message), { qos: 0 }, (error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+    
+    console.log(`[${SERVICE}] Direct method '${methodName}' sent to device ${deviceId}`);
+    return true;
+  } catch (error) {
+    console.error(`[${SERVICE}] Failed to send direct method '${methodName}' to device ${deviceId}:`, error);
+    return false;
+  }
+}
 
 const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
@@ -1194,10 +1281,29 @@ async function getDevicesList(): Promise<{ devices: Array<{ uuid: string; name: 
 // ===== Device Actions (stub) =====
 // In future, wire these to MQTT/cloud connector to invoke direct methods on devices.
 // For now, return an ok message so the UI can integrate the flows.
-app.post('/api/devices/:uuid/actions/identify', authRequired, (req: Request, res: Response) => {
+app.post('/api/devices/:uuid/actions/identify', authRequired, async (req: Request, res: Response) => {
   const { uuid } = req.params;
-  if (!uuid) { res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); return; }
-  res.json({ ok: true, message: `Identifying device ${uuid}` });
+  console.log(`[${SERVICE}] Identify button pressed for device: ${uuid}`);
+  
+  if (!uuid) { 
+    res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); 
+    return; 
+  }
+  
+  try {
+    console.log(`[${SERVICE}] Sending identify direct method to device ${uuid}`);
+    const success = await sendDirectMethod(uuid, 'identify');
+    console.log(`[${SERVICE}] Direct method result: ${success}`);
+    
+    if (success) {
+      res.json({ ok: true, message: `Identify command sent to device ${uuid}` });
+    } else {
+      res.status(500).json({ ok: false, message: 'Failed to send identify command to device' });
+    }
+  } catch (error) {
+    console.error(`[${SERVICE}] Error sending identify command to device ${uuid}:`, error);
+    res.status(500).json({ ok: false, message: 'Internal server error' });
+  }
 });
 
 app.post('/api/devices/:uuid/actions/reboot', authRequired, (req: Request, res: Response) => {
@@ -2355,6 +2461,11 @@ setInterval(() => {
 function setupShutdown(){
   const onSig = (sig: string) => () => {
     try{ console.log(`[core-service] received ${sig}, shutting down`); }catch{}
+    try{ 
+      if (mqttClient) {
+        mqttClient.end();
+      }
+    }catch{}
     try{ server.close(() => { process.exit(0); }); }catch{ try{ process.exit(0); }catch{} }
     // Fallback exit if close hangs
     setTimeout(() => { try{ process.exit(0); }catch{} }, 3000);
@@ -2409,6 +2520,9 @@ async function startDbusServices() {
 startDbusServices().then(() => {
   // Set up the broadcast function for device status updates
   setBroadcastFunction(broadcast);
+  
+  // Initialize MQTT client for direct method forwarding
+  initMqttClient();
   
   server.listen(PORT, () => {
     // eslint-disable-next-line no-console

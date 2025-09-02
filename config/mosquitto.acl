@@ -31,6 +31,12 @@ pattern read  $devicehub/devices/%u/twin/update/accepted
 pattern read  $devicehub/devices/%u/twin/update/rejected
 pattern read  $devicehub/devices/%u/twin/delta
 
+# Device heartbeat (devices need to publish heartbeat messages)
+pattern write $devicehub/devices/+/heartbeat
+
+# Direct methods (devices need to subscribe to method calls)
+pattern read  $devicehub/devices/+/methods/post
+
 # Optionally allow devices to read public broadcast announcements (if any)
 # topic read $devicehub/broadcast/#
 
