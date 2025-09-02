@@ -37,7 +37,7 @@ export class WhitelistInterface {
     }
 
     try {
-      const row = db.prepare('SELECT uuid, note, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
+      const row = db.prepare('SELECT uuid, hardware_version, manufacturer, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
       
       if (!row) {
         return JSON.stringify({
@@ -52,7 +52,7 @@ export class WhitelistInterface {
       return JSON.stringify({
         success: true,
         uuid: row.uuid,
-        note: row.note || null,
+        note: `${row.manufacturer} ${row.hardware_version}` || null,
         used_at: row.used_at || null,
         error: null
       });
@@ -82,11 +82,11 @@ export class WhitelistInterface {
     }
 
     try {
-      const rows = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all() as any[];
+      const rows = db.prepare('SELECT uuid, hardware_version, manufacturer, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all() as any[];
       
       const entries = rows.map(row => ({
         uuid: row.uuid,
-        note: row.note || null,
+        note: `${row.manufacturer} ${row.hardware_version}` || null,
         created_at: row.created_at,
         used_at: row.used_at || null
       }));
@@ -130,8 +130,13 @@ export class WhitelistInterface {
         });
       }
 
-      // Insert new UUID
-      db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at) VALUES (?, ?, ?)').run(uuid, note || null, now);
+      // Parse note to extract manufacturer and hardware_version, or use defaults
+      const parts = (note || '').split(' ');
+      const manufacturer = parts[0] || 'Unknown';
+      const hardware_version = parts[1] || 'Unknown';
+
+      // Insert new UUID with new schema
+      db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at) VALUES (?, ?, ?, ?)').run(uuid, hardware_version, manufacturer, now);
       
       return JSON.stringify({
         success: true,
