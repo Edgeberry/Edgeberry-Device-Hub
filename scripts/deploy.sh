@@ -14,13 +14,14 @@ IDENTITY_FILE=""
 PASSWORD=""
 SKIP_BUILD=0
 VERBOSE=0
+FORCE_CLEAN=0
 
 log() { echo "[deploy] $*"; }
 error() { echo "[deploy] ERROR: $*" >&2; exit 1; }
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") -h <host> [-u <user>] [-i <key>] [-p <password>] [--skip-build] [-v]
+Usage: $(basename "$0") -h <host> [-u <user>] [-i <key>] [-p <password>] [--skip-build] [-v] [--force-clean]
 
 Options:
   -h <host>      Remote host (required)
@@ -28,6 +29,7 @@ Options:
   -i <key>       SSH private key file
   -p <password>  SSH password (will prompt if not provided)
   --skip-build   Skip local build
+  --force-clean  Force clean install (removes persistent certificates and database)
   -v             Verbose output
   --help         Show help
 EOF
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     -i) IDENTITY_FILE="$2"; shift 2;;
     -p) PASSWORD="$2"; shift 2;;
     --skip-build) SKIP_BUILD=1; shift;;
+    --force-clean) FORCE_CLEAN=1; shift;;
     -v) VERBOSE=1; shift;;
     --help) usage; exit 0;;
     *) error "Unknown option: $1";;
@@ -119,10 +122,13 @@ scp_copy "$ROOT_DIR/scripts/install.sh" "$REMOTE_STAGING/scripts/" || error "Fai
 
 # Run installer
 log "running installer..."
+INSTALL_ARGS="'$REMOTE_STAGING/dist-artifacts'"
+[[ $FORCE_CLEAN -eq 1 ]] && INSTALL_ARGS="$INSTALL_ARGS --force-clean"
+
 if [[ $VERBOSE -eq 1 ]]; then
-  ssh_run "sudo DEBUG=1 bash '$REMOTE_STAGING/scripts/install.sh' '$REMOTE_STAGING/dist-artifacts'" || error "Installation failed"
+  ssh_run "sudo DEBUG=1 bash '$REMOTE_STAGING/scripts/install.sh' $INSTALL_ARGS" || error "Installation failed"
 else
-  ssh_run "sudo bash '$REMOTE_STAGING/scripts/install.sh' '$REMOTE_STAGING/dist-artifacts'" || error "Installation failed"
+  ssh_run "sudo bash '$REMOTE_STAGING/scripts/install.sh' $INSTALL_ARGS" || error "Installation failed"
 fi
 
 # Cleanup

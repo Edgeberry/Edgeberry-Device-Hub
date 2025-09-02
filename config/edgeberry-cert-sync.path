@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch persistent certificate directory for changes
+Documentation=man:systemd.path(5)
+
+[Path]
+PathModified=/var/lib/edgeberry/devicehub/certs
+PathChanged=/var/lib/edgeberry/devicehub/certs
+Unit=edgeberry-cert-sync.service
+
+[Install]
+WantedBy=multi-user.target

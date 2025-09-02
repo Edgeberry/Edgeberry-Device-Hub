@@ -1,0 +1,52 @@
+[Unit]
+Description=Synchronize persistent certificates to MQTT broker
+Documentation=man:systemd.service(5)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '
+  PERSISTENT_DIR="/var/lib/edgeberry/devicehub/certs"
+  MQTT_CERTS_DIR="/etc/mosquitto/certs"
+  MQTT_CA_DIR="/etc/mosquitto/certs/edgeberry-ca.d"
+  
+  # Sync certificates from persistent storage to MQTT broker
+  if [[ -f "$PERSISTENT_DIR/ca.crt" ]]; then
+    cp "$PERSISTENT_DIR/ca.crt" "$MQTT_CERTS_DIR/ca.crt"
+    cp "$PERSISTENT_DIR/ca.crt" "$MQTT_CA_DIR/ca.crt"
+    echo "Synced CA certificate"
+  fi
+  
+  if [[ -f "$PERSISTENT_DIR/server.crt" ]]; then
+    cp "$PERSISTENT_DIR/server.crt" "$MQTT_CERTS_DIR/server.crt"
+    echo "Synced server certificate"
+  fi
+  
+  if [[ -f "$PERSISTENT_DIR/server.key" ]]; then
+    cp "$PERSISTENT_DIR/server.key" "$MQTT_CERTS_DIR/server.key"
+    echo "Synced server key"
+  fi
+  
+  # Set proper ownership
+  if id -u mosquitto >/dev/null 2>&1; then
+    chown root:mosquitto "$MQTT_CERTS_DIR"/*.{crt,key} 2>/dev/null || true
+  fi
+  
+  # Rehash CA directory
+  if command -v c_rehash >/dev/null 2>&1; then
+    c_rehash "$MQTT_CA_DIR"
+  else
+    openssl rehash "$MQTT_CA_DIR"
+  fi
+  
+  # Reload/restart Mosquitto to pick up new certificates
+  if systemctl is-active --quiet mosquitto; then
+    systemctl reload mosquitto || systemctl restart mosquitto
+    echo "Reloaded Mosquitto with new certificates"
+  fi
+'
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

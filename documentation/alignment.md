@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-08-31 19:10 CEST
+**Last updated:** 2025-09-02 09:15 CEST
 
 ## Documentation Strategy
 
@@ -432,6 +432,9 @@ Anonymous access (Observer mode):
 - **Release packaging:** Per-microservice build artifacts (tar.gz) attached to GitHub Releases, installed via privileged installer
 - **No Docker:** Docker is not used for release packaging
 - **Host installation:** `scripts/install.sh` installs artifacts under `/opt/Edgeberry/devicehub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services
+- **Persistent data:** Certificates and database stored in `/var/lib/edgeberry/devicehub/` and preserved between deployments
+- **Clean install:** Use `--force-clean` flag to remove all persistent data for fresh installation
+- **Certificate renewal:** Automatic synchronization via systemd path units monitors persistent certificate changes and updates MQTT broker
 
 ### Directory Structure
 
@@ -661,6 +664,7 @@ The `scripts/deploy.sh` script provides automated deployment to remote hosts via
 - `--remote-dir` — Custom remote staging directory (default: `~/.edgeberry-deploy-<timestamp>`)
 - `--skip-build` — Skip local artifact building (use existing `dist-artifacts/`)
 - `-v, --verbose` — Verbose SSH/rsync output
+- `--force-clean` — Force clean install (removes all persistent data)
 
 Example (test server):
 ```
@@ -680,6 +684,7 @@ bash scripts/deploy.sh -h 192.168.1.116 -u spuq
 
 **NPM Integration**: Use `npm run deploy` for quick deployment with predefined host/user, or `npm run build` + `scripts/deploy.sh --skip-build` for faster iterations.
 
+### Installation
 ### WebSocket Topics (Current)
 
 Message envelope: JSON objects `{ type: string, data: any }`.

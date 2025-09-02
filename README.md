@@ -85,6 +85,32 @@ mosquitto -c $(pwd)/config/mosquitto.conf -v
 
 Note this config references `/etc/mosquitto/...` paths. Either run the installer once on your dev host or place the files accordingly.
 
+## Deployment
+
+Deploy to a remote host via SSH:
+
+```bash
+# Deploy to test server (preserves certificates and database)
+npm run deploy
+
+# Or manually specify host/user
+./scripts/deploy.sh -h 192.168.1.116 -u spuq
+
+# Force clean install (removes all persistent data)
+./scripts/deploy.sh -h 192.168.1.116 -u spuq --force-clean
+```
+
+The deployment process:
+1. Builds all services locally
+2. Copies artifacts to remote host
+3. Installs and configures services (preserving persistent data by default)
+4. Starts the Device Hub
+
+**Persistent Data:**
+- Certificates (CA root, provisioning, server) stored in `/var/lib/edgeberry/devicehub/certs/`
+- Database stored in `/var/lib/edgeberry/devicehub/devicehub.db`
+- Preserved between deployments unless `--force-clean` is used
+
 ## License & Collaboration
 **Copyright 2025 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
 
