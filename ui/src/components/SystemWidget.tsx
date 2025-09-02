@@ -463,12 +463,13 @@ export default function SystemWidget(props: { user: any | null }) {
       key: 'cpu', title: 'CPU',
       value: metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-',
       badge: (
-        <div style={{display:'flex', alignItems:'stretch', gap:8}}>
-          <div style={{display:'flex', alignItems:'center'}}>
+        <div style={{width:'100%'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <span style={{fontSize:'0.9em', color:'#666'}}>Current: {metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}</span>
             <Badge bg={percentColor(metrics.cpu?.approxUsagePercent)}>{metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}</Badge>
           </div>
-          <div style={{flex:1, height:'100%'}}>
-            <Sparkline values={series.cpu} />
+          <div style={{width:'100%', height:60}}>
+            <OverlaySparkline a={series.cpu} />
           </div>
         </div>
       ),
@@ -482,11 +483,12 @@ export default function SystemWidget(props: { user: any | null }) {
       key: 'memory', title: 'Memory',
       value: metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-',
       badge: (
-        <div style={{display:'flex', alignItems:'stretch', gap:8}}>
-          <div style={{display:'flex', alignItems:'center'}}>
+        <div style={{width:'100%'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <span style={{fontSize:'0.9em', color:'#666'}}>Current: {metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}</span>
             <Badge bg={percentColor(metrics.memory?.usedPercent)}>{metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}</Badge>
           </div>
-          <div style={{flex:1, height:'100%'}}>
+          <div style={{width:'100%', height:60}}>
             <Sparkline values={series.mem} />
           </div>
         </div>
@@ -503,11 +505,12 @@ export default function SystemWidget(props: { user: any | null }) {
       key: 'disk', title: 'Disk',
       value: metrics.disk && metrics.disk.mounts && metrics.disk.mounts.length ? `${Math.round((metrics.disk.mounts[0].usedPercent||0))}%` : '-',
       badge: (
-        <div style={{display:'flex', alignItems:'stretch', gap:8}}>
-          <div style={{display:'flex', alignItems:'center'}}>
+        <div style={{width:'100%'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <span style={{fontSize:'0.9em', color:'#666'}}>Current: {metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}</span>
             <Badge bg={percentColor(metrics.disk?.mounts?.[0]?.usedPercent)}>{metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}</Badge>
           </div>
-          <div style={{flex:1, height:'100%'}}>
+          <div style={{width:'100%', height:60}}>
             <Sparkline values={series.disk} />
           </div>
         </div>
@@ -529,11 +532,12 @@ export default function SystemWidget(props: { user: any | null }) {
       key: 'network', title: 'Network',
       value: metrics.network ? `${formatBytes(metrics.network.total.rxBytes)} / ${formatBytes(metrics.network.total.txBytes)}` : '-',
       badge: (
-        <div style={{display:'flex', alignItems:'stretch', gap:8}}>
-          <div style={{display:'flex', alignItems:'center'}}>
+        <div style={{width:'100%'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <span style={{fontSize:'0.9em', color:'#666'}}>RX/TX Rates</span>
             <Badge bg={'info'}>RX/TX</Badge>
           </div>
-          <div style={{flex:1, height:'100%'}}>
+          <div style={{width:'100%', height:60}}>
             <OverlaySparkline a={series.rxRate} b={series.txRate} />
           </div>
         </div>
@@ -558,47 +562,46 @@ export default function SystemWidget(props: { user: any | null }) {
 
   return (
     <Card className="mb-3" data-testid="system-widget">
-      <Card.Body>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h5 className="mb-0">System</h5>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button
-              size="sm"
-              variant="outline-primary"
-              onClick={async () => {
-                setDiagOpen(true);
-                if (!canControl) return;
-                setDiagBusy(true);
-                setDiagError('');
-                setDiagData(null);
-                try {
-                  const res: any = await runSystemSanityCheck();
-                  setDiagData(res);
-                } catch (e: any) {
-                  setDiagError(e?.message || 'Sanity check failed');
-                } finally {
-                  setDiagBusy(false);
-                }
-              }}
-              disabled={!canControl || diagBusy}
-              title={canControl ? 'Run system sanity check' : 'Admin only'}
-            >
-              <i className="fa-solid fa-stethoscope" aria-hidden="true" />
-            </Button>
-            <Button
-              size="sm"
-              variant="outline-danger"
-              disabled={!canControl}
-              title={canControl ? 'Power options' : 'Admin only'}
-              onClick={() => { if (canControl) { setPowerErr(''); setPowerMsg(''); setShowPower(true); } }}
-            >
-              <i className="fa-solid fa-power-off" aria-hidden="true" />
-            </Button>
-          </div>
+      <Card.Header className="d-flex justify-content-between align-items-center">
+        <span>System</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button
+            size="sm"
+            variant="outline-primary"
+            onClick={async () => {
+              setDiagOpen(true);
+              if (!canControl) return;
+              setDiagBusy(true);
+              setDiagError('');
+              setDiagData(null);
+              try {
+                const res: any = await runSystemSanityCheck();
+                setDiagData(res);
+              } catch (e: any) {
+                setDiagError(e?.message || 'Sanity check failed');
+              } finally {
+                setDiagBusy(false);
+              }
+            }}
+            disabled={!canControl || diagBusy}
+            title={canControl ? 'Run system sanity check' : 'Admin only'}
+          >
+            <i className="fa-solid fa-stethoscope" aria-hidden="true" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline-danger"
+            disabled={!canControl}
+            title={canControl ? 'Power options' : 'Admin only'}
+            onClick={() => { if (canControl) { setPowerErr(''); setPowerMsg(''); setShowPower(true); } }}
+          >
+            <i className="fa-solid fa-power-off" aria-hidden="true" />
+          </Button>
         </div>
-
-        <Tabs activeKey={activeTab} onSelect={(k) => setActiveTab(k || 'overview')} className="mt-3">
-          <Tab eventKey="overview" title="Overview">
+      </Card.Header>
+      <Card.Body>
+        {/* Single page layout - no tabs */}
+        <div>
             <div className="mt-3">
               {/* Health strip */}
               <div style={{ marginBottom: 16 }}>
@@ -631,7 +634,7 @@ export default function SystemWidget(props: { user: any | null }) {
                 )}
               </div>
               
-              {/* Metrics tiles */}
+              {/* Metrics - Full Width */}
               <div>
                 {metricsLoading ? (
                   <Spinner animation="border" size="sm" />
@@ -645,13 +648,18 @@ export default function SystemWidget(props: { user: any | null }) {
                           role="button"
                           onClick={() => setSelectedMetric(t.key)}
                           style={{
-                            border: '1px solid #e0e0e0', borderRadius: 8, padding: 6, height: '100%',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)', cursor: 'pointer',
-                            display:'flex', flexDirection:'column', minHeight: 28
+                            border: '1px solid #e0e0e0', 
+                            borderRadius: 8, 
+                            padding: 12, 
+                            height: '100%',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)', 
+                            cursor: 'pointer',
+                            display:'flex', 
+                            flexDirection:'column'
                           }}
                         >
-                          <div style={{ fontWeight: 600 }}>{t.title}</div>
-                          <div style={{ marginTop: 2, flex:1, display:'flex' }}>{t.badge}</div>
+                          <div style={{ fontWeight: 600, marginBottom: 8 }}>{t.title}</div>
+                          <div style={{ flex: 1 }}>{t.badge}</div>
                         </div>
                       </Col>
                     ))}
@@ -659,10 +667,10 @@ export default function SystemWidget(props: { user: any | null }) {
                 )}
               </div>
             </div>
-          </Tab>
-
-          <Tab eventKey="services" title="Services">
-            <div className="mt-3">
+            
+            {/* Services section */}
+            <div className="mt-4">
+              <h6 className="mb-3">Services</h6>
               {servicesLoading ? (
                 <Spinner animation="border" size="sm" />
               ) : servicesError ? (
@@ -672,7 +680,7 @@ export default function SystemWidget(props: { user: any | null }) {
                   {services.length === 0 ? (
                     <div>No services found.</div>
                   ) : (
-                    <Row className="g-3">
+                    <Row className="g-2">
                       {services.map((s) => {
                         const variant = s.status === 'active' ? 'success' : (s.status === 'inactive' ? 'secondary' : 'warning');
                         return (
@@ -682,19 +690,19 @@ export default function SystemWidget(props: { user: any | null }) {
                               onClick={() => setSelectedService(s)}
                               style={{
                                 border: '1px solid #e0e0e0',
-                                borderRadius: 8,
-                                padding: 12,
+                                borderRadius: 6,
+                                padding: 8,
                                 height: '100%',
                                 boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                                 cursor: 'pointer',
                               }}
                             >
-                              <div style={{ fontWeight: 600, wordBreak: 'break-all' }}>
+                              <div style={{ fontWeight: 600, wordBreak: 'break-all', fontSize: '0.9em' }}>
                                 {prettyUnitName(s.unit)}{' '}
-                                {s.version ? <span style={{ fontWeight: 400, fontSize: 12, color:'#666' }}>v{s.version}</span> : null}
+                                {s.version ? <span style={{ fontWeight: 400, fontSize: 11, color:'#666' }}>v{s.version}</span> : null}
                               </div>
-                              <div style={{ marginTop: 8 }}>
-                                <Badge bg={variant}>{s.status}</Badge>
+                              <div style={{ marginTop: 6 }}>
+                                <Badge bg={variant} style={{ fontSize: '0.75em' }}>{s.status}</Badge>
                               </div>
                             </div>
                           </Col>
@@ -705,10 +713,10 @@ export default function SystemWidget(props: { user: any | null }) {
                 </>
               )}
             </div>
-          </Tab>
-        </Tabs>
+        </div>
+      </Card.Body>
 
-        {/* Power Management Modal */}
+      {/* Power Management Modal */}
         <Modal show={showPower} onHide={() => { if (!powerBusy) setShowPower(false); }} centered>
           <Modal.Header closeButton>
             <Modal.Title>Power Management</Modal.Title>
@@ -886,7 +894,6 @@ export default function SystemWidget(props: { user: any | null }) {
             <Button variant="secondary" onClick={() => setDiagOpen(false)}>Close</Button>
           </Modal.Footer>
         </Modal>
-      </Card.Body>
     </Card>
   );
 }

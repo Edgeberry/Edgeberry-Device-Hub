@@ -3,8 +3,9 @@
  *
  * Admin-only modal to manage provisioning UUID whitelist entries.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Alert, Badge, Button, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
+import { batchUploadWhitelist } from '../api/devicehub';
 
 export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; user:any|null }){
   const [loading, setLoading] = useState(true);
@@ -16,6 +17,13 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   const [wlHardwareVersion, setWlHardwareVersion] = useState('');
   const [wlManufacturer, setWlManufacturer] = useState('');
   const [wlBusy, setWlBusy] = useState(false);
+  
+  // Batch upload state
+  const [batchHardwareVersion, setBatchHardwareVersion] = useState('');
+  const [batchManufacturer, setBatchManufacturer] = useState('');
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchResults, setBatchResults] = useState<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(()=>{
     if (!props.show) return;
@@ -60,6 +68,49 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
     if (res.ok){ await refresh(); }
     else { const d = await res.json().catch(()=>({})); setError(d?.error || 'Failed to delete whitelist entry'); }
   }
+  
+  async function handleBatchUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    if (!batchHardwareVersion.trim() || !batchManufacturer.trim()) {
+      setError('Hardware version and manufacturer are required for batch upload');
+      return;
+    }
+    
+    setBatchBusy(true);
+    setBatchResults(null);
+    setError(undefined);
+    
+    try {
+      const text = await file.text();
+      const uuids = text.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      if (uuids.length === 0) {
+        setError('No valid UUIDs found in file');
+        return;
+      }
+      
+      const result = await batchUploadWhitelist(uuids, batchHardwareVersion.trim(), batchManufacturer.trim());
+      
+      if (result.ok) {
+        setBatchResults(result.results);
+        await refresh();
+        // Clear form
+        setBatchHardwareVersion('');
+        setBatchManufacturer('');
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } else {
+        setError(result.error || 'Batch upload failed');
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to process file');
+    } finally {
+      setBatchBusy(false);
+    }
+  }
 
   function fmtDate(s?:string){ try{ return s? new Date(s).toLocaleString() : '-'; }catch{ return s || '-'; } }
 
@@ -71,19 +122,67 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
       <Modal.Body>
         {error && <Alert variant='danger'>{error}</Alert>}
 
-        <Form onSubmit={(e)=>{e.preventDefault(); createEntry();}}>
+        {/* Single Entry Form */}
+        <div className="mb-4">
+          <h6>Add Single Entry</h6>
+          <Form onSubmit={(e)=>{e.preventDefault(); createEntry();}}>
+            <Row className='g-2'>
+              <Col md={12}><Form.Label>UUID <span className="text-danger">*</span></Form.Label>
+                <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' disabled={!props.user} /></Col>
+              <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
+                <Form.Control value={wlHardwareVersion} onChange={e=>setWlHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
+              <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
+                <Form.Control value={wlManufacturer} onChange={e=>setWlManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
+            </Row>
+            <Button className='mt-2' disabled={!props.user || wlBusy} onClick={createEntry} variant='success'>
+              {wlBusy? <Spinner animation='border' size='sm'/> : 'Create entry'}
+            </Button>
+          </Form>
+        </div>
+        
+        {/* Batch Upload Form */}
+        <div className="mb-4" style={{borderTop: '1px solid #dee2e6', paddingTop: '1rem'}}>
+          <h6>Batch Upload from File</h6>
+          <p className="text-muted small">Upload a plain text file with one UUID per line</p>
           <Row className='g-2'>
-            <Col md={12}><Form.Label>UUID <span className="text-danger">*</span></Form.Label>
-              <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' disabled={!props.user} /></Col>
             <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
-              <Form.Control value={wlHardwareVersion} onChange={e=>setWlHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
+              <Form.Control value={batchHardwareVersion} onChange={e=>setBatchHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
             <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
-              <Form.Control value={wlManufacturer} onChange={e=>setWlManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
+              <Form.Control value={batchManufacturer} onChange={e=>setBatchManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
+            <Col md={12}><Form.Label>UUID File <span className="text-danger">*</span></Form.Label>
+              <Form.Control 
+                ref={fileInputRef}
+                type="file" 
+                accept=".txt,.csv" 
+                onChange={handleBatchUpload} 
+                disabled={!props.user || batchBusy}
+              />
+            </Col>
           </Row>
-          <Button className='mt-2' disabled={!props.user || wlBusy} onClick={createEntry} variant='success'>
-            {wlBusy? <Spinner animation='border' size='sm'/> : 'Create entry'}
-          </Button>
-        </Form>
+          {batchBusy && (
+            <div className="mt-2">
+              <Spinner animation='border' size='sm'/> Processing file...
+            </div>
+          )}
+          {batchResults && (
+            <Alert variant={batchResults.errors.length > 0 ? 'warning' : 'success'} className="mt-2">
+              <strong>Batch Upload Results:</strong><br/>
+              Added: {batchResults.added} entries<br/>
+              Skipped: {batchResults.skipped} entries<br/>
+              {batchResults.errors.length > 0 && (
+                <details className="mt-2">
+                  <summary>Errors ({batchResults.errors.length})</summary>
+                  <ul className="mb-0 mt-1">
+                    {batchResults.errors.slice(0, 10).map((err: string, i: number) => (
+                      <li key={i} style={{fontSize: '0.85em'}}>{err}</li>
+                    ))}
+                    {batchResults.errors.length > 10 && <li>... and {batchResults.errors.length - 10} more</li>}
+                  </ul>
+                </details>
+              )}
+            </Alert>
+          )}
+        </div>
 
         <div style={{marginTop:12}}>
           {loading && entries.length===0 ? <Spinner animation='border' size='sm'/> : (

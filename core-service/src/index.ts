@@ -1313,6 +1313,55 @@ app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response
   }finally{ try{ db.close(); }catch{} }
 });
 
+// POST /api/admin/uuid-whitelist/batch -> batch add entries from file
+app.post('/api/admin/uuid-whitelist/batch', authRequired, (req: Request, res: Response) => {
+  let { uuids, hardware_version, manufacturer } = req.body;
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  if(!uuids || !Array.isArray(uuids)){ res.status(400).json({ error: 'uuids_array_required' }); return; }
+  if(!hardware_version){ res.status(400).json({ error: 'hardware_version_required' }); return; }
+  if(!manufacturer){ res.status(400).json({ error: 'manufacturer_required' }); return; }
+  
+  hardware_version = String(hardware_version).trim();
+  manufacturer = String(manufacturer).trim();
+  if(!hardware_version || !manufacturer){ 
+    res.status(400).json({ error: 'hardware_version_and_manufacturer_required' }); return; 
+  }
+  
+  const results = { added: 0, skipped: 0, errors: [] as string[] };
+  const now = new Date().toISOString();
+  
+  try{
+    const stmt = db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at) VALUES (?, ?, ?, ?)');
+    
+    for(const rawUuid of uuids) {
+      const uuid = String(rawUuid).trim();
+      if(!uuid) {
+        results.errors.push(`Empty UUID skipped`);
+        results.skipped++;
+        continue;
+      }
+      
+      try {
+        stmt.run(uuid, hardware_version, manufacturer, now);
+        results.added++;
+      } catch(e: any) {
+        if(e?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+          results.errors.push(`UUID ${uuid} already exists`);
+          results.skipped++;
+        } else {
+          results.errors.push(`UUID ${uuid}: ${e?.message || 'insert failed'}`);
+          results.skipped++;
+        }
+      }
+    }
+    
+    res.json({ ok: true, results });
+  }catch(e:any){
+    res.status(500).json({ error: 'batch_insert_failed', message: e?.message || 'failed' });
+  }finally{ try{ db.close(); }catch{} }
+});
+
 // DELETE /api/admin/uuid-whitelist/:uuid -> remove entry
 app.delete('/api/admin/uuid-whitelist/:uuid', authRequired, (req: Request, res: Response) => {
   const { uuid } = req.params;

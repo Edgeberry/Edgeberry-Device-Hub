@@ -161,6 +161,19 @@ export async function deleteWhitelistByDevice(deviceUuid: string){
   const res = await fetch(base()+`/admin/uuid-whitelist/by-device/${encodeURIComponent(deviceUuid)}`, { method:'DELETE', credentials:'include' });
   return jsonOrMessage(res);
 }
+
+/**
+ * Batch upload UUIDs to whitelist from array
+ */
+export async function batchUploadWhitelist(uuids: string[], hardwareVersion: string, manufacturer: string){
+  const res = await fetch(base()+'/admin/uuid-whitelist/batch', { 
+    method:'POST', 
+    headers:{'content-type':'application/json'}, 
+    body: JSON.stringify({ uuids, hardware_version: hardwareVersion, manufacturer }), 
+    credentials:'include' 
+  });
+  return jsonOrMessage(res);
+}
 /**
  * Issue a short-lived provision token for a device
  * @param uuid device uuid
