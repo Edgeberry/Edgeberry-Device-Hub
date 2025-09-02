@@ -1,7 +1,8 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { existsSync, readFileSync } from 'fs';
 import { MQTT_PASSWORD, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, MQTT_URL, MQTT_USERNAME, SERVICE } from './config.js';
-import { resolveUuidToId } from './router.js';
+import { resolveUuidToName } from './router.js';
+import { registerDeviceForMonitoring } from './monitor.js';
 
 const SUB_TOPIC = 'devices/+/messages/events/';
 
@@ -15,7 +16,7 @@ function parseUuidFromTopic(topic: string): string | null {
   return parts[1];
 }
 
-function outTopic(deviceId: string): string { return `devices/${deviceId}/messages/events/`; }
+function outTopic(deviceName: string): string { return `$devicehub/devicedata/${deviceName}/`; }
 
 export function startMqtt(): MqttClient {
   const usingTls = MQTT_URL.startsWith('mqtts://');
@@ -57,10 +58,15 @@ export function startMqtt(): MqttClient {
       // Resolve asynchronously to avoid blocking the MQTT loop
       (async () => {
         try {
-          const deviceId = await resolveUuidToId(uuid);
-          if (!deviceId) return; // unmapped; drop silently
-          const out = outTopic(deviceId);
+          const deviceName = await resolveUuidToName(uuid);
+          if (!deviceName) return; // unmapped; drop silently
+          
+          // Register device for monitoring when first encountered
+          registerDeviceForMonitoring(uuid, deviceName);
+          
+          const out = outTopic(deviceName);
           client.publish(out, payload, { qos: 1 });
+          console.log(`[${SERVICE}] translated ${topic} -> ${out}`);
         } catch (e) {
           console.error(`[${SERVICE}] resolve/publish error for ${topic}:`, (e as Error).message);
         }

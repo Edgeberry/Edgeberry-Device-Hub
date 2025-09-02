@@ -142,7 +142,7 @@ export function startMqtt(): MqttClient {
           // Register device in database after successful certificate issuance
           try {
             const metaJson = JSON.stringify(meta || {});
-            const regRes = await dbusRegisterDevice(uuid, name || `Device ${uuid}`, token || '', metaJson);
+            const regRes = await dbusRegisterDevice(uuid, '', token || '', metaJson);
             if (regRes.ok) {
               console.log(`[${SERVICE}] device registered: ${uuid}`);
             } else {

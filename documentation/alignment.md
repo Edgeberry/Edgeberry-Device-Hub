@@ -797,7 +797,7 @@ Provisioning flow (MQTT + internal D-Bus):
 
 1. Device generates a keypair and CSR (CN = `deviceId`).
 2. Device connects to the broker using the claim/provisioning certificate (mTLS).
-3. Device publishes CSR to `$devicehub/devices/{deviceId}/provision/request` with `{ csrPem, uuid?, name?, token?, meta? }`.
+3. Device publishes CSR to `$devicehub/devices/{deviceId}/provision/request` with `{ csrPem, uuid?, name?, token?, meta? }`. If no name is provided, the system generates a default name using format `EDGB-<first 4 UUID chars>`.
 4. Provisioning worker validates the UUID via Core over D-Bus (`WhitelistService.CheckUUID`) when enforced, validates the CSR, requests certificate issuance from Core over D-Bus (`CertificateService.IssueFromCSR`); replies on `$devicehub/devices/{deviceId}/provision/accepted` with `{ deviceId, certPem, caChainPem }` (or `$devicehub/devices/{deviceId}/provision/rejected`). After a successful issuance, it marks the UUID as used via `WhitelistService.MarkUsed`.
 5. Device saves cert, reconnects using its own certificate.
 6. Server marks the device `active`, sets `enrolled_at`, and subsequent MQTT runtime updates `last_seen`/`updated_at`.
@@ -908,7 +908,7 @@ Production model:
 4. Device installs the returned cert/key and reconnects using its per-device client certificate.
 
 MVP/dev model (implemented):
-1. Device connects to the broker and publishes to `$devicehub/devices/{deviceId}/provision/request` with JSON `{ name?, token?, meta?, uuid? }`.
+1. Device connects to the broker and publishes to `$devicehub/devices/{deviceId}/provision/request` with JSON `{ name?, token?, meta?, uuid? }`. Device names follow naming conventions: alphanumeric, hyphens, underscores only; 4-32 characters; must start with alphanumeric. Default format is `EDGB-<first 4 UUID chars>`.
 2. Provisioning service validates the whitelist when `ENFORCE_WHITELIST=true`:
    - Looks up `uuid` in `uuid_whitelist` and requires `used_at` null.
    - On success, marks `used_at` and upserts the device row in `devicehub.db`.
@@ -1034,7 +1034,7 @@ The `provisioning-service` provides a development-friendly provisioning path in 
 Responsibilities:
 
 - Subscribe to `$devicehub/devices/{deviceId}/provision/request`.
-- Upsert device into SQLite `devices` table with fields: `id`, `name?`, `token?`, `meta?`, timestamps.
+- Upsert device into SQLite `devices` table with fields: `id`, `name`, `token?`, `meta?`, timestamps. Device names are validated and follow format `EDGB-<first 4 UUID chars>` when not provided.
 - Publish `$devicehub/devices/{deviceId}/provision/accepted|rejected`.
 
 Storage (MVP):
@@ -1061,11 +1061,23 @@ Purpose:
 Core data model (MVP):
 
 - `id` (PK): globally unique device ID (typically the certificate CN).
-- `name` (optional), `model`, `firmware_version`, `tags`.
+- `name`: device display name following naming conventions (see Device Naming below).
+- `model`, `firmware_version`, `tags`.
 - `status`: `active` | `suspended` | `retired`.
 - `enrolled_at`, `last_seen`, `created_at`, `updated_at`.
 - Certificate: `cert_subject`, `cert_fingerprint`, `cert_expires_at`.
 - Manufacturer UUID (optional): `manufacturer_uuid_hash`, `manufacturer_uuid_added_at`, `manufacturer_uuid_last_seen`.
+
+### Device Naming Conventions
+
+Device names must follow strict validation rules:
+- **Allowed characters**: alphanumeric (a-z, A-Z, 0-9), hyphens (-), underscores (_)
+- **Length**: 4-32 characters
+- **Start character**: must begin with alphanumeric character
+- **Case**: case-insensitive but preserved
+- **Default format**: `EDGB-<first 4 UUID chars>` (e.g., `EDGB-9205` for UUID `9205255a-6767-4a8f-8a8b-499239906911`)
+
+Invalid names are automatically sanitized or replaced with the default format during device registration.
 
 Behavior:
 

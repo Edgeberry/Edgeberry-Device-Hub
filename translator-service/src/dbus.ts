@@ -40,6 +40,36 @@ function callDbusMethod(busName: string, objectPath: string, interfaceName: stri
   });
 }
 
+export async function dbusResolveDeviceNameByUuid(uuid: string): Promise<{ ok: boolean; deviceName?: string; error?: string }> {
+  try {
+    const requestJson = JSON.stringify({ uuid });
+    const result = await callDbusMethod(CORE_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'ResolveDeviceIdByUuid', requestJson);
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
+    return {
+      ok: response.success,
+      deviceName: response.name || undefined,
+      error: response.error || undefined
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+export async function resolveDeviceNameByUuid(uuid: string): Promise<string | null> {
+  try {
+    const result = await dbusResolveDeviceNameByUuid(uuid);
+    if (!result.ok || !result.deviceName) {
+      return null;
+    }
+    return result.deviceName;
+  } catch (error) {
+    console.error('[translator-service] Error resolving UUID to device name:', error);
+    return null;
+  }
+}
+
+// Legacy function for backward compatibility
 export async function dbusResolveDeviceIdByUuid(uuid: string): Promise<{ ok: boolean; deviceId?: string; error?: string }> {
   try {
     const requestJson = JSON.stringify({ uuid });

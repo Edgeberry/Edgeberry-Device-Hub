@@ -1,6 +1,7 @@
 import * as dbus from 'dbus-native';
 import Database from 'better-sqlite3';
 import { DEVICEHUB_DB } from './config.js';
+import { generateDefaultDeviceName, validateDeviceName, sanitizeDeviceName } from './device-names.js';
 
 const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/DevicesService';
@@ -25,42 +26,62 @@ class DevicesInterface {
     }
     
     try {
-      // Create devices table if it doesn't exist
+      // Ensure devices table exists with correct schema
       console.log(`[DevicesService] Creating devices table if not exists`);
-      db.prepare(`
-        CREATE TABLE IF NOT EXISTS devices (
-          uuid TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          token TEXT,
-          meta TEXT,
-          created_at TEXT DEFAULT (datetime('now'))
-        )
-      `).run();
-
-      // Generate automatic name if none provided: EDGB-<first 4 UUID chars>
-      const deviceName = name || `EDGB-${uuid.substring(0, 4).toUpperCase()}`;
-      console.log(`[DevicesService] Using device name: ${deviceName}`);
-
-      // Insert or replace device record
-      const stmt = db.prepare(`
-        INSERT OR REPLACE INTO devices (uuid, name, token, meta, created_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-      `);
-      const result = stmt.run(uuid, deviceName, token || '', metaJson || '{}');
-      console.log(`[DevicesService] Database insert result:`, result);
+      db.prepare(`CREATE TABLE IF NOT EXISTS devices (
+        uuid TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        token TEXT,
+        meta TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`).run();
       
-      // Verify the device was inserted
-      const verifyStmt = db.prepare('SELECT uuid, name FROM devices WHERE uuid = ?');
-      const verifyResult = verifyStmt.get(uuid);
-      console.log(`[DevicesService] Verification query result:`, verifyResult);
+      // Determine device name: use provided name, validate it, or generate default
+      let deviceName = name;
       
-      console.log(`[DevicesService] Successfully registered device: ${uuid} (${deviceName})`);
-      return JSON.stringify({ success: true, message: 'Device registered successfully' });
+      if (!deviceName) {
+        // Generate default name if none provided
+        deviceName = generateDefaultDeviceName(uuid);
+        console.log(`[DevicesService] Generated default device name: ${deviceName}`);
+      } else {
+        // Validate provided name
+        const validation = validateDeviceName(deviceName);
+        if (!validation.valid) {
+          console.warn(`[DevicesService] Invalid device name "${deviceName}": ${validation.error}`);
+          if (validation.sanitized) {
+            deviceName = validation.sanitized;
+            console.log(`[DevicesService] Using sanitized device name: ${deviceName}`);
+          } else {
+            deviceName = generateDefaultDeviceName(uuid);
+            console.log(`[DevicesService] Using default device name instead: ${deviceName}`);
+          }
+        }
+      }
+      
+      console.log(`[DevicesService] Inserting device: uuid=${uuid}, name=${deviceName}`);
+      const stmt = db.prepare(`INSERT OR REPLACE INTO devices (uuid, name, token, meta, created_at) 
+                               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`);
+      stmt.run(uuid, deviceName, token || '', metaJson || '{}');
+      
+      console.log(`[DevicesService] Device registered successfully: ${uuid} -> ${deviceName}`);
+      return JSON.stringify({ 
+        success: true, 
+        message: 'Device registered successfully',
+        uuid: uuid,
+        name: deviceName
+      });
     } catch (error) {
-      console.error(`[DevicesService] Failed to register device ${uuid}:`, error);
-      return JSON.stringify({ success: false, error: `Registration failed: ${(error as Error).message}` });
+      console.error(`[DevicesService] Registration failed for ${uuid}:`, error);
+      return JSON.stringify({ 
+        success: false, 
+        error: `Registration failed: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      });
     } finally {
-      db.close();
+      try {
+        db.close();
+      } catch (e) {
+        console.warn(`[DevicesService] Error closing database:`, e);
+      }
     }
   }
 
