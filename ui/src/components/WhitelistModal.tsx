@@ -4,7 +4,7 @@
  * Admin-only modal to manage provisioning UUID whitelist entries.
  */
 import React, { useEffect, useState, useRef } from 'react';
-import { Alert, Badge, Button, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
+import { Alert, Badge, Button, Col, Form, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
 import { batchUploadWhitelist } from '../api/devicehub';
 
 export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; user:any|null }){
@@ -24,6 +24,9 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchResults, setBatchResults] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Tab state
+  const [activeTab, setActiveTab] = useState('single');
 
   useEffect(()=>{
     if (!props.show) return;
@@ -117,72 +120,74 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   return (
     <Modal show={props.show} onHide={props.onClose} size='xl'>
       <Modal.Header closeButton>
-        <Modal.Title>Provisioning Whitelist</Modal.Title>
+        <Modal.Title>Whitelist</Modal.Title>
       </Modal.Header>
       <Modal.Body>
         {error && <Alert variant='danger'>{error}</Alert>}
 
-        {/* Single Entry Form */}
-        <div className="mb-4">
-          <h6>Add Single Entry</h6>
-          <Form onSubmit={(e)=>{e.preventDefault(); createEntry();}}>
-            <Row className='g-2'>
-              <Col md={12}><Form.Label>UUID <span className="text-danger">*</span></Form.Label>
-                <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' disabled={!props.user} /></Col>
-              <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
-                <Form.Control value={wlHardwareVersion} onChange={e=>setWlHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
-              <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
-                <Form.Control value={wlManufacturer} onChange={e=>setWlManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
-            </Row>
-            <Button className='mt-2' disabled={!props.user || wlBusy} onClick={createEntry} variant='success'>
-              {wlBusy? <Spinner animation='border' size='sm'/> : 'Create entry'}
-            </Button>
-          </Form>
-        </div>
-        
-        {/* Batch Upload Form */}
-        <div className="mb-4" style={{borderTop: '1px solid #dee2e6', paddingTop: '1rem'}}>
-          <h6>Batch Upload from File</h6>
-          <p className="text-muted small">Upload a plain text file with one UUID per line</p>
-          <Row className='g-2'>
-            <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
-              <Form.Control value={batchHardwareVersion} onChange={e=>setBatchHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
-            <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
-              <Form.Control value={batchManufacturer} onChange={e=>setBatchManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
-            <Col md={12}><Form.Label>UUID File <span className="text-danger">*</span></Form.Label>
-              <Form.Control 
-                ref={fileInputRef}
-                type="file" 
-                accept=".txt,.csv" 
-                onChange={handleBatchUpload} 
-                disabled={!props.user || batchBusy}
-              />
-            </Col>
-          </Row>
-          {batchBusy && (
-            <div className="mt-2">
-              <Spinner animation='border' size='sm'/> Processing file...
+        <Tabs activeKey={activeTab} onSelect={(k) => setActiveTab(k || 'single')} className="mb-3">
+          <Tab eventKey="single" title="Single Entry">
+            <div className="mt-3">
+              <Form onSubmit={(e)=>{e.preventDefault(); createEntry();}}>
+                <Row className='g-2'>
+                  <Col md={12}><Form.Label>UUID <span className="text-danger">*</span></Form.Label>
+                    <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' disabled={!props.user} /></Col>
+                  <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
+                    <Form.Control value={wlHardwareVersion} onChange={e=>setWlHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
+                  <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
+                    <Form.Control value={wlManufacturer} onChange={e=>setWlManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
+                </Row>
+                <Button className='mt-3' disabled={!props.user || wlBusy} onClick={createEntry} variant='success'>
+                  {wlBusy? <Spinner animation='border' size='sm'/> : 'Add Entry'}
+                </Button>
+              </Form>
             </div>
-          )}
-          {batchResults && (
-            <Alert variant={batchResults.errors.length > 0 ? 'warning' : 'success'} className="mt-2">
-              <strong>Batch Upload Results:</strong><br/>
-              Added: {batchResults.added} entries<br/>
-              Skipped: {batchResults.skipped} entries<br/>
-              {batchResults.errors.length > 0 && (
-                <details className="mt-2">
-                  <summary>Errors ({batchResults.errors.length})</summary>
-                  <ul className="mb-0 mt-1">
-                    {batchResults.errors.slice(0, 10).map((err: string, i: number) => (
-                      <li key={i} style={{fontSize: '0.85em'}}>{err}</li>
-                    ))}
-                    {batchResults.errors.length > 10 && <li>... and {batchResults.errors.length - 10} more</li>}
-                  </ul>
-                </details>
+          </Tab>
+          
+          <Tab eventKey="batch" title="Batch Upload">
+            <div className="mt-3">
+              <p className="text-muted">Upload a plain text file with one UUID per line</p>
+              <Row className='g-2'>
+                <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
+                  <Form.Control value={batchHardwareVersion} onChange={e=>setBatchHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
+                <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
+                  <Form.Control value={batchManufacturer} onChange={e=>setBatchManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
+                <Col md={12}><Form.Label>UUID File <span className="text-danger">*</span></Form.Label>
+                  <Form.Control 
+                    ref={fileInputRef}
+                    type="file" 
+                    accept=".txt,.csv" 
+                    onChange={handleBatchUpload} 
+                    disabled={!props.user || batchBusy}
+                  />
+                </Col>
+              </Row>
+              {batchBusy && (
+                <div className="mt-3">
+                  <Spinner animation='border' size='sm'/> Processing file...
+                </div>
               )}
-            </Alert>
-          )}
-        </div>
+              {batchResults && (
+                <Alert variant={batchResults.errors.length > 0 ? 'warning' : 'success'} className="mt-3">
+                  <strong>Batch Upload Results:</strong><br/>
+                  Added: {batchResults.added} entries<br/>
+                  Skipped: {batchResults.skipped} entries<br/>
+                  {batchResults.errors.length > 0 && (
+                    <details className="mt-2">
+                      <summary>Errors ({batchResults.errors.length})</summary>
+                      <ul className="mb-0 mt-1">
+                        {batchResults.errors.slice(0, 10).map((err: string, i: number) => (
+                          <li key={i} style={{fontSize: '0.85em'}}>{err}</li>
+                        ))}
+                        {batchResults.errors.length > 10 && <li>... and {batchResults.errors.length - 10} more</li>}
+                      </ul>
+                    </details>
+                  )}
+                </Alert>
+              )}
+            </div>
+          </Tab>
+        </Tabs>
 
         <div style={{marginTop:12}}>
           {loading && entries.length===0 ? <Spinner animation='border' size='sm'/> : (
@@ -228,10 +233,6 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
           )}
         </div>
       </Modal.Body>
-      <Modal.Footer>
-        <Badge bg={props.user? 'primary':'secondary'}>{props.user? 'Admin' : 'Viewer'}</Badge>
-        <Button variant='secondary' onClick={props.onClose}>Close</Button>
-      </Modal.Footer>
     </Modal>
   );
 }
