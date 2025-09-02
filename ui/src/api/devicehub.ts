@@ -172,3 +172,21 @@ export async function createProvisionToken(uuid: string, hours?: number){
   const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/provision-token`+ (hours?`?hours=${encodeURIComponent(hours)}`:''), { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include' });
   return jsonOrMessage(res);
 }
+/**
+ * Update device name
+ * @param uuid device uuid
+ * @param name new device name
+ */
+export async function updateDevice(uuid: string, name: string){
+  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}`, { method:'PUT', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ name }) });
+  return jsonOrMessage(res);
+}
+/**
+ * Replace device with another device
+ * @param uuid device uuid to replace
+ * @param targetUuid uuid of device to replace with
+ */
+export async function replaceDevice(uuid: string, targetUuid: string){
+  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/replace`, { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ targetUuid }) });
+  return jsonOrMessage(res);
+}

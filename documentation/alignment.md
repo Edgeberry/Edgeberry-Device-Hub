@@ -874,16 +874,41 @@ UI behavior in Certificates modal:
 - Root CA card shows presence, subject, validity, with actions: Generate (if absent), Download CA (if present).
 - Provisioning section lists certs with subject/validity, with actions: Issue, Inspect (PEM + meta), Delete, Download bundle.
 
+### Device Management & UI Features
+
+Device management interface includes comprehensive device lifecycle operations:
+
+**Device List Views:**
+- **List view:** Traditional table format with UUID, name, status, and actions
+- **Tile view:** Card-based layout for visual device browsing
+- **Search functionality:** Filter devices by name, UUID, or group name
+- **Real-time status:** Online/offline indicators with last-seen timestamps
+
+**Device Actions (Admin-only):**
+- **Edit device name:** Inline editing with immediate save/cancel options
+- **Delete device:** Remove from registry only (preserves whitelist entries with confirmation)
+- **Replace device:** Swap one device with another while preserving the original device's name and position
+- **View details:** Access comprehensive device information and event history
+
+**API Endpoints:**
+- `PUT /api/devices/:uuid` → Update device properties (name)
+- `POST /api/devices/:uuid/replace` → Replace device with another device from registry
+- `DELETE /api/devices/:uuid` → Remove device from registry (decommission)
+
 Whitelist & lifecycle (MVP additions):
 - Overview includes a Provisioning Whitelist modal:
-  - Lists entries from `devicehub.db` table `uuid_whitelist` with fields `{ uuid, note, created_at, used_at }`.
-  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` (optionally supplying a `uuid`, otherwise auto-generated) with optional `{ note }`.
+  - Lists entries from `devicehub.db` table `uuid_whitelist` with fields `{ uuid, hardware_version, manufacturer, created_at, used_at }`.
+  - **Required fields:** UUID, hardware version, and manufacturer (note field removed)
+  - **Modal size:** Extra-large (xl) for better visibility and data entry
+  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` with required `{ uuid, hardware_version, manufacturer }`.
   - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
  - Install & persistence rules:
     - Fresh installs MUST NOT populate the whitelist. The `uuid_whitelist` table is created empty on first run.
     - On re-install/update, the whitelist MUST persist. The main DB lives under `/var/lib/edgeberry/devicehub/devicehub.db` by default and is not overwritten by the installer.
 - Overview includes a Device Lifecycle section:
-  - Shows Total/Online/Offline counts and a small table (ID, Name, Status, Last seen) using `GET /api/devices`.
+  - Shows Total/Online/Offline counts and enhanced device management interface
+  - Search bar for filtering devices by multiple criteria
+  - Toggle between list and tile views for different user preferences
 
 ### Fleet Provisioning Model (Current)
 

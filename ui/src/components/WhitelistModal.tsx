@@ -13,7 +13,8 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
 
   // Form state
   const [wlUuid, setWlUuid] = useState('');
-  const [wlNote, setWlNote] = useState('');
+  const [wlHardwareVersion, setWlHardwareVersion] = useState('');
+  const [wlManufacturer, setWlManufacturer] = useState('');
   const [wlBusy, setWlBusy] = useState(false);
 
   useEffect(()=>{
@@ -40,13 +41,14 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   async function createEntry(){
     if (!props.user) return;
     if (!wlUuid) { setError('UUID is required'); return; }
+    if (!wlHardwareVersion) { setError('Hardware version is required'); return; }
+    if (!wlManufacturer) { setError('Manufacturer is required'); return; }
     setWlBusy(true);
     try{
-      const body:any = { uuid: wlUuid };
-      if (wlNote && wlNote.trim()) body.note = wlNote.trim();
+      const body = { uuid: wlUuid, hardware_version: wlHardwareVersion.trim(), manufacturer: wlManufacturer.trim() };
       const res = await fetch('/api/admin/uuid-whitelist', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
       const d = await res.json().catch(()=>({}));
-      if (res.ok){ setWlUuid(''); setWlNote(''); await refresh(); }
+      if (res.ok){ setWlUuid(''); setWlHardwareVersion(''); setWlManufacturer(''); await refresh(); }
       else { setError(d?.error || 'Failed to create whitelist entry'); }
     } finally { setWlBusy(false); }
   }
@@ -62,7 +64,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   function fmtDate(s?:string){ try{ return s? new Date(s).toLocaleString() : '-'; }catch{ return s || '-'; } }
 
   return (
-    <Modal show={props.show} onHide={props.onClose} size='lg'>
+    <Modal show={props.show} onHide={props.onClose} size='xl'>
       <Modal.Header closeButton>
         <Modal.Title>Provisioning Whitelist</Modal.Title>
       </Modal.Header>
@@ -71,10 +73,12 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
 
         <Form onSubmit={(e)=>{e.preventDefault(); createEntry();}}>
           <Row className='g-2'>
-            <Col md={12}><Form.Label>UUID</Form.Label>
-              <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='required' disabled={!props.user} /></Col>
-            <Col md={12}><Form.Label>Note (optional)</Form.Label>
-              <Form.Control value={wlNote} onChange={e=>setWlNote(e.target.value)} placeholder='e.g. device location or purpose' disabled={!props.user} /></Col>
+            <Col md={12}><Form.Label>UUID <span className="text-danger">*</span></Form.Label>
+              <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' disabled={!props.user} /></Col>
+            <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
+              <Form.Control value={wlHardwareVersion} onChange={e=>setWlHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
+            <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
+              <Form.Control value={wlManufacturer} onChange={e=>setWlManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
           </Row>
           <Button className='mt-2' disabled={!props.user || wlBusy} onClick={createEntry} variant='success'>
             {wlBusy? <Spinner animation='border' size='sm'/> : 'Create entry'}
@@ -88,7 +92,8 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
                 <thead>
                   <tr>
                     <th>UUID</th>
-                    <th>Note</th>
+                    <th>Hardware Version</th>
+                    <th>Manufacturer</th>
                     <th>Created</th>
                     <th>Used</th>
                     <th style={{width:220}}>Actions</th>
@@ -96,11 +101,12 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
                 </thead>
                 <tbody>
                   {entries.length===0 ? (
-                    <tr><td colSpan={5} style={{color:'#666'}}>No whitelist entries.</td></tr>
+                    <tr><td colSpan={6} style={{color:'#666'}}>No whitelist entries.</td></tr>
                   ) : entries.map((w:any)=> (
                     <tr key={w.uuid}>
-                      <td style={{fontFamily:'monospace'}}>{w.uuid}</td>
-                      <td>{w.note || '-'}</td>
+                      <td style={{fontFamily:'monospace', fontSize:'0.85em'}}>{w.uuid}</td>
+                      <td>{w.hardware_version || '-'}</td>
+                      <td>{w.manufacturer || '-'}</td>
                       <td>{fmtDate(w.created_at)}</td>
                       <td>
                         {w.used_at ? <Badge bg='secondary'>Used</Badge> : <Badge bg='success'>Unused</Badge>}

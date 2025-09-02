@@ -38,9 +38,19 @@ See `documentation/alignment.md` for architecture and interface details, includi
 **Device Twin:**
 - New endpoint in Core: `GET /api/devices/:id/twin` — returns desired/reported docs by calling Twin over D-Bus.
 
-**Device Status:**
-- Device list endpoint `GET /api/devices` now includes real-time `online` status and `last_seen` timestamp for each device.
-- Device status is fetched from twin-service database and updated in real-time via WebSocket broadcasts.
+**Device Management:**
+- Enhanced device list with search functionality (filter by name, UUID, or group)
+- Multiple view modes: traditional list view and visual tile view
+- Inline device name editing with immediate save/cancel
+- Device replacement: swap one device with another while preserving names
+- Delete devices from registry (with optional whitelist cleanup)
+- Real-time `online` status and `last_seen` timestamp for each device
+- Device status is fetched from twin-service database and updated in real-time via WebSocket broadcasts
+
+**Device Actions API:**
+- `PUT /api/devices/:uuid` — Update device properties (name)
+- `POST /api/devices/:uuid/replace` — Replace device with another from registry
+- `DELETE /api/devices/:uuid` — Remove device from registry (decommission)
 
 **WebSocket API:**
 - Core service provides WebSocket endpoint at `/api/ws` for real-time updates.

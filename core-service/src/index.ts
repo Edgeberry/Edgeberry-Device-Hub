@@ -710,29 +710,31 @@ function ensureDeviceHubSchema(){
   }
   try{
     // uuid_whitelist: tracks pre-approved provisioning UUIDs
-    // Current schema: uuid, note, created_at, used_at (no device_id or name)
+    // Updated schema: uuid, hardware_version, manufacturer, created_at, used_at
     try {
       const whitelistInfo = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
-      const hasLegacyColumns = whitelistInfo.some((col: any) => col.name === 'device_id' || col.name === 'name');
+      const hasLegacyColumns = whitelistInfo.some((col: any) => col.name === 'device_id' || col.name === 'name' || col.name === 'note');
+      const hasNewColumns = whitelistInfo.some((col: any) => col.name === 'hardware_version' && col.name === 'manufacturer');
       
-      if (hasLegacyColumns) {
-        console.log('[ensureDeviceHubSchema] Migrating uuid_whitelist table to remove legacy columns');
+      if (hasLegacyColumns || !hasNewColumns) {
+        console.log('[ensureDeviceHubSchema] Migrating uuid_whitelist table to new schema');
         // Backup data, drop table, recreate with correct schema
-        const existingData = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist').all();
+        const existingData = db.prepare('SELECT uuid, created_at, used_at FROM uuid_whitelist').all();
         db.prepare('DROP TABLE uuid_whitelist').run();
         
         db.prepare(
           'CREATE TABLE uuid_whitelist ('+
           ' uuid TEXT PRIMARY KEY,'+
-          ' note TEXT,'+
+          ' hardware_version TEXT NOT NULL,'+
+          ' manufacturer TEXT NOT NULL,'+
           ' created_at TEXT NOT NULL,'+
           ' used_at TEXT)'
         ).run();
         
-        // Restore data with correct schema
-        const insertStmt = db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at, used_at) VALUES (?, ?, ?, ?)');
+        // Restore data with new schema (set default values for new fields)
+        const insertStmt = db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at, used_at) VALUES (?, ?, ?, ?, ?)');
         for (const row of existingData) {
-          insertStmt.run(row.uuid, row.note, row.created_at, row.used_at);
+          insertStmt.run(row.uuid, 'Unknown', 'Unknown', row.created_at, row.used_at);
         }
         console.log(`[ensureDeviceHubSchema] Migrated ${existingData.length} whitelist entries`);
       } else {
@@ -740,7 +742,8 @@ function ensureDeviceHubSchema(){
         db.prepare(
           'CREATE TABLE IF NOT EXISTS uuid_whitelist ('+
           ' uuid TEXT PRIMARY KEY,'+
-          ' note TEXT,'+
+          ' hardware_version TEXT NOT NULL,'+
+          ' manufacturer TEXT NOT NULL,'+
           ' created_at TEXT NOT NULL,'+
           ' used_at TEXT)'
         ).run();
@@ -750,7 +753,8 @@ function ensureDeviceHubSchema(){
       db.prepare(
         'CREATE TABLE IF NOT EXISTS uuid_whitelist ('+
         ' uuid TEXT PRIMARY KEY,'+
-        ' note TEXT,'+
+        ' hardware_version TEXT NOT NULL,'+
+        ' manufacturer TEXT NOT NULL,'+
         ' created_at TEXT NOT NULL,'+
         ' used_at TEXT)'
       ).run();
@@ -900,6 +904,87 @@ app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => 
     res.json({ ok: true, removed: info.changes || 0, whitelist_entries: Number(wlCount) });
   } catch (e:any) {
     res.status(500).json({ error: 'decommission_failed', message: e?.message || 'failed' });
+  } finally {
+    try{ db.close(); }catch{}
+  }
+});
+
+// PUT /api/devices/:uuid -> update device (e.g., name)
+app.put('/api/devices/:uuid', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  const { name } = req.body || {};
+  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
+  if (!name || typeof name !== 'string' || !name.trim()) { 
+    res.status(400).json({ error: 'name_required' }); return; 
+  }
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try {
+    const info = db.prepare('UPDATE devices SET name = ? WHERE uuid = ?').run(name.trim(), uuid);
+    if (info.changes === 0) {
+      res.status(404).json({ error: 'device_not_found' });
+    } else {
+      res.json({ ok: true, updated: info.changes });
+    }
+  } catch (e:any) {
+    res.status(500).json({ error: 'update_failed', message: e?.message || 'failed' });
+  } finally {
+    try{ db.close(); }catch{}
+  }
+});
+
+// POST /api/devices/:uuid/replace -> replace device with another device
+app.post('/api/devices/:uuid/replace', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  const { targetUuid } = req.body || {};
+  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
+  if (!targetUuid || typeof targetUuid !== 'string') { 
+    res.status(400).json({ error: 'target_uuid_required' }); return; 
+  }
+  if (uuid === targetUuid) {
+    res.status(400).json({ error: 'cannot_replace_with_self' }); return;
+  }
+  
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try {
+    // Check both devices exist
+    const sourceDevice = db.prepare('SELECT uuid, name FROM devices WHERE uuid = ?').get(uuid);
+    const targetDevice = db.prepare('SELECT uuid, name FROM devices WHERE uuid = ?').get(targetUuid);
+    
+    if (!sourceDevice) {
+      res.status(404).json({ error: 'source_device_not_found' });
+      return;
+    }
+    if (!targetDevice) {
+      res.status(404).json({ error: 'target_device_not_found' });
+      return;
+    }
+    
+    // Begin transaction to swap device data
+    const transaction = db.transaction(() => {
+      // Store source device name (this stays with the record)
+      const sourceName = sourceDevice.name;
+      
+      // Delete source device record
+      db.prepare('DELETE FROM devices WHERE uuid = ?').run(uuid);
+      
+      // Update target device to use source UUID but keep target's name
+      db.prepare('UPDATE devices SET uuid = ?, name = ? WHERE uuid = ?').run(uuid, sourceName, targetUuid);
+      
+      // Update any related records (events, etc.)
+      db.prepare('UPDATE device_events SET device_id = ? WHERE device_id = ?').run(uuid, targetUuid);
+    });
+    
+    transaction();
+    res.json({ 
+      ok: true, 
+      message: `Device ${targetDevice.name} (${targetUuid}) replaced device ${sourceDevice.name} (${uuid})`,
+      replacedDevice: { uuid, name: sourceDevice.name },
+      withDevice: { uuid: targetUuid, name: targetDevice.name }
+    });
+  } catch (e:any) {
+    res.status(500).json({ error: 'replace_failed', message: e?.message || 'failed' });
   } finally {
     try{ db.close(); }catch{}
   }
@@ -1196,8 +1281,7 @@ app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.json({ entries: [] }); return; }
   try{
-    // API contract: expose only uuid, note, created_at, used_at (device binding removed)
-    const rows = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
+    const rows = db.prepare('SELECT uuid, hardware_version, manufacturer, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
     res.json({ entries: rows });
   }catch{
     res.json({ entries: [] });
@@ -1206,22 +1290,26 @@ app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
 
 // POST /api/admin/uuid-whitelist -> add entry
 app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response) => {
-  let { uuid, note } = req.body;
+  let { uuid, hardware_version, manufacturer } = req.body;
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  if(!uuid){ res.status(400).json({ error: 'uuid_required' }); return; }
+  if(!hardware_version){ res.status(400).json({ error: 'hardware_version_required' }); return; }
+  if(!manufacturer){ res.status(400).json({ error: 'manufacturer_required' }); return; }
+  uuid = String(uuid).trim();
+  hardware_version = String(hardware_version).trim();
+  manufacturer = String(manufacturer).trim();
+  if(!uuid || !hardware_version || !manufacturer){ 
+    res.status(400).json({ error: 'all_fields_required' }); return; 
+  }
   try{
-    if(uuid && typeof uuid !== 'string'){ res.status(400).json({ error: 'invalid_uuid' }); return; }
-    if(!uuid){ uuid = crypto.randomUUID(); }
     const now = new Date().toISOString();
-    // Store uuid, optional note, and timestamps
-    db.prepare('INSERT INTO uuid_whitelist (uuid, note, created_at) VALUES (?, ?, ?)')
-      .run(uuid, (typeof note === 'string' && note.trim() ? String(note).trim() : null), now);
-    const row = db.prepare('SELECT uuid, note, created_at, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid);
-    res.status(201).json(row);
+    const stmt = db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at) VALUES (?, ?, ?, ?)');
+    stmt.run(uuid, hardware_version, manufacturer, now);
+    res.json({ ok: true });
   }catch(e:any){
-    const msg = (e && e.message) || 'insert_failed';
-    if(String(msg).includes('UNIQUE')){ res.status(409).json({ error: 'uuid_exists' }); }
-    else { res.status(500).json({ error: 'insert_failed', message: msg }); }
+    if(e?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY'){ res.status(409).json({ error: 'uuid_exists' }); return; }
+    res.status(500).json({ error: 'insert_failed', message: e?.message || 'failed' });
   }finally{ try{ db.close(); }catch{} }
 });
 
