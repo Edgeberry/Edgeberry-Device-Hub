@@ -53,16 +53,17 @@ See `documentation/alignment.md` for architecture and interface details, includi
 
 **Whitelist Management:**
 - `GET /api/admin/uuid-whitelist` - List whitelist entries
-- `POST /api/admin/uuid-whitelist` - Add UUID to whitelist (requires hardware_version and manufacturer)
+- `POST /api/admin/uuid-whitelist` - Add single UUID to whitelist (requires hardware_version and manufacturer)
+- `POST /api/admin/uuid-whitelist/batch` - Batch upload UUIDs from array (requires uuids array, hardware_version and manufacturer)
 - `DELETE /api/admin/uuid-whitelist/:uuid` - Remove UUID from whitelist
 - `DELETE /api/admin/uuid-whitelist/by-device/:deviceId` - Remove whitelist entries by device ID
 
 ### UI Features
 
 **System Widget:**
-- Unified system monitoring and management interface
-- **Overview Tab**: Health status, CPU/memory metrics with real-time sparklines, system uptime
-- **Services Tab**: Systemd service status and control (start/stop/restart) with admin permissions
+- Unified system monitoring and management interface with single-page layout
+- **System Metrics**: Health status, CPU/memory/disk/network metrics with full-width sparklines
+- **Services Section**: Systemd service status and control (start/stop/restart) with admin permissions
 - **System Actions**: Sanity check (stethoscope icon) and power management (power icon)
 
 **Device Management:**
@@ -71,6 +72,12 @@ See `documentation/alignment.md` for architecture and interface details, includi
 - Inline device name editing with keyboard shortcuts (Enter to save, Escape to cancel)
 - Device replacement functionality preserving original device names
 - Delete device with optional whitelist cleanup
+
+**Whitelist Management:**
+- **Single Entry Tab**: Add individual UUIDs with hardware version and manufacturer
+- **Batch Upload Tab**: Upload plain text files with one UUID per line
+- Automatic file processing with detailed results (added/skipped counts and error details)
+- Support for manufacturer-provided UUID files (.txt, .csv formats)
 
 **System Diagnostics:**
 - Comprehensive sanity check covering services, metrics, database, and MQTT configuration

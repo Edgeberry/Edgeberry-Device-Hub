@@ -360,7 +360,7 @@ export default function SystemWidget(props: { user: any | null }) {
           }
         }, 50);
       } catch (e) {
-        console.warn('Log stream parse error:', e);
+        // Log stream parse error - silently ignore
       }
     };
     

@@ -896,18 +896,28 @@ Device management interface includes comprehensive device lifecycle operations:
 - `DELETE /api/devices/:uuid` → Remove device from registry (decommission)
 
 Whitelist & lifecycle (MVP additions):
-- Overview includes a Provisioning Whitelist modal:
+- Overview includes a Whitelist modal:
+  - **Tabbed interface**: Single Entry tab for individual UUIDs, Batch Upload tab for file uploads
+  - **Single Entry**: Add individual UUIDs with hardware version and manufacturer
+  - **Batch Upload**: Upload plain text files with one UUID per line (.txt, .csv formats)
   - Lists entries from `devicehub.db` table `uuid_whitelist` with fields `{ uuid, hardware_version, manufacturer, created_at, used_at }`.
   - **Required fields:** UUID, hardware version, and manufacturer (note field removed)
-  - **Modal size:** Extra-large (xl) for better visibility and data entry
-  - Allows creating a new entry via `POST /api/admin/uuid-whitelist` with required `{ uuid, hardware_version, manufacturer }`.
-  - Allows deleting entries via `DELETE /api/admin/uuid-whitelist/:uuid` and copying UUIDs.
- - Install & persistence rules:
+  - **Modal size:** Extra-large (xl) for better visibility
+
+**Whitelist Management:**
+- `GET /api/admin/uuid-whitelist` - List whitelist entries
+- `POST /api/admin/uuid-whitelist` - Add single UUID to whitelist (requires hardware_version and manufacturer)
+- `POST /api/admin/uuid-whitelist/batch` - Batch upload UUIDs from array (requires uuids array, hardware_version and manufacturer)
+- `DELETE /api/admin/uuid-whitelist/:uuid` - Remove UUID from whitelist
+- `DELETE /api/admin/uuid-whitelist/by-device/:deviceId` - Remove whitelist entries by device ID
+
+Install & persistence rules:
     - Fresh installs MUST NOT populate the whitelist. The `uuid_whitelist` table is created empty on first run.
     - On re-install/update, the whitelist MUST persist. The main DB lives under `/var/lib/edgeberry/devicehub/devicehub.db` by default and is not overwritten by the installer.
 - Overview includes a Device Lifecycle section:
   - Shows Total/Online/Offline counts and enhanced device management interface
   - Search bar for filtering devices by multiple criteria
+{{ ... }}
   - Toggle between list and tile views for different user preferences
 
 ### Fleet Provisioning Model (Current)
@@ -1180,8 +1190,9 @@ This project will remain open-source and GPL-licensed. It will always assume Edg
 The Device Hub UI features a unified **System Widget** that consolidates system monitoring and management capabilities:
 
 **System Widget Components:**
-- **Overview Tab**: Health status, CPU/memory metrics with sparklines, uptime display
-- **Services Tab**: Systemd service status and control (start/stop/restart) with admin permissions
+- **Single-page layout**: Unified interface without tabs for streamlined monitoring
+- **System Metrics**: Health status, CPU/memory/disk/network metrics with full-width sparklines
+- **Services Section**: Systemd service status and control (start/stop/restart) with admin permissions
 - **System Actions**: Power management (reboot/shutdown) and comprehensive sanity check
 
 **System Action Buttons:**
@@ -1221,8 +1232,9 @@ The system includes a comprehensive sanity check endpoint (`POST /api/system/san
 ### UI Integration
 
 The System Widget replaces the previous separate ServiceStatusWidget and SystemMetricsWidget, providing:
-- Tabbed interface for organized access to system information
+- Single-page interface for streamlined access to system information
 - Real-time metrics with WebSocket updates and polling fallback
+- Full-width sparkline graphs for better data visualization
 - Admin-only controls with proper permission enforcement
 - Integrated health status display with uptime and environment information
 

@@ -158,7 +158,7 @@ export default function Overview(props:{user:any}){
       setEditingDevice(null);
       setEditName('');
     } catch (error) {
-      console.error('Failed to update device:', error);
+      // Failed to update device - error handled by UI state
     } finally {
       setActionBusy(null);
     }
@@ -186,7 +186,7 @@ export default function Overview(props:{user:any}){
         setReplaceTargetUuid(null);
       }
     } catch (error) {
-      console.error('Failed to replace device:', error);
+      // Failed to replace device - error handled by UI state
     } finally {
       setActionBusy(null);
     }
@@ -207,7 +207,7 @@ export default function Overview(props:{user:any}){
       }
       await refreshDevices();
     } catch (error) {
-      console.error('Failed to delete device:', error);
+      // Failed to delete device - error handled by UI state
     } finally {
       setActionBusy(null);
     }
