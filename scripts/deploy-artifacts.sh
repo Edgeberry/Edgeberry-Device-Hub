@@ -175,7 +175,6 @@ INSTALL_ROOT="/opt/Edgeberry/devicehub"
 SYSTEMD_DIR="/etc/systemd/system"
 ETC_DIR="/etc/Edgeberry/devicehub"
 DATA_DIR="/var/lib/edgeberry/devicehub"
-PROV_DB_TARGET="${DATA_DIR}/provisioning.db"
 
 # Allowed top-level directories inside the combined artifact
 ALLOWED_NAMES=(
@@ -227,66 +226,93 @@ extract_artifacts() {
     done
     shopt -u dotglob nullglob
   fi
-  shopt -s nullglob
-  local tar
-  for tar in "$ART_DIR"/devicehub-*.tar.gz; do
-    [[ -e "$tar" ]] || continue
-    log "extract $tar"
-    # Create a temporary staging directory and extract
-    local tmp
-    tmp="$(mktemp -d)"
-    # Configure tar extraction verbosity based on DEBUG
-    if [[ "${DEBUG:-}" == "1" ]]; then
-      # Prefer GNU tar checkpoint dots; fallback to verbose if unsupported
-      if tar --help 2>/dev/null | grep -q -- '--checkpoint'; then
-        tar -C "$tmp" -xzf "$tar" --checkpoint=.500 --checkpoint-action=dot
-        echo ""  # newline after dots
-      else
-        tar -C "$tmp" -xvzf "$tar"
-      fi
-    else
-      tar -C "$tmp" -xzf "$tar"
+  
+  # Check if artifacts are already extracted (direct directory structure)
+  local found_extracted=0
+  for an in "${ALLOWED_NAMES[@]}"; do
+    if [[ -d "$ART_DIR/$an" ]]; then
+      found_extracted=1
+      break
     fi
-    # Install each first-level directory from the archive
-    local d name
-    while IFS= read -r -d '' d; do
-      name="$(basename "$d")"
-      # Only install directories we explicitly allow
-      if [[ -d "$d" ]]; then
-        local allowed=0
-        for an in "${ALLOWED_NAMES[@]}"; do
-          if [[ "$name" == "$an" ]]; then allowed=1; break; fi
-        done
-        if [[ $allowed -eq 1 ]]; then
-          rm -rf "${INSTALL_ROOT}/${name}"
-          mkdir -p "${INSTALL_ROOT}/${name}"
-          rsync -a "$d/" "${INSTALL_ROOT}/${name}/"
-          log "installed to ${INSTALL_ROOT}/${name}"
-        else
-          log "WARN: skipping unexpected top-level entry: $name"
+  done
+  
+  if [[ $found_extracted -eq 1 ]]; then
+    log "using pre-extracted artifacts from $ART_DIR"
+    # Install each allowed directory directly from ART_DIR
+    for an in "${ALLOWED_NAMES[@]}"; do
+      if [[ -d "$ART_DIR/$an" ]]; then
+        rm -rf "${INSTALL_ROOT}/${an}"
+        mkdir -p "${INSTALL_ROOT}/${an}"
+        rsync -a "$ART_DIR/$an/" "${INSTALL_ROOT}/${an}/"
+        # Fix ownership and permissions for extracted files
+        chown -R root:root "${INSTALL_ROOT}/${an}"
+        # Ensure config files are readable
+        if [[ "$an" == "config" ]]; then
+          find "${INSTALL_ROOT}/${an}" -type f -name "*.acl" -exec chmod 644 {} \;
+          find "${INSTALL_ROOT}/${an}" -type f -name "*.conf" -exec chmod 644 {} \;
         fi
+        log "installed to ${INSTALL_ROOT}/${an}"
       fi
-    done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print0)
-    rm -rf "$tmp"
+    done
     # chmod +x scripts/*.sh if present so diagnostics script runs
     if [[ -d "${INSTALL_ROOT}/scripts" ]]; then
       chmod +x "${INSTALL_ROOT}/scripts"/*.sh || true
     fi
-  done
+  else
+    # Original tarball extraction logic
+    shopt -s nullglob
+    local tar
+    for tar in "$ART_DIR"/devicehub-*.tar.gz; do
+      [[ -e "$tar" ]] || continue
+      log "extract $tar"
+      # Create a temporary staging directory and extract
+      local tmp
+      tmp="$(mktemp -d)"
+      # Configure tar extraction verbosity based on DEBUG
+      if [[ "${DEBUG:-}" == "1" ]]; then
+        # Prefer GNU tar checkpoint dots; fallback to verbose if unsupported
+        if tar --help 2>/dev/null | grep -q -- '--checkpoint'; then
+          tar -C "$tmp" -xzf "$tar" --checkpoint=.500 --checkpoint-action=dot
+          echo ""  # newline after dots
+        else
+          tar -C "$tmp" -xvzf "$tar"
+        fi
+      else
+        tar -C "$tmp" -xzf "$tar"
+      fi
+      # Install each first-level directory from the archive
+      local d name
+      while IFS= read -r -d '' d; do
+        name="$(basename "$d")"
+        # Only install directories we explicitly allow
+        if [[ -d "$d" ]]; then
+          local allowed=0
+          for an in "${ALLOWED_NAMES[@]}"; do
+            if [[ "$name" == "$an" ]]; then allowed=1; break; fi
+          done
+          if [[ $allowed -eq 1 ]]; then
+            rm -rf "${INSTALL_ROOT}/${name}"
+            mkdir -p "${INSTALL_ROOT}/${name}"
+            rsync -a "$d/" "${INSTALL_ROOT}/${name}/"
+            log "installed to ${INSTALL_ROOT}/${name}"
+          else
+            log "WARN: skipping unexpected top-level entry: $name"
+          fi
+        fi
+      done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print0)
+      rm -rf "$tmp"
+      # chmod +x scripts/*.sh if present so diagnostics script runs
+      if [[ -d "${INSTALL_ROOT}/scripts" ]]; then
+        chmod +x "${INSTALL_ROOT}/scripts"/*.sh || true
+      fi
+    done
+  fi
 }
 
-ensure_data_dir_and_migrate_db() {
+ensure_data_dir() {
   # Ensure persistent data directory exists with strict permissions
   mkdir -p "$DATA_DIR"
   chmod 0750 "$DATA_DIR" || true
-  # Migrate legacy DB from install tree if present and target not yet created
-  local legacy_db="${INSTALL_ROOT}/provisioning-service/provisioning.db"
-  if [[ -f "$legacy_db" && ! -f "$PROV_DB_TARGET" ]]; then
-    log "migrating legacy provisioning.db to ${PROV_DB_TARGET}"
-    mv -f "$legacy_db" "$PROV_DB_TARGET"
-    chmod 0640 "$PROV_DB_TARGET" || true
-  fi
-  # Do not create or seed a DB here; first service run initializes schema only if absent
 }
 
 install_systemd_units() {
@@ -436,6 +462,7 @@ configure_mosquitto() {
       cat > /etc/mosquitto/mosquitto.conf <<'EOF'
 # Generated by Edgeberry installer (minimal base config)
 persistence true
+EOF
     fi
     mkdir -p /etc/mosquitto/conf.d
     
@@ -453,7 +480,7 @@ persistence true
     [[ -f "$SRC_CERT" ]] || SRC_CERT="$INSTALL_ROOT/config/certs/server.crt"
     [[ -f "$SRC_KEY" ]] || SRC_KEY="$INSTALL_ROOT/config/certs/server.key"
 
-    # Warn if any are still missing
+    # Warn if any certificates are missing
     [[ -f "$SRC_CA" ]] || log "WARN: missing CA file: $SRC_CA"
     [[ -f "$SRC_CERT" ]] || log "WARN: missing server cert: $SRC_CERT"
     [[ -f "$SRC_KEY" ]] || log "WARN: missing server key: $SRC_KEY"
@@ -466,7 +493,6 @@ persistence true
     local ETC_CERT="/etc/mosquitto/certs/server.crt"
     local ETC_KEY="/etc/mosquitto/certs/server.key"
     local ETC_ACL="/etc/mosquitto/acl.d/edgeberry.acl"
-    local ETC_LOCAL_ACL="/etc/mosquitto/acl.d/edgeberry-local.acl"
 
     if [[ -f "$SRC_CA" ]]; then 
         install -m 0640 "$SRC_CA" "$ETC_CA"
@@ -480,7 +506,12 @@ persistence true
         install -m 0640 "$SRC_KEY" "$ETC_KEY"
         log "installed server key: $ETC_KEY"
     fi
-    if [[ -f "$SRC_ACL" ]]; then install -m 0644 "$SRC_ACL" "$ETC_ACL"; fi
+    if [[ -f "$SRC_ACL" ]]; then 
+        install -m 0644 "$SRC_ACL" "$ETC_ACL"
+        log "installed ACL file: $ETC_ACL"
+    else
+        log "ERROR: ACL file not found, cannot install to $ETC_ACL"
+    fi
 
     mkdir -p "$ETC_CA_DIR"
     # Ensure operator-provided CA trust directory exists
@@ -791,7 +822,7 @@ main() {
     restore_persistent_data "$backup_dir"
   fi
   
-  ensure_data_dir_and_migrate_db
+  ensure_data_dir
   setup_persistent_certificates
   install_node_deps
   

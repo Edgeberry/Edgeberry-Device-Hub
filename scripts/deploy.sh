@@ -104,32 +104,29 @@ REMOTE_STAGING="/tmp/edgeberry-deploy-$(date +%s)"
 
 # Create remote staging directory
 log "creating staging directory: $REMOTE_STAGING"
-ssh_run "mkdir -p '$REMOTE_STAGING'/{dist-artifacts,config,scripts}" || error "Failed to create staging directory"
+ssh_run "mkdir -p '$REMOTE_STAGING'" || error "Failed to create staging directory"
 
-# Copy files
+# Copy tarball
 log "copying artifacts..."
 for artifact in "$ART_DIR"/devicehub-*.tar.gz; do
-  scp_copy "$artifact" "$REMOTE_STAGING/dist-artifacts/"
+  scp_copy "$artifact" "$REMOTE_STAGING/"
 done || error "Failed to copy artifacts"
 
-if [[ -d "$ROOT_DIR/config" ]]; then
-  for config_file in "$ROOT_DIR/config/"*; do
-    [[ -f "$config_file" ]] && scp_copy "$config_file" "$REMOTE_STAGING/config/"
-  done
-fi || error "Failed to copy config"
+# Extract tarball and use scripts from within it
+log "extracting tarball and preparing installer..."
+ssh_run "cd '$REMOTE_STAGING' && tar -xzf devicehub-*.tar.gz" || error "Failed to extract tarball"
 
-scp_copy "$ROOT_DIR/scripts/deploy-artifacts.sh" "$REMOTE_STAGING/scripts/" || error "Failed to copy installer"
-
-# Run installer
+# Run installer using script from extracted tarball
 log "running installer..."
-INSTALL_ARGS="'$REMOTE_STAGING/dist-artifacts'"
+INSTALL_ARGS="'$REMOTE_STAGING'"
 [[ $FORCE_CLEAN -eq 1 ]] && INSTALL_ARGS="$INSTALL_ARGS --force-clean"
 
-if [[ $VERBOSE -eq 1 ]]; then
-  ssh_run "sudo DEBUG=1 bash '$REMOTE_STAGING/scripts/deploy-artifacts.sh' $INSTALL_ARGS" || error "Installation failed"
-else
-  ssh_run "sudo bash '$REMOTE_STAGING/scripts/deploy-artifacts.sh' $INSTALL_ARGS" || error "Installation failed"
-fi
+# Build the command with optional DEBUG environment variable
+DEPLOY_CMD="cd '$REMOTE_STAGING' && sudo"
+[[ -n "${DEBUG:-}" ]] && DEPLOY_CMD="$DEPLOY_CMD DEBUG=1"
+DEPLOY_CMD="$DEPLOY_CMD bash scripts/deploy-artifacts.sh $INSTALL_ARGS"
+
+ssh_run "$DEPLOY_CMD" || error "Installation failed"
 
 # Cleanup
 log "cleaning up..."
