@@ -1,0 +1,45 @@
+name: Publish Device Hub Client
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-client:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'examples/edgeberry-device-hub-client/package-lock.json'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: |
+          cd examples/edgeberry-device-hub-client
+          npm ci || npm install
+
+      - name: Build TypeScript
+        run: |
+          cd examples/edgeberry-device-hub-client
+          npm run build
+
+      - name: Update version and publish to npm
+        run: |
+          cd examples/edgeberry-device-hub-client
+          # Update version to match release tag (remove 'v' prefix if present)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          npm version "$VERSION" --no-git-tag-version
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
