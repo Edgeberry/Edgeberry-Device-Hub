@@ -45,11 +45,6 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare release scripts
-        run: |
-          # Copy setup-devicehub.sh as install.sh for the release
-          cp scripts/setup-devicehub.sh scripts/install.sh
-
       - name: Upload Device Hub release artifacts
         uses: softprops/action-gh-release@v2
         with:

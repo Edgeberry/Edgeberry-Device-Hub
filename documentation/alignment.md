@@ -235,7 +235,7 @@ Script path resolution (server-side):
 
 Installer & artifact notes (remote installs):
 - Combined artifact (via `scripts/build-all.sh`) now includes the full `config/` and `scripts/` directories.
-- Installer (`scripts/install.sh`) whitelists `scripts/` in `ALLOWED_NAMES` and installs it to `/opt/Edgeberry/devicehub/scripts/`.
+- Installer (`scripts/deploy-artifacts.sh`) whitelists `scripts/` in `ALLOWED_NAMES` and installs it to `/opt/Edgeberry/devicehub/scripts/`.
 - Installer sets `chmod +x /opt/Edgeberry/devicehub/scripts/*.sh` so diagnostics execute.
 - Mosquitto config and materials are placed for AppArmor compatibility:
   - Broker snippet: `/etc/mosquitto/conf.d/edgeberry.conf` with mTLS listener `8883`, `require_certificate true`, `use_subject_as_username true`.
@@ -431,7 +431,7 @@ Anonymous access (Observer mode):
 #### Release & Installation (MVP)
 - **Release packaging:** Per-microservice build artifacts (tar.gz) attached to GitHub Releases, installed via privileged installer
 - **No Docker:** Docker is not used for release packaging
-- **Host installation:** `scripts/install.sh` installs artifacts under `/opt/Edgeberry/devicehub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services
+- **Host installation:** `scripts/deploy-artifacts.sh` installs artifacts under `/opt/Edgeberry/devicehub/<service>/`, installs `systemd` unit files from `config/`, reloads, enables, and restarts services
 - **Persistent data:** Certificates and database stored in `/var/lib/edgeberry/devicehub/` and preserved between deployments
 - **Clean install:** Use `--force-clean` flag to remove all persistent data for fresh installation
 - **Certificate renewal:** Automatic synchronization via systemd path units monitors persistent certificate changes and updates MQTT broker
@@ -478,7 +478,8 @@ Anonymous access (Observer mode):
   - **Key scripts:**
     - `scripts/dev_start.sh` — Hot-reload dev orchestrator with prefixed logs; starts `core-service` to serve UI locally when configured
     - `scripts/build-all.sh` — Release builds
-    - `scripts/install.sh` — Host installer
+    - `scripts/install.sh` — Main installer (downloads from GitHub releases)
+    - `scripts/deploy-artifacts.sh` — Host artifact deployer
     - `scripts/deploy.sh` — SSH deployment to remote hosts
 
 #### Documentation & Examples
@@ -533,7 +534,7 @@ Interfaces (high level):
 
 - Each subproject runs independently with its own `package.json` and start script. A top-level `dev` script can orchestrate broker, core service, workers, and UI.
  - No Docker for dev; Mosquitto runs locally using `config/mosquitto.conf`.
-   - This file expects certs/ACL under `/etc/mosquitto/...`. Run `scripts/install.sh` once on the dev host to stage them, or manually place files to match the paths.
+   - This file expects certs/ACL under `/etc/mosquitto/...`. Run `scripts/deploy-artifacts.sh` once on the dev host to stage them, or manually place files to match the paths.
 - Env via `.env` files per project; never commit secrets.
 - D-Bus: prefer the user session bus during development (fallback to a private bus if needed); systemd user units can be used to emulate production `systemd` services locally.
  - Dev orchestrator: `scripts/dev_start.sh` starts Mosquitto and all services concurrently with hot-reload (prefers `npm run dev`/`tsx watch`). All process logs are multiplexed in a single terminal with per-service prefixes. Services run with `NODE_ENV=development`.
@@ -656,7 +657,7 @@ CI and releases:
   - `scripts/sync-versions.js` updates all `package.json` files across the monorepo.
   - Root script: `npm run sync-versions`.
   - Applies to: root, `core-service`, `provisioning-service`, `twin-service`, `translator-service`, `ui`, `examples/nodered`, `examples/virtual-device`.
-- Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
+- Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/deploy-artifacts.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
  - The `release_node-clients.yml` workflow automatically publishes both `@edgeberry/devicehub-device-client` and `@edgeberry/devicehub-app-client` npm packages on release, with versions matching the release tag.
 
@@ -686,7 +687,7 @@ bash scripts/deploy.sh -h 192.168.1.116 -u spuq
 3. Builds artifacts locally via `scripts/build-all.sh` (unless `--skip-build`)
 4. Creates remote staging directory
 5. Copies artifacts, config, and installer using rsync (with scp fallback)
-6. Runs `scripts/install.sh` remotely with sudo privileges
+6. Runs `scripts/deploy-artifacts.sh` remotely with sudo privileges
 7. Cleans up staging directory
 
 **Dependencies**: `ssh`, `scp`, `sshpass` (for password auth). Optional: `rsync` for faster transfers.

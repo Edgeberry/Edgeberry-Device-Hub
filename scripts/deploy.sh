@@ -118,7 +118,7 @@ if [[ -d "$ROOT_DIR/config" ]]; then
   done
 fi || error "Failed to copy config"
 
-scp_copy "$ROOT_DIR/scripts/install.sh" "$REMOTE_STAGING/scripts/" || error "Failed to copy installer"
+scp_copy "$ROOT_DIR/scripts/deploy-artifacts.sh" "$REMOTE_STAGING/scripts/" || error "Failed to copy installer"
 
 # Run installer
 log "running installer..."
@@ -126,9 +126,9 @@ INSTALL_ARGS="'$REMOTE_STAGING/dist-artifacts'"
 [[ $FORCE_CLEAN -eq 1 ]] && INSTALL_ARGS="$INSTALL_ARGS --force-clean"
 
 if [[ $VERBOSE -eq 1 ]]; then
-  ssh_run "sudo DEBUG=1 bash '$REMOTE_STAGING/scripts/install.sh' $INSTALL_ARGS" || error "Installation failed"
+  ssh_run "sudo DEBUG=1 bash '$REMOTE_STAGING/scripts/deploy-artifacts.sh' $INSTALL_ARGS" || error "Installation failed"
 else
-  ssh_run "sudo bash '$REMOTE_STAGING/scripts/install.sh' $INSTALL_ARGS" || error "Installation failed"
+  ssh_run "sudo bash '$REMOTE_STAGING/scripts/deploy-artifacts.sh' $INSTALL_ARGS" || error "Installation failed"
 fi
 
 # Cleanup
