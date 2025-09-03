@@ -25,11 +25,7 @@ if [[ ! -f /etc/debian_version ]]; then
     exit 1
 fi
 
-# Check local deploy script exists
-if [ ! -f "$SCRIPT_DIR/deploy-artifacts.sh" ]; then
-    echo "ERROR: Local deploy-artifacts.sh not found at $SCRIPT_DIR/deploy-artifacts.sh"
-    exit 1
-fi
+# No need to check for local deploy script - it will be in the tarball
 
 # Install system packages
 echo "Installing system packages..."
@@ -71,9 +67,17 @@ fi
 echo "Extracting application..."
 tar -xzf devicehub.tar.gz
 
-# Run local deployer
+# The tarball extracts directly to current directory, not into a subdirectory
+# Check if deploy-artifacts.sh exists in the current directory
+DEPLOY_SCRIPT="./scripts/deploy-artifacts.sh"
+if [ ! -f "$DEPLOY_SCRIPT" ]; then
+    echo "ERROR: deploy-artifacts.sh not found in $DEPLOY_SCRIPT"
+    exit 1
+fi
+
+# Run deployer from extracted tarball (current directory is the extracted content)
 echo "Running deployer..."
-bash "$SCRIPT_DIR/deploy-artifacts.sh" devicehub-*
+bash "$DEPLOY_SCRIPT" "$INSTALL_DIR"
 
 # Cleanup
 cd /
