@@ -1,4 +1,4 @@
-import EdgeberryDeviceHubClient from '../index.js';
+import { EdgeberryDeviceHubClient } from '../device-client.js';
 import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';

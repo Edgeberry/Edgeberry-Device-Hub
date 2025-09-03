@@ -20,22 +20,27 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: 'examples/edgeberry-device-hub-client/package-lock.json'
+          cache-dependency-path: 'examples/device-client/package-lock.json'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: |
-          cd examples/edgeberry-device-hub-client
+          cd examples/device-client
+          npm ci || npm install
+
+      - name: Build and publish device-client
+        run: |
+          cd examples/device-client
           npm ci || npm install
 
       - name: Build TypeScript
         run: |
-          cd examples/edgeberry-device-hub-client
+          cd examples/device-client
           npm run build
 
       - name: Update version and publish to npm
         run: |
-          cd examples/edgeberry-device-hub-client
+          cd examples/device-client
           # Update version to match release tag (remove 'v' prefix if present)
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"

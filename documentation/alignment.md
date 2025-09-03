@@ -483,13 +483,21 @@ Anonymous access (Observer mode):
 
 #### Documentation & Examples
 - **`documentation/`** — Extended documentation including this alignment file
-- **`examples/`** — Example integrations and reference nodes
-  - **`examples/nodered/`** — TypeScript-based Node-RED node "edgeberry-device"
-    - Minimal example that sets status to ready, logs "hello world" on input, and passes the message through
-    - **Required settings:** `host` (Device Hub base URL), `uuid` (device UUID), and credential `token` (host access token)
-    - **Build:** `npm install && npm run build` in this folder; outputs to `examples/nodered/dist/`
-    - **Install:** Into Node-RED via `npm link` or `npm pack` from this folder
-    - CI will build and upload this asset for easy install/testing
+- **`examples/`** — Client libraries and integration examples
+  - **`examples/device-client/`** — TypeScript library for device-side MQTT integration
+    - Complete virtual device implementation with provisioning, mTLS certificates, telemetry simulation
+    - Direct method handling for remote device control
+    - Twin property management for device state synchronization
+    - Lifecycle management with graceful shutdown and reconnection logic
+    - **Build:** `npm install && npm run build` in this folder; outputs to `examples/device-client/dist/`
+    - **Examples:** `npm run example:complete-virtual-device` for full virtual device simulation
+  - **`examples/app-client/`** — TypeScript library for application-side integration
+    - REST API client for device management and data retrieval
+    - WebSocket client for real-time device updates and events
+    - Professional Node-RED integration with three nodes (input, output, config)
+    - **Build:** `npm install && npm run build` in this folder; outputs to `examples/app-client/dist/`
+    - **Node-RED Install:** `cd examples && npm install -g .` to install Node-RED nodes globally
+    - CI will build and publish both client libraries to npm for independent use
 
 #### Configuration
 - **`config/`** — System configuration files

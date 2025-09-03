@@ -1,6 +1,84 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
+import { spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
+
+// Utility functions for provisioning
+function connackReasonText(code: number): string {
+  const v5: Record<number, string> = {
+    0: 'Success',
+    128: 'Unspecified error',
+    129: 'Malformed Packet',
+    130: 'Protocol Error',
+    131: 'Implementation specific error',
+    132: 'Unsupported Protocol Version',
+    133: 'Client Identifier not valid',
+    134: 'Bad User Name or Password',
+    135: 'Not authorized',
+    136: 'Server unavailable',
+    137: 'Server busy',
+    138: 'Banned',
+    140: 'Bad authentication method',
+    149: 'Packet too large',
+    151: 'Quota exceeded',
+    153: 'Payload format invalid',
+    156: 'Use another server',
+    157: 'Server moved',
+    159: 'Connection rate exceeded',
+  };
+  const v3: Record<number, string> = {
+    0: 'Connection Accepted',
+    1: 'Unacceptable protocol version',
+    2: 'Identifier rejected',
+    3: 'Server unavailable',
+    4: 'Bad user name or password',
+    5: 'Not authorized',
+  };
+  return v5[code] || v3[code] || `Unknown (${code})`;
+}
+
+function openssl(args: string[], input?: string): { code: number, out: string, err: string } {
+  const res = spawnSync('openssl', args, { input, encoding: 'utf8' });
+  return { code: res.status ?? 1, out: res.stdout || '', err: res.stderr || '' };
+}
+
+function genKeyAndCsr(deviceId: string): { keyPem: string; csrPem: string } {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'edgeberry-device-'));
+  const keyPath = path.join(tmp, `${deviceId}.key`);
+  const csrPath = path.join(tmp, `${deviceId}.csr`);
+  let r = openssl(['genrsa', '-out', keyPath, '2048']);
+  if (r.code !== 0) throw new Error(`openssl genrsa failed: ${r.err || r.out}`);
+  r = openssl(['req', '-new', '-key', keyPath, '-subj', `/CN=${deviceId}`, '-out', csrPath]);
+  if (r.code !== 0) throw new Error(`openssl req -new failed: ${r.err || r.out}`);
+  const keyPem = readFileSync(keyPath, 'utf8');
+  const csrPem = readFileSync(csrPath, 'utf8');
+  return { keyPem, csrPem };
+}
+
+async function fetchProvisioningFile(base: string, filename: 'ca.crt' | 'provisioning.crt' | 'provisioning.key'): Promise<string> {
+  const primary = `${base.replace(/\/$/, '')}/api/provisioning/certs/${filename}`;
+  const fallback = `${base.replace(/\/$/, '')}/provisioning/certs/${filename}`;
+  try {
+    const r = await fetch(primary, { credentials: 'include' as RequestCredentials });
+    if (r.ok) return await r.text();
+    if (r.status === 401) {
+      const r2 = await fetch(fallback);
+      if (r2.ok) return await r2.text();
+      throw new Error(`HTTP ${r2.status} for ${fallback}`);
+    }
+    throw new Error(`HTTP ${r.status} for ${primary}`);
+  } catch (e) {
+    try {
+      const r2 = await fetch(fallback);
+      if (r2.ok) return await r2.text();
+      throw new Error(`HTTP ${r2.status} for ${fallback}`);
+    } catch (e2) {
+      throw e2;
+    }
+  }
+}
 
 /**
  * Connection parameters for Device Hub client
@@ -24,6 +102,10 @@ export interface HubProvisioningParameters {
   certificate: string;              // Provisioning certificate (PEM)
   privateKey: string;               // Provisioning private key (PEM)
   rootCertificate?: string;         // Optional root CA (PEM)
+  apiBaseUrl?: string;              // API base URL for fetching certificates
+  apiHeaders?: Record<string, string>; // Optional API headers
+  deviceToken?: string;             // Optional device token
+  allowSelfSigned?: boolean;        // Allow self-signed certificates
 }
 
 /**
@@ -93,7 +175,7 @@ export class DirectMethodResponse {
  * Client options for EdgeberryDeviceHubClient
  */
 export interface EdgeberryClientOptions {
-  deviceId: string;
+  deviceId?: string;
   host?: string;
   port?: number;
   
@@ -107,11 +189,24 @@ export interface EdgeberryClientOptions {
   certPath?: string;
   keyPath?: string;
   
+  // Provisioning options
+  provisioningUuid?: string;
+  provisioningApiBase?: string;
+  provisioningApiHeaders?: Record<string, string>;
+  provisioningApiCookie?: string;
+  deviceToken?: string;
+  allowSelfSigned?: boolean;
+  
+  // Output paths for generated certificates
+  deviceCertOut?: string;
+  deviceKeyOut?: string;
+  
   // Connection options
   keepalive?: number;
   connectTimeout?: number;
   reconnectPeriod?: number;
   rejectUnauthorized?: boolean;
+  telemetryInterval?: number;
 }
 
 /**
@@ -160,10 +255,14 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
   private client: MqttClient | null = null;
   private connected: boolean = false;
   private deviceId: string;
+  private provisioningUuid?: string;
   private topics: Record<string, string>;
   private reconnectAttempts: number = 0;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private telemetryInterval: NodeJS.Timeout | null = null;
   private directMethods: DirectMethod[] = [];
+  private provisioned: boolean = false;
+  private runtimeClient: MqttClient | null = null;
 
   constructor(options: EdgeberryClientOptions) {
     super();

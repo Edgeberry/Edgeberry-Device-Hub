@@ -1,0 +1,215 @@
+<!-- Device Hub Input Node -->
+<script type="text/javascript">
+    RED.nodes.registerType('devicehub-in', {
+        category: 'Edgeberry',
+        color: '#4CAF50',
+        defaults: {
+            name: { value: "" },
+            hub: { value: "", type: "devicehub-config", required: true },
+            deviceIds: { value: "" },
+            dataTypes: { value: ["telemetry", "events", "status"] },
+            realtime: { value: true }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "bridge.png",
+        label: function() {
+            return this.name || "Device Hub In";
+        },
+        labelStyle: function() {
+            return this.name ? "node_label_italic" : "";
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="devicehub-in">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-hub"><i class="fa fa-server"></i> Device Hub</label>
+        <input type="text" id="node-input-hub">
+    </div>
+    <div class="form-row">
+        <label for="node-input-deviceIds"><i class="fa fa-microchip"></i> Device IDs</label>
+        <input type="text" id="node-input-deviceIds" placeholder="device1,device2 (leave empty for all devices)">
+    </div>
+    <div class="form-row">
+        <label for="node-input-dataTypes"><i class="fa fa-list"></i> Data Types</label>
+        <select id="node-input-dataTypes" multiple style="width: 70%; height: 100px;">
+            <option value="telemetry">Telemetry</option>
+            <option value="events">Events</option>
+            <option value="status">Device Status</option>
+            <option value="twin">Twin Updates</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <input type="checkbox" id="node-input-realtime" style="display: inline-block; width: auto; vertical-align: top;">
+        <label for="node-input-realtime" style="width: 70%;"> Enable real-time updates (WebSocket)</label>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="devicehub-in">
+    <p>Receives data from Edgeberry Device Hub devices.</p>
+    
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>The device data (telemetry, events, status, or twin updates)</dd>
+        <dt>topic <span class="property-type">string</span></dt>
+        <dd>The message topic in format: dataType/deviceId or dataType/deviceId/eventType</dd>
+        <dt>deviceId <span class="property-type">string</span></dt>
+        <dd>The ID of the device that sent the data</dd>
+        <dt>dataType <span class="property-type">string</span></dt>
+        <dd>The type of data: telemetry, event, status, or twin</dd>
+    </dl>
+
+    <h3>Inputs</h3>
+    <p>Send messages to poll for historical data:</p>
+    <dl class="message-properties">
+        <dt>action <span class="property-type">string</span></dt>
+        <dd>Action to perform: getDevices, getTelemetry, getDeviceEvents, getDeviceTwin, getStats</dd>
+        <dt>deviceId <span class="property-type">string</span></dt>
+        <dd>Device ID (required for device-specific actions)</dd>
+        <dt>query <span class="property-type">object</span></dt>
+        <dd>Query parameters for filtering data</dd>
+    </dl>
+
+    <h3>Configuration</h3>
+    <p><b>Device Hub:</b> Select the Device Hub configuration node.</p>
+    <p><b>Device IDs:</b> Comma-separated list of device IDs to monitor. Leave empty to monitor all devices.</p>
+    <p><b>Data Types:</b> Select which types of data to receive in real-time.</p>
+    <p><b>Real-time updates:</b> Enable WebSocket connection for live data streaming.</p>
+</script>
+
+<!-- Device Hub Output Node -->
+<script type="text/javascript">
+    RED.nodes.registerType('devicehub-out', {
+        category: 'Edgeberry',
+        color: '#FF9800',
+        defaults: {
+            name: { value: "" },
+            hub: { value: "", type: "devicehub-config", required: true }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "bridge.png",
+        label: function() {
+            return this.name || "Device Hub Out";
+        },
+        labelStyle: function() {
+            return this.name ? "node_label_italic" : "";
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="devicehub-out">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-hub"><i class="fa fa-server"></i> Device Hub</label>
+        <input type="text" id="node-input-hub">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="devicehub-out">
+    <p>Sends commands and updates to Edgeberry Device Hub devices.</p>
+    
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>action <span class="property-type">string</span></dt>
+        <dd>Action to perform: callDirectMethod, updateDeviceTwin</dd>
+        <dt>deviceId <span class="property-type">string</span></dt>
+        <dd>Target device ID</dd>
+        <dt>methodName <span class="property-type">string</span></dt>
+        <dd>Direct method name (for callDirectMethod)</dd>
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>Method payload or data to send</dd>
+        <dt>desired <span class="property-type">object</span></dt>
+        <dd>Desired twin properties (for updateDeviceTwin)</dd>
+        <dt>timeout <span class="property-type">number</span></dt>
+        <dd>Method call timeout in milliseconds (optional)</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>Response from the device or confirmation of the action</dd>
+        <dt>topic <span class="property-type">string</span></dt>
+        <dd>Response topic indicating the result</dd>
+        <dt>deviceId <span class="property-type">string</span></dt>
+        <dd>The target device ID</dd>
+    </dl>
+
+    <h3>Examples</h3>
+    <p><b>Call Direct Method:</b></p>
+    <pre>{
+  "action": "callDirectMethod",
+  "deviceId": "device001",
+  "methodName": "identify",
+  "payload": { "duration": 5 }
+}</pre>
+
+    <p><b>Update Device Twin:</b></p>
+    <pre>{
+  "action": "updateDeviceTwin",
+  "deviceId": "device001",
+  "desired": { "telemetryInterval": 10000 }
+}</pre>
+</script>
+
+<!-- Device Hub Configuration Node -->
+<script type="text/javascript">
+    RED.nodes.registerType('devicehub-config', {
+        category: 'config',
+        defaults: {
+            name: { value: "" },
+            baseUrl: { value: "https://127.0.0.1:8080", required: true }
+        },
+        credentials: {
+            username: { type: "text" },
+            password: { type: "password" },
+            apiKey: { type: "password" }
+        },
+        label: function() {
+            return this.name || "Device Hub Config";
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="devicehub-config">
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-config-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-baseUrl"><i class="fa fa-server"></i> Base URL</label>
+        <input type="text" id="node-config-input-baseUrl" placeholder="https://devicehub.local:8080">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-username"><i class="fa fa-user"></i> Username</label>
+        <input type="text" id="node-config-input-username">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-password"><i class="fa fa-lock"></i> Password</label>
+        <input type="password" id="node-config-input-password">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-apiKey"><i class="fa fa-key"></i> API Key</label>
+        <input type="password" id="node-config-input-apiKey" placeholder="Alternative to username/password">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="devicehub-config">
+    <p>Configuration for connecting to an Edgeberry Device Hub instance.</p>
+    
+    <h3>Settings</h3>
+    <p><b>Base URL:</b> The Device Hub API endpoint (e.g., https://devicehub.local:8080)</p>
+    <p><b>Authentication:</b> Use either username/password or API key for authentication.</p>
+    
+    <h3>Security</h3>
+    <p>Credentials are stored securely by Node-RED and are not visible in exported flows.</p>
+</script>

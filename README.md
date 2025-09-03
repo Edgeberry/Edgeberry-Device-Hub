@@ -149,6 +149,43 @@ The deployment process:
 - Database stored in `/var/lib/edgeberry/devicehub/devicehub.db`
 - Preserved between deployments unless `--force-clean` is used
 
+## Client Examples
+
+The Device Hub includes comprehensive client libraries and examples for both device-side and application-side integration:
+
+### Device Client (`examples/device-client/`)
+TypeScript library for device-side MQTT integration with the Device Hub:
+- **Complete virtual device implementation** with provisioning, mTLS certificates, telemetry simulation
+- **Direct method handling** for remote device control
+- **Twin property management** for device state synchronization
+- **Lifecycle management** with graceful shutdown and reconnection logic
+
+```bash
+cd examples/device-client
+npm install
+npm run example:complete-virtual-device
+```
+
+### App Client (`examples/app-client/`)
+TypeScript library for application-side integration via REST API and WebSocket:
+- **REST API client** for device management and data retrieval
+- **WebSocket client** for real-time device updates and events
+- **Node-RED integration** with professional nodes for visual programming:
+  - Input node for real-time device data streaming
+  - Output node for device control (direct methods, twin updates)
+  - Config node for authentication and connection management
+
+```bash
+cd examples/app-client
+npm install
+npm run build
+
+# Install Node-RED nodes globally
+cd examples && npm install -g .
+```
+
+Both client libraries are published to npm and can be used independently in your projects.
+
 ## License & Collaboration
 **Copyright 2025 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
 
