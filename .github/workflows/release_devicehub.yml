@@ -25,15 +25,21 @@ jobs:
         run: |
           npm run build
 
-      - name: Rename Device Hub release tarball
+      - name: Ensure Device Hub release tarball naming
         run: |
           # Find the existing tarball created by build-all script
           EXISTING_TARBALL=$(find dist-artifacts -name "devicehub-*.tar.gz" | head -1)
+          TARGET_NAME="devicehub-${{ github.ref_name }}.tar.gz"
+          TARGET_PATH="dist-artifacts/${TARGET_NAME}"
+          
           if [ -n "$EXISTING_TARBALL" ]; then
-            # Rename to match release tag
-            TARGET_NAME="devicehub-${{ github.ref_name }}.tar.gz"
-            mv "$EXISTING_TARBALL" "dist-artifacts/${TARGET_NAME}"
-            echo "Renamed tarball to: ${TARGET_NAME}"
+            # Only rename if the names are different
+            if [ "$EXISTING_TARBALL" != "$TARGET_PATH" ]; then
+              mv "$EXISTING_TARBALL" "$TARGET_PATH"
+              echo "Renamed tarball from $(basename "$EXISTING_TARBALL") to: ${TARGET_NAME}"
+            else
+              echo "Tarball already has correct name: ${TARGET_NAME}"
+            fi
           else
             echo "Error: No existing tarball found in dist-artifacts/"
             exit 1
