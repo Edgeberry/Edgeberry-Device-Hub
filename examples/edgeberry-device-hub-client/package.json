@@ -1,0 +1,55 @@
+{
+  "name": "edgeberry-device-hub-client",
+  "version": "1.0.0",
+  "description": "TypeScript Node.js client for Edgeberry Device Hub",
+  "main": "dist/edgeberry-device-hub-client.js",
+  "types": "dist/edgeberry-device-hub-client.d.ts",
+  "type": "module",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Edgeberry/Edgeberry-Device-Hub.git",
+    "directory": "examples/edgeberry-device-hub-client"
+  },
+  "homepage": "https://github.com/Edgeberry/Edgeberry-Device-Hub/tree/main/examples/edgeberry-device-hub-client",
+  "bugs": {
+    "url": "https://github.com/Edgeberry/Edgeberry-Device-Hub/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx edgeberry-device-hub-client.ts",
+    "start": "node dist/edgeberry-device-hub-client.js",
+    "example:basic": "tsx examples/basic-usage.js",
+    "example:telemetry": "tsx examples/telemetry-sender.js",
+    "example:direct-methods": "tsx examples/direct-methods.js",
+    "example:virtual-device": "tsx examples/virtual-device.js"
+  },
+  "keywords": [
+    "edgeberry",
+    "device-hub",
+    "mqtt",
+    "iot",
+    "client"
+  ],
+  "author": "Edgeberry Team",
+  "license": "GPL-3.0-or-later",
+  "dependencies": {
+    "mqtt": "^5.3.4",
+    "ws": "^8.18.3",
+    "node-forge": "^1.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.4.5",
+    "tsx": "^4.7.0"
+  }
+}
