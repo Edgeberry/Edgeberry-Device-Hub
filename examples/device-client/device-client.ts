@@ -175,7 +175,7 @@ export class DirectMethodResponse {
  * Client options for EdgeberryDeviceHubClient
  */
 export interface EdgeberryClientOptions {
-  deviceId?: string;
+  deviceId: string;
   host?: string;
   port?: number;
   

@@ -403,11 +403,11 @@ if [ "$FORCE_CLEAN" = true ]; then
 fi
 
 # Run the installer
-if bash install.sh "${install_args[@]}" > /dev/null 2>&1; then
+if bash install.sh "${install_args[@]}"; then
     mark_step_completed 13
 else
     mark_step_failed 13
-    echo -e "\e[0;33mInstallation failed! Exit.\e[0m";
+    echo -e "\e[0;33mInstallation failed! Check the output above for details.\e[0m";
     exit 1;
 fi
 

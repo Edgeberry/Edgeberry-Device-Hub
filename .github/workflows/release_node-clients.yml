@@ -1,19 +1,19 @@
-name: Publish Device Hub Client
+name: Publish Device Hub Node.js Clients
 
-# Disabled for now
-# on:
-#   release:
-#     types: [published]
-
-on: []
+on:
+  release:
+    types: [published]
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  publish-client:
+  publish-clients:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        client: [device-client, app-client]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,27 +23,22 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: 'examples/device-client/package-lock.json'
+          cache-dependency-path: 'examples/${{ matrix.client }}/package-lock.json'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
+      - name: Install dependencies for ${{ matrix.client }}
         run: |
-          cd examples/device-client
+          cd examples/${{ matrix.client }}
           npm ci || npm install
 
-      - name: Build and publish device-client
+      - name: Build TypeScript for ${{ matrix.client }}
         run: |
-          cd examples/device-client
-          npm ci || npm install
-
-      - name: Build TypeScript
-        run: |
-          cd examples/device-client
+          cd examples/${{ matrix.client }}
           npm run build
 
-      - name: Update version and publish to npm
+      - name: Update version and publish ${{ matrix.client }} to npm
         run: |
-          cd examples/device-client
+          cd examples/${{ matrix.client }}
           # Update version to match release tag (remove 'v' prefix if present)
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"

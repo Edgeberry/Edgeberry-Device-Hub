@@ -1,7 +1,9 @@
 {
-  "name": "edgeberry-device-hub-device-client",
-  "version": "1.0.0",
-  "description": "TypeScript Node.js client for Edgeberry Device Hub",
+  "name": "@edgeberry/devicehub-device-client",
+  "version": "0.1.0",
+  "author": "Sanne 'SpuQ' Santens",
+  "license": "GPL-3.0-or-later",
+  "description": "TypeScript Node.js Device client for Edgeberry Device Hub",
   "main": "dist/device-client.js",
   "types": "dist/device-client.d.ts",
   "type": "module",
@@ -38,8 +40,6 @@
     "iot",
     "client"
   ],
-  "author": "Edgeberry Team",
-  "license": "GPL-3.0-or-later",
   "dependencies": {
     "mqtt": "^5.3.4",
     "ws": "^8.18.3",
