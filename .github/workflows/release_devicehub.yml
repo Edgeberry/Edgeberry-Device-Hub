@@ -23,7 +23,7 @@ jobs:
 
       - name: Build all services
         run: |
-          bash scripts/build-all.sh
+          npm run build
 
       - name: Rename Device Hub release tarball
         run: |
@@ -39,10 +39,16 @@ jobs:
             exit 1
           fi
 
-      - name: Upload Device Hub release artifact
+      - name: Prepare release scripts
+        run: |
+          # Copy setup-devicehub.sh as install.sh for the release
+          cp scripts/setup-devicehub.sh scripts/install.sh
+
+      - name: Upload Device Hub release artifacts
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist-artifacts/devicehub-${{ github.ref_name }}.tar.gz
+            scripts/install.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

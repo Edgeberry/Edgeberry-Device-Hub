@@ -1,8 +1,11 @@
 name: Publish Device Hub Client
 
-on:
-  release:
-    types: [published]
+# Disabled for now
+# on:
+#   release:
+#     types: [published]
+
+on: []
 
 permissions:
   contents: read

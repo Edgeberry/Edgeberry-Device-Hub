@@ -1,8 +1,11 @@
 name: Release Artifacts
 
-on:
-  release:
-    types: [published]
+# Disabled for now
+# on:
+#   release:
+#     types: [published]
+
+on: []
 
 permissions:
   contents: write

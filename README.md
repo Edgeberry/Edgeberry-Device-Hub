@@ -10,6 +10,14 @@
 
 <br clear="right"/>
 
+## Installation
+Turn your `Debian` system into an **Edgeberry Device Hub**:
+```bash
+wget -O install.sh https://github.com/Edgeberry/Edgeberry-Device-Hub/releases/latest/download/install.sh;
+chmod +x ./install.sh;
+sudo ./install.sh -y;
+```
+
 ## Services
 Microservice architecture seperates the responsibilities. Each service is a separate process that communicates with the others via D-Bus.
 
