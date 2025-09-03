@@ -76,8 +76,9 @@ if [ ! -f "$DEPLOY_SCRIPT" ]; then
 fi
 
 # Run deployer from extracted tarball (current directory is the extracted content)
+# The tarball contains artifacts directly, so pass current directory as artifacts dir
 echo "Running deployer..."
-bash "$DEPLOY_SCRIPT" "$INSTALL_DIR"
+bash "$DEPLOY_SCRIPT" "."
 
 # Cleanup
 cd /
