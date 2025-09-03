@@ -14,6 +14,12 @@ A comprehensive Node.js client library for connecting to and interacting with th
 ## Installation
 
 ```bash
+npm install @edgeberry/devicehub-device-client
+```
+
+Or for development:
+
+```bash
 npm install
 ```
 
@@ -22,7 +28,7 @@ npm install
 ### Basic Usage
 
 ```javascript
-import EdgeberryDeviceHubClient from './index.js';
+import EdgeberryDeviceHubClient from '@edgeberry/devicehub-device-client';
 
 const client = new EdgeberryDeviceHubClient({
   deviceId: 'my-device-001',

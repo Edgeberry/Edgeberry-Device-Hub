@@ -658,6 +658,7 @@ CI and releases:
   - Applies to: root, `core-service`, `provisioning-service`, `twin-service`, `translator-service`, `ui`, `examples/nodered`, `examples/virtual-device`.
 - Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/install.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
+ - The `release_node-clients.yml` workflow automatically publishes both `@edgeberry/devicehub-device-client` and `@edgeberry/devicehub-app-client` npm packages on release, with versions matching the release tag.
 
 ### Deployment Process (SSH)
 
