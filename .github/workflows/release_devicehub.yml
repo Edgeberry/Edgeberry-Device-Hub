@@ -1,0 +1,48 @@
+name: Release Device Hub
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-devicehub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Build all services
+        run: |
+          bash scripts/build-all.sh
+
+      - name: Rename Device Hub release tarball
+        run: |
+          # Find the existing tarball created by build-all script
+          EXISTING_TARBALL=$(find dist-artifacts -name "devicehub-*.tar.gz" | head -1)
+          if [ -n "$EXISTING_TARBALL" ]; then
+            # Rename to match release tag
+            TARGET_NAME="devicehub-${{ github.ref_name }}.tar.gz"
+            mv "$EXISTING_TARBALL" "dist-artifacts/${TARGET_NAME}"
+            echo "Renamed tarball to: ${TARGET_NAME}"
+          else
+            echo "Error: No existing tarball found in dist-artifacts/"
+            exit 1
+          fi
+
+      - name: Upload Device Hub release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-artifacts/devicehub-${{ github.ref_name }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
