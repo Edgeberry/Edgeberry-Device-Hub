@@ -39,6 +39,20 @@ export async function generateRootCA(params?: { cn?: string; days?: number; keyB
   const subj = `/CN=${cn}`;
   const crtRes = await runCmd('openssl', ['req', '-x509', '-new', '-nodes', '-key', CA_KEY, '-sha256', '-days', days, '-subj', subj, '-out', CA_CRT]);
   if (crtRes.code !== 0) throw new Error(`openssl req -x509 failed: ${crtRes.err || crtRes.out}`);
+  
+  // Set proper permissions for Mosquitto to read certificates
+  try {
+    fs.chmodSync(CA_KEY, 0o640); // rw-r-----
+    fs.chmodSync(CA_CRT, 0o640); // rw-r-----
+    // Try to set group ownership to mosquitto if running as root
+    try {
+      await runCmd('chgrp', ['mosquitto', CA_KEY, CA_CRT]);
+    } catch {
+      // Ignore chgrp errors (may not be running as root or mosquitto group may not exist)
+    }
+  } catch (e) {
+    console.warn('[certs] Warning: Could not set certificate permissions:', (e as Error).message);
+  }
 }
 
 export async function readCertMeta(pemPath: string): Promise<{ fingerprintSha256?: string; notAfter?: string; subject?: string }>{
@@ -81,6 +95,21 @@ export async function issueProvisioningCert(name: string, days?: number): Promis
   if (r.code !== 0) throw new Error(`openssl x509 -req failed: ${r.err || r.out}`);
   try { fs.unlinkSync(csrPath); } catch {}
   try { fs.unlinkSync(extPath); } catch {}
+  
+  // Set proper permissions for Mosquitto to read certificates
+  try {
+    fs.chmodSync(keyPath, 0o640); // rw-r-----
+    fs.chmodSync(crtPath, 0o640); // rw-r-----
+    // Try to set group ownership to mosquitto if running as root
+    try {
+      await runCmd('chgrp', ['mosquitto', keyPath, crtPath]);
+    } catch {
+      // Ignore chgrp errors (may not be running as root or mosquitto group may not exist)
+    }
+  } catch (e) {
+    console.warn('[certs] Warning: Could not set certificate permissions:', (e as Error).message);
+  }
+  
   return { certPath: crtPath, keyPath };
 }
 
@@ -189,6 +218,20 @@ export async function generateProvisioningCert(): Promise<void> {
     // Copy to final locations
     fs.copyFileSync(crtPath, provisioningCertPath);
     fs.copyFileSync(keyPath, provisioningKeyPath);
+    
+    // Set proper permissions for Mosquitto to read certificates
+    try {
+      fs.chmodSync(provisioningKeyPath, 0o640); // rw-r-----
+      fs.chmodSync(provisioningCertPath, 0o640); // rw-r-----
+      // Try to set group ownership to mosquitto if running as root
+      try {
+        await runCmd('chgrp', ['mosquitto', provisioningKeyPath, provisioningCertPath]);
+      } catch {
+        // Ignore chgrp errors (may not be running as root or mosquitto group may not exist)
+      }
+    } catch (e) {
+      console.warn('[certs] Warning: Could not set certificate permissions:', (e as Error).message);
+    }
     
     console.log('[certs] Generated provisioning certificate');
   } finally {
