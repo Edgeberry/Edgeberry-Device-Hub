@@ -255,7 +255,7 @@ export default function Overview(props:{user:any}){
               <input
                 type="text"
                 className="form-control form-control-sm"
-                placeholder="Search devices by name, UUID, or group..."
+                placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{ width: '300px' }}
@@ -281,11 +281,11 @@ export default function Overview(props:{user:any}){
 
           {/* Device Display */}
           {viewMode === 'list' ? (
-            <Table size="sm" responsive hover>
+            <Table size="sm" responsive className="device-list-table">
               <thead>
                 <tr>
-                  {props.user ? (<th>UUID</th>) : null}
                   <th>Name</th>
+                  {props.user ? (<th>UUID</th>) : null}
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -301,9 +301,8 @@ export default function Overview(props:{user:any}){
                   const isBusy = actionBusy === uuid;
 
                   return (
-                    <tr key={uuid} className={`${status === 'online' ? 'table-success' : status === 'offline' ? 'table-secondary' : ''}`}>
-                      {props.user ? (<td style={{fontFamily:'monospace', fontSize:'0.85em'}}>{uuid || '-'}</td>) : null}
-                      <td>
+                    <tr key={uuid} className="device-row" onClick={open} style={{cursor: 'pointer'}}>
+                      <td onClick={(e) => e.stopPropagation()}>
                         {isEditing ? (
                           <div className="d-flex gap-1">
                             <input
@@ -325,24 +324,25 @@ export default function Overview(props:{user:any}){
                             </button>
                           </div>
                         ) : (
-                          <Link to={`/devices/${encodeURIComponent(uuid)}`} className="text-decoration-none">{displayName}</Link>
+                          <span>{displayName}</span>
                         )}
                       </td>
+                      {props.user ? (<td>{uuid || '-'}</td>) : null}
                       <td>
                         <Badge bg={status === 'online' ? 'success' : 'secondary'}>
                           {status || 'unknown'}
                         </Badge>
                       </td>
-                      <td>
+                      <td onClick={(e) => e.stopPropagation()}>
                         <div className="btn-group" role="group">
-                          <button type="button" className="btn btn-sm btn-outline-primary" onClick={open} disabled={isBusy}>
+                          <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
                             <FontAwesomeIcon icon={faEye} />
                           </button>
                           {props.user ? (
                             <>
                               <button 
                                 type="button" 
-                                className="btn btn-sm btn-outline-success" 
+                                className="btn btn-sm btn-edgeberry" 
                                 onClick={() => handleIdentifyDevice(uuid, displayName)}
                                 disabled={isBusy}
                                 title="Identify Device"
@@ -351,7 +351,7 @@ export default function Overview(props:{user:any}){
                               </button>
                               <button 
                                 type="button" 
-                                className="btn btn-sm btn-outline-secondary" 
+                                className="btn btn-sm btn-edgeberry" 
                                 onClick={() => handleEditDevice(uuid, displayName)}
                                 disabled={isBusy || isEditing}
                               >
@@ -359,7 +359,7 @@ export default function Overview(props:{user:any}){
                               </button>
                               <button 
                                 type="button" 
-                                className="btn btn-sm btn-outline-warning" 
+                                className="btn btn-sm btn-edgeberry" 
                                 onClick={() => handleDeleteDevice(uuid, displayName)}
                                 disabled={isBusy}
                               >
@@ -367,7 +367,7 @@ export default function Overview(props:{user:any}){
                               </button>
                               <button 
                                 type="button" 
-                                className="btn btn-sm btn-outline-info" 
+                                className="btn btn-sm btn-edgeberry" 
                                 onClick={() => handleReplaceDevice(uuid)}
                                 disabled={isBusy}
                               >
@@ -403,14 +403,14 @@ export default function Overview(props:{user:any}){
                             {status || 'unknown'}
                           </Badge>
                           <div className="btn-group" role="group">
-                            <button type="button" className="btn btn-sm btn-outline-primary" onClick={open} disabled={isBusy}>
+                            <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
                               <FontAwesomeIcon icon={faEye} />
                             </button>
                             {props.user ? (
                               <>
                                 <button 
                                   type="button" 
-                                  className="btn btn-sm btn-outline-success" 
+                                  className="btn btn-sm btn-edgeberry" 
                                   onClick={() => handleIdentifyDevice(uuid, displayName)}
                                   disabled={isBusy}
                                   title="Identify Device"
@@ -419,7 +419,7 @@ export default function Overview(props:{user:any}){
                                 </button>
                                 <button 
                                   type="button" 
-                                  className="btn btn-sm btn-outline-secondary" 
+                                  className="btn btn-sm btn-edgeberry" 
                                   onClick={() => handleEditDevice(uuid, displayName)}
                                   disabled={isBusy || isEditing}
                                 >
@@ -427,7 +427,7 @@ export default function Overview(props:{user:any}){
                                 </button>
                                 <button 
                                   type="button" 
-                                  className="btn btn-sm btn-outline-warning" 
+                                  className="btn btn-sm btn-edgeberry" 
                                   onClick={() => handleDeleteDevice(uuid, displayName)}
                                   disabled={isBusy}
                                 >
@@ -435,7 +435,7 @@ export default function Overview(props:{user:any}){
                                 </button>
                                 <button 
                                   type="button" 
-                                  className="btn btn-sm btn-outline-info" 
+                                  className="btn btn-sm btn-edgeberry" 
                                   onClick={() => handleReplaceDevice(uuid)}
                                   disabled={isBusy}
                                 >
@@ -467,11 +467,11 @@ export default function Overview(props:{user:any}){
                               </button>
                             </div>
                           ) : (
-                            <Link to={`/devices/${encodeURIComponent(uuid)}`} className="text-decoration-none">{displayName}</Link>
+                            <span>{displayName}</span>
                           )}
                         </Card.Title>
                         {props.user && (
-                          <Card.Text className="small text-muted" style={{fontFamily:'monospace', fontSize:'0.75em'}}>
+                          <Card.Text className="small text-muted">
                             {uuid}
                           </Card.Text>
                         )}

@@ -22,6 +22,7 @@
 
 .badge.bg-success {
   background-color: var(--bs-success) !important;
+  color: white !important;
 }
 
 .text-bg-success {
@@ -63,4 +64,32 @@ body {
   background-size: 15vw;
   background-repeat: no-repeat;
   background-position: bottom right;
+}
+
+/* Device list styling */
+.device-row {
+  background-color: transparent !important;
+  transition: background-color 0.2s ease;
+}
+
+.device-row:hover {
+  background-color: rgba(0, 7, 255, 0.08) !important;
+}
+
+/* Edgeberry blue button styling */
+.btn-edgeberry {
+  --bs-btn-color: #0007FF;
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: #0007FF;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #0007FF;
+  --bs-btn-hover-border-color: #0007FF;
+  --bs-btn-focus-shadow-rgb: 0, 7, 255;
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: #0006e6;
+  --bs-btn-active-border-color: #0006e6;
+  --bs-btn-active-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.125);
+  --bs-btn-disabled-color: #0007FF;
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: #0007FF;
 }

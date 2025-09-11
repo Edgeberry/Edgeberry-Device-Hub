@@ -22,7 +22,7 @@ sudo ./install.sh -y;
 
 **Web Dashboard**: A modern, responsive interface to manage your entire device fleet from any browser. Monitor device status, view telemetry data, and control devices remotely.
 
-**Secure Device Onboarding**: Automatically provision new devices with certificates and secure connections. Simply add device UUIDs to the whitelist and devices connect automatically.
+**Secure Device Onboarding**: Automatically provision new devices with certificates and secure connections. Simply add device UUIDs to the whitelist and devices connect automatically. Certificate permissions are automatically managed for optimal security.
 
 **Real-time Monitoring**: See device status, telemetry data, and system health in real-time. Get instant notifications when devices go online or offline.
 

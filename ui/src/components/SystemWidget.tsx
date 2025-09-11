@@ -240,9 +240,34 @@ export default function SystemWidget(props: { user: any | null }) {
         setLogsLoading(true);
         const res: any = await getServiceLogs(selectedService.unit, 200);
         
-        // Process logs similar to original ServiceStatusWidget
+        // Process logs from journalctl JSON format to readable Linux-style logs
         let txt = '';
-        if(typeof res === 'string'){
+        if(res && res.entries && Array.isArray(res.entries)){
+          const lines = res.entries.map((entry: any) => {
+            // Extract timestamp
+            const timestamp = entry.__REALTIME_TIMESTAMP || entry._SOURCE_REALTIME_TIMESTAMP || '';
+            let timeStr = '';
+            if(timestamp){
+              try{
+                // __REALTIME_TIMESTAMP is in microseconds, convert to milliseconds
+                const date = new Date(parseInt(timestamp) / 1000);
+                timeStr = date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
+              }catch{
+                timeStr = timestamp;
+              }
+            }
+            
+            // Extract unit/identifier
+            const unit = entry.SYSLOG_IDENTIFIER || entry._SYSTEMD_UNIT || entry._COMM || 'unknown';
+            
+            // Extract message
+            const message = entry.MESSAGE || JSON.stringify(entry);
+            
+            // Format as Linux-style log: timestamp [unit] message
+            return timeStr ? `${timeStr} [${unit}] ${message}` : `[${unit}] ${message}`;
+          });
+          txt = lines.join('\n');
+        } else if(typeof res === 'string'){
           const lines = String(res).split(/\r?\n/);
           txt = lines.join('\n');
         } else if(Array.isArray(res)){
@@ -406,12 +431,12 @@ export default function SystemWidget(props: { user: any | null }) {
     if (!values || values.length < 2) return <div style={{ height: '100%' }} />;
     return (
       <svg style={{ width: '100%', height: '100%' }} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <path d={path} fill="none" stroke={color} strokeWidth={1.5} />
+        <path d={path} fill="none" stroke={color} strokeWidth={1} />
       </svg>
     );
   }
 
-  function OverlaySparkline({ a, b, colorA = '#28a745', colorB = '#dc3545' }:{ a: number[]; b: number[]; colorA?: string; colorB?: string }){
+  function OverlaySparkline({ a, b, colorA = '#0007FF', colorB = '#0007FF' }:{ a: number[]; b: number[]; colorA?: string; colorB?: string }){
     const width = 100; const height = 60;
     const mkPath = (values: number[], min: number, max: number) => {
       if(!values || values.length === 0) return '';
@@ -432,8 +457,8 @@ export default function SystemWidget(props: { user: any | null }) {
     const pB = useMemo(()=>mkPath(b, min, max), [b, min, max]);
     return (
       <svg style={{width:'100%', height:'100%'}} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        {pA && <path d={pA} fill="none" stroke={colorA} strokeWidth={1.5} />}
-        {pB && <path d={pB} fill="none" stroke={colorB} strokeWidth={1.5} />}
+        {pA && <path d={pA} fill="none" stroke={colorA} strokeWidth={1} />}
+        {pB && <path d={pB} fill="none" stroke={colorB} strokeWidth={1} />}
       </svg>
     );
   }
@@ -469,7 +494,7 @@ export default function SystemWidget(props: { user: any | null }) {
             <Badge bg={percentColor(metrics.cpu?.approxUsagePercent)}>{metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}</Badge>
           </div>
           <div style={{width:'100%', height:60}}>
-            <OverlaySparkline a={series.cpu} />
+            <OverlaySparkline a={series.cpu} b={[]} />
           </div>
         </div>
       ),

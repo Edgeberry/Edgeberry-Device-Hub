@@ -1735,10 +1735,22 @@ app.get('/api/logs', (req: Request, res: Response) => {
   } else if (typeof req.query.unit === 'string' && req.query.unit) {
     units = [String(req.query.unit).trim()];
   }
+  
+  // Validate units for security
+  if (units) {
+    units = units.filter(unit => isSafeUnit(unit));
+    if (units.length === 0) {
+      res.status(400).json({ error: 'No valid units specified' });
+      return;
+    }
+  }
+  
   const lines = req.query.lines ? Number(req.query.lines) : 200;
   const since = typeof req.query.since === 'string' ? req.query.since : undefined;
 
+  console.log(`[LOGS] Requesting logs for units: ${units ? units.join(', ') : 'default'}, lines: ${lines}`);
   const args = buildJournalctlArgs({ units, lines, since, output: 'json' });
+  console.log(`[LOGS] journalctl args: ${args.join(' ')}`);
   const proc = spawn('journalctl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   const out: string[] = [];

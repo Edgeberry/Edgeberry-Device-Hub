@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-09-02 09:15 CEST
+**Last updated:** 2025-09-04 12:05 CEST
 
 ## Documentation Strategy
 
@@ -241,6 +241,7 @@ Installer & artifact notes (remote installs):
   - Broker snippet: `/etc/mosquitto/conf.d/edgeberry.conf` with mTLS listener `8883`, `require_certificate true`, `use_subject_as_username true`.
   - Server certs: `/etc/mosquitto/certs/{server.crt,server.key}`.
   - ACL: `/etc/mosquitto/acl.d/edgeberry.acl`.
+  - **Certificate Permissions**: All certificate files are automatically set with `0640` permissions (`rw-r-----`) and `root:mosquitto` ownership to ensure Mosquitto can read them while maintaining security.
   - TLS trust model: broker uses OpenSSL `capath` for dynamic CA trust at `/etc/mosquitto/certs/edgeberry-ca.d`.
     - Any CA PEM dropped into this directory is trusted after an automatic rehash and broker reload.
     - Systemd watcher: `edgeberry-ca-rehash.path` → triggers `edgeberry-ca-rehash.service` to run `c_rehash`/`openssl rehash` and `systemctl reload mosquitto` when contents change.
@@ -435,6 +436,7 @@ Anonymous access (Observer mode):
 - **Persistent data:** Certificates and database stored in `/var/lib/edgeberry/devicehub/` and preserved between deployments
 - **Clean install:** Use `--force-clean` flag to remove all persistent data for fresh installation
 - **Certificate renewal:** Automatic synchronization via systemd path units monitors persistent certificate changes and updates MQTT broker
+- **Certificate Management (v1.1.0+):** Core service automatically sets proper permissions (`0640` with `root:mosquitto` ownership) on all generated certificates to ensure Mosquitto compatibility
 
 ### Directory Structure
 
