@@ -74,29 +74,36 @@ await secureClient.connect();
 ### Run Examples
 
 ```bash
-# Basic usage example
-npm run example:basic
-
-# Advanced telemetry sender
-npm run example:telemetry
-
-# Direct methods handling
-npm run example:direct-methods
-
-# Complete virtual device with provisioning
+# Virtual device implementation
 npm run example:virtual-device
+
+# Complete virtual device with full provisioning
+npm run example:complete-virtual-device
 ```
 
-### Virtual Device
+### Available Examples
 
-The virtual device example demonstrates a complete device implementation including:
+#### 1. Virtual Device (`examples/virtual-device.js`)
 
-- **Device Provisioning**: Automatic certificate generation and registration
-- **mTLS Authentication**: Secure connection using device certificates
-- **Realistic Telemetry**: Simulated sensor data with natural variations
-- **Direct Method Support**: Handle identify, reboot, configuration updates
+A streamlined virtual device implementation that demonstrates:
+
+- **Basic Device Connection**: Connect to Device Hub using mTLS
+- **Telemetry Transmission**: Send simulated sensor data
+- **Direct Method Handling**: Respond to remote commands
 - **Device Twin Management**: Synchronize device state and configuration
 - **Lifecycle Management**: Proper startup, runtime, and shutdown procedures
+
+#### 2. Complete Virtual Device (`examples/complete-virtual-device.ts`)
+
+A comprehensive virtual device implementation that includes all functionality from the original virtual-device project:
+
+- **Device Provisioning**: Automatic certificate generation with CSR
+- **Bootstrap TLS**: Certificate fetching and validation
+- **Runtime Certificate Management**: Dynamic certificate handling
+- **Device Status Publishing**: Last Will Testament support
+- **Comprehensive Configuration**: Full environment variable support
+- **Certificate Validation**: Proper certificate chain validation
+- **Graceful Lifecycle Management**: Complete startup and shutdown procedures
 
 #### Environment Variables
 
@@ -122,17 +129,20 @@ DEVICE_CERT_OUT=/path/to/device.crt
 DEVICE_KEY_OUT=/path/to/device.key
 ```
 
-#### Running Virtual Device
+#### Running Examples
 
 ```bash
-# With default settings
+# Run the basic virtual device
 npm run example:virtual-device
 
-# With custom configuration
+# Run the complete virtual device with default settings
+npm run example:complete-virtual-device
+
+# Run with custom configuration
 DEVICE_ID=test-device-001 \
 PROV_API_BASE=https://devicehub.local:8080 \
 TELEMETRY_INTERVAL=3000 \
-npm run example:virtual-device
+npm run example:complete-virtual-device
 ```
 
 ## API Reference
@@ -323,14 +333,13 @@ client.on('error', (error) => {
 
 ```
 edgeberry-device-hub-client/
-├── index.js                 # Main client library
+├── device-client.ts         # Main client library (TypeScript)
 ├── package.json             # Package configuration
 ├── README.md               # This documentation
+├── tsconfig.json           # TypeScript configuration
 └── examples/               # Usage examples
-    ├── basic-usage.js      # Simple client usage
-    ├── telemetry-sender.js # Advanced telemetry patterns
-    ├── direct-methods.js   # Direct method handling
-    └── virtual-device.js   # Complete virtual device
+    ├── virtual-device.js   # Basic virtual device implementation
+    └── complete-virtual-device.ts # Full-featured virtual device
 ```
 
 ### Contributing
