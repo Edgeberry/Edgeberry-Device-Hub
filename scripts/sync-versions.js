@@ -16,7 +16,8 @@ const packagePaths = [
   'translator-service/package.json',
   'ui/package.json',
   'examples/nodered/package.json',
-  'examples/virtual-device/package.json'
+  'examples/virtual-device/package.json',
+  'examples/device-client/package.json'
 ];
 
 function updatePackageVersions(packagePath) {

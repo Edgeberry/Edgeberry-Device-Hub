@@ -28,7 +28,7 @@ npm install
 ### Basic Usage
 
 ```javascript
-import EdgeberryDeviceHubClient from '@edgeberry/devicehub-device-client';
+const { EdgeberryDeviceHubClient } = require('@edgeberry/devicehub-device-client');
 
 const client = new EdgeberryDeviceHubClient({
   deviceId: 'my-device-001',
@@ -55,6 +55,8 @@ client.on('directMethod', ({ methodName, payload, respond }) => {
 ### Secure Connection with mTLS
 
 ```javascript
+const { EdgeberryDeviceHubClient } = require('@edgeberry/devicehub-device-client');
+
 const secureClient = EdgeberryDeviceHubClient.createSecureClient({
   deviceId: 'secure-device-001',
   host: '127.0.0.1',
@@ -232,6 +234,8 @@ client.on('message', ({ topic, payload }) => {
 Create a client instance configured for mTLS authentication.
 
 ```javascript
+const { EdgeberryDeviceHubClient } = require('@edgeberry/devicehub-device-client');
+
 const client = EdgeberryDeviceHubClient.createSecureClient({
   deviceId: 'secure-device',
   host: 'devicehub.example.com',
@@ -271,6 +275,39 @@ try {
 }
 ```
 
+## Reconnection Behavior
+
+The client includes robust reconnection logic with exponential backoff:
+
+- **Automatic Reconnection**: The client automatically attempts to reconnect when the connection is lost
+- **Exponential Backoff**: Reconnection delays increase exponentially (1s, 2s, 4s, 8s, etc.) up to a maximum of 30 seconds
+- **Jitter**: Random jitter is added to prevent thundering herd problems
+- **Connection Limits**: Maximum of 10 reconnection attempts before giving up
+- **State Management**: Reconnection attempts are reset on successful connection
+
+```javascript
+const { EdgeberryDeviceHubClient } = require('@edgeberry/devicehub-device-client');
+
+const client = new EdgeberryDeviceHubClient({
+  deviceId: 'my-device-001',
+  host: '127.0.0.1',
+  port: 8883
+});
+
+// Handle reconnection events
+client.on('reconnecting', () => {
+  console.log('Attempting to reconnect...');
+});
+
+client.on('connected', () => {
+  console.log('Successfully connected/reconnected');
+});
+
+client.on('error', (error) => {
+  console.error('Connection error:', error.message);
+});
+```
+
 ## Best Practices
 
 1. **Connection Management**: Always handle connection events and implement reconnection logic
@@ -278,6 +315,7 @@ try {
 3. **Resource Cleanup**: Call `disconnect()` when shutting down
 4. **Telemetry Batching**: Use reasonable intervals to avoid overwhelming the broker
 5. **Certificate Security**: Store certificates securely and rotate them regularly
+6. **Reconnection Monitoring**: Monitor reconnection events and implement alerting for persistent connection issues
 
 ## Development
 

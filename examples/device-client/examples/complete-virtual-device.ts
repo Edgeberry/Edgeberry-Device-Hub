@@ -20,6 +20,7 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import { EdgeberryDeviceHubClient } from '../device-client';
 
 // Environment variables with defaults
 const MQTT_URL = process.env.MQTT_URL || 'mqtts://127.0.0.1:8883';
