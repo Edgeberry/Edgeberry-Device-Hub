@@ -462,6 +462,88 @@ Anonymous access (Observer mode):
   - Processes twin updates/deltas
   - Handles reconciliation and desired→reported state sync
 
+- **`application-service/`** — Cloud Application Interface Service (Cloud Bridge)
+  - **Primary cloud-side bridge** for external applications and cloud integrations
+  - Replaces the initial translator-service concept with a comprehensive API gateway
+  - Bridge between cloud applications (e.g., Node-RED, custom dashboards) and Device Hub
+  - Dual-protocol approach: REST API for management, WebSocket for real-time data
+  - Token-based authentication for secure API access
+  - **Port:** 8090 (configurable via `APPLICATION_PORT`)
+  - **Database:** Connects to main `devicehub.db` for device data and API tokens
+  
+  **Cloud Bridge Architecture:**
+  - **Purpose:** Serves as the definitive cloud-side interface for Device Hub
+  - **Replaces:** Initial translator-service concept with full-featured API gateway
+  - **Integration Model:** External applications connect exclusively through this service
+  - **Security:** Token-based authentication prevents direct database/MQTT access
+  
+  **Cloud Application Integration Pattern:**
+  - **REST API:** Device management operations (list devices, query history, invoke methods)
+  - **WebSocket:** Real-time telemetry streaming and event notifications
+  - **Typical Flow:**
+    1. Cloud app calls `GET /api/devices` to discover available devices
+    2. User selects devices of interest
+    3. App subscribes via WebSocket to those specific devices for telemetry
+    4. App receives real-time data only from selected devices
+  - **Example:** Node-RED gets device list, user selects required devices, subscribes to their telemetry
+  
+  **Access Model (MVP):**
+  - Full access to all devices and features with valid API token
+  - No user-based or device-level access restrictions
+  - Single token grants complete system access
+  - Future: User-based permissions, device groups, feature-level access control
+  
+  **Key Features:**
+  - **Real-time Telemetry:** WebSocket-only streaming with device-specific subscriptions
+  - **Selective Streaming:** Subscribe to individual devices, groups, or all devices
+  - **API Token Management:** Tokens created/managed via Device Hub UI
+  - **Direct Methods:** Cloud apps can invoke device methods with request/response pattern
+  - **Batch Operations:** Execute commands on multiple devices simultaneously
+  - **Efficient Bandwidth:** Receive data only from devices you're interested in
+  
+  **REST API (Management Operations):**
+  - `GET /health` — Service health check
+  - `GET /api/devices` — List all devices with metadata (used by cloud apps to discover devices)
+  - `GET /api/devices/:deviceId` — Get specific device details
+  - `GET /api/telemetry` — Query historical telemetry (fallback for missed real-time data)
+  - `GET /api/devices/:deviceId/events` — Get historical device events
+  - `GET /api/devices/:deviceId/twin` — Get current device twin state
+  - `PATCH /api/devices/:deviceId/twin` — Update device configuration (desired properties)
+  - `POST /api/devices/:deviceId/methods/:methodName` — Invoke device method
+  - `POST /api/batch/methods` — Execute method on multiple devices
+  - `GET /api/stats/devices` — System-wide device statistics
+  
+  **WebSocket (Real-time Data Stream):**
+  - Connection: `ws://host:8090/ws?token=<API_TOKEN>`
+  - Authentication: Token required as query parameter (MVP: one token = full access)
+  - Primary use: Real-time telemetry streaming from devices
+  - Message format: JSON with `type` and `data` fields
+  - 
+  **Subscription Model:**
+  - Topics: `telemetry`, `events`, `status`, `twin-update`
+  - Device selection: Specify individual devices or lists
+  - Wildcard: Use `*` for all devices
+  
+  **Device-Specific Subscriptions:**
+  - Single device: `{"type": "subscribe", "topics": ["telemetry"], "devices": ["device-001"]}`
+  - Multiple devices: `{"type": "subscribe", "topics": ["telemetry"], "devices": ["device-001", "device-002"]}`
+  - All devices: `{"type": "subscribe", "topics": ["telemetry"], "devices": ["*"]}`
+  - Mixed topics: `{"type": "subscribe", "topics": ["telemetry", "status"], "devices": ["device-001"]}`
+  
+  **Client Protocol Examples:**
+  - Subscribe to specific devices: `{"type": "subscribe", "topics": ["telemetry"], "devices": ["device-001", "device-002"]}`
+  - Unsubscribe: `{"type": "unsubscribe", "topics": ["telemetry"], "devices": ["device-001"]}`
+  - Server broadcasts: `{"type": "message", "topic": "telemetry", "deviceId": "device-001", "data": {...}}`
+  
+  **Data Flow Architecture (Cloud Bridge Pattern):**
+  - **Real-time Path:** Devices → MQTT → application-service → WebSocket → Cloud Applications
+  - **Management Path:** Cloud Applications → REST API → application-service → Core/Twin Services
+  - **MQTT Subscriptions:** `$devicehub/devices/+/telemetry`, `$devicehub/devices/+/status`
+  - **WebSocket Broadcasts:** Immediate forwarding of MQTT messages to subscribed clients
+  - **Zero-latency Bridge:** No database writes in telemetry path (direct MQTT→WebSocket)
+  - **Historical Data:** Stored separately for REST API queries
+  - **Security Boundary:** All external access must go through application-service authentication
+
 #### Infrastructure & Support
 - **`mqtt-broker/`** — MQTT broker configuration and materials
   - TLS materials (dev-only)
@@ -546,7 +628,7 @@ Interfaces (high level):
 
 - **Sources**: Official assets live under the repo root `brand/`.
 - **Navbar**: `ui/src/components/Navigationbar.tsx` imports `ui/src/EdgeBerry_Logo_text.svg` and renders it inside `Navbar.Brand` (32px height).
-- **Login**: Implemented as a modal (`ui/src/components/LoginModal.tsx`) opened from the navbar; no dedicated route/page.
+- **Login**: Implemented as a modal (`ui/src/components/LoginModal.tsx`) opened from the navbar; no dedicated `/login` page.
 - **404**: The app redirects unknown routes to `/` (single-page). The `NotFound` component is not linked in routing.
 - **Favicon**: `ui/public/favicon.svg` referenced from `ui/index.html` via `/favicon.svg`.
 - **TypeScript**: `ui/src/assets.d.ts` declares `*.svg` modules for asset imports.
@@ -658,10 +740,11 @@ CI and releases:
   - `versions.json` holds the unified project version and pinned dependency versions.
   - `scripts/sync-versions.js` updates all `package.json` files across the monorepo.
   - Root script: `npm run sync-versions`.
-  - Applies to: root, `core-service`, `provisioning-service`, `twin-service`, `translator-service`, `ui`, `examples/nodered`, `examples/virtual-device`.
+  - Applies to: root, `core-service`, `provisioning-service`, `twin-service`, `application-service`, `ui`, `examples/nodered`, `examples/virtual-device`.
 - Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/deploy-artifacts.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
  - The `release_node-clients.yml` workflow automatically publishes both `@edgeberry/devicehub-device-client` and `@edgeberry/devicehub-app-client` npm packages on release, with versions matching the release tag.
+ - **Note:** The translator-service has been removed and replaced by application-service as the primary cloud bridge.
 
 ### Deployment Process (SSH)
 
@@ -815,9 +898,10 @@ Provisioning flow (MQTT + internal D-Bus):
 1. Device generates a keypair and CSR (CN = `deviceId`).
 2. Device connects to the broker using the claim/provisioning certificate (mTLS).
 3. Device publishes CSR to `$devicehub/devices/{deviceId}/provision/request` with `{ csrPem, uuid?, name?, token?, meta? }`. If no name is provided, the system generates a default name using format `EDGB-<first 4 UUID chars>`.
-4. Provisioning worker validates the UUID via Core over D-Bus (`WhitelistService.CheckUUID`) when enforced, validates the CSR, requests certificate issuance from Core over D-Bus (`CertificateService.IssueFromCSR`); replies on `$devicehub/devices/{deviceId}/provision/accepted` with `{ deviceId, certPem, caChainPem }` (or `$devicehub/devices/{deviceId}/provision/rejected`). After a successful issuance, it marks the UUID as used via `WhitelistService.MarkUsed`.
-5. Device saves cert, reconnects using its own certificate.
-6. Server marks the device `active`, sets `enrolled_at`, and subsequent MQTT runtime updates `last_seen`/`updated_at`.
+4. Provisioning worker validates the whitelist when `ENFORCE_WHITELIST=true`:
+   - Looks up `uuid` in `uuid_whitelist` and requires `used_at` null.
+   - On success, marks `used_at` and upserts the device row in `devicehub.db`.
+5. Service replies on `$devicehub/devices/{deviceId}/provision/accepted|rejected`.
 
 Security/roles (MVP):
 
@@ -1251,5 +1335,3 @@ The System Widget replaces the previous separate ServiceStatusWidget and SystemM
 - Integrated health status display with uptime and environment information
 
 ---
-
-This file is meant to be read and followed by both people and artificial intelligence systems involved in the development of Edgeberry Device Hub. Any new features or decisions should be measured against the values described here.

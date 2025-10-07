@@ -23,6 +23,16 @@ type RootMeta = {
 
 type ProvCert = { name: string; createdAt?: string; expiresAt?: string };
 
+type ApiToken = {
+  id: string;
+  name: string;
+  scopes?: string;
+  created_at: string;
+  expires_at?: string;
+  last_used?: string;
+  active: boolean;
+};
+
 export default function Settings(_props:{user:any}){
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string|undefined>();
@@ -31,6 +41,12 @@ export default function Settings(_props:{user:any}){
   const [provList, setProvList] = useState<ProvCert[]>([]);
   const [whitelist, setWhitelist] = useState<any[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
+  const [apiTokens, setApiTokens] = useState<ApiToken[]>([]);
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [newTokenName, setNewTokenName] = useState('');
+  const [newTokenExpiry, setNewTokenExpiry] = useState<number | ''>('');
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
   // Re-render every second to update relative offline timers
   const [now, setNow] = useState<number>(()=> Date.now());
   useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
@@ -77,6 +93,11 @@ export default function Settings(_props:{user:any}){
       // Devices snapshot for lifecycle status
       const d = await (await fetch('/api/devices')).json();
       setDevices(Array.isArray(d?.devices) ? d.devices : (Array.isArray(d)? d : []));
+    }catch{ /* ignore */ }
+    try{
+      // API Tokens
+      const tokens = await (await fetch('/api/tokens')).json();
+      setApiTokens(Array.isArray(tokens?.tokens) ? tokens.tokens : []);
     }catch{ /* ignore */ }
     setLoading(false);
   }
@@ -400,6 +421,210 @@ export default function Settings(_props:{user:any}){
           </div>
         </Card.Body>
       </Card>
+
+      {/* API Token Management Card */}
+      <Card className="mb-4">
+        <Card.Body>
+          <h4 className="mb-3">API Token Management</h4>
+          <p className="text-muted mb-3">
+            API tokens allow external applications like Node-RED to access the Device Hub REST API and WebSocket telemetry.
+          </p>
+          <div className="mb-3">
+            <Button variant="primary" onClick={() => {
+              setNewTokenName('');
+              setNewTokenExpiry('');
+              setGeneratedToken(null);
+              setShowTokenModal(true);
+            }}>
+              <i className="fa fa-plus"></i> Create New Token
+            </Button>
+          </div>
+          {apiTokens.length === 0 ? (
+            <Alert variant="info">No API tokens found. Create one to enable external application access.</Alert>
+          ) : (
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Expires</th>
+                    <th>Last Used</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {apiTokens.map((token) => (
+                    <tr key={token.id}>
+                      <td>{token.name}</td>
+                      <td>
+                        <Badge bg={token.active ? 'success' : 'secondary'}>
+                          {token.active ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </td>
+                      <td>{new Date(token.created_at).toLocaleDateString()}</td>
+                      <td>
+                        {token.expires_at ? (
+                          new Date(token.expires_at) < new Date() ? (
+                            <Badge bg="danger">Expired</Badge>
+                          ) : (
+                            new Date(token.expires_at).toLocaleDateString()
+                          )
+                        ) : (
+                          'Never'
+                        )}
+                      </td>
+                      <td>{token.last_used ? new Date(token.last_used).toLocaleDateString() : 'Never'}</td>
+                      <td>
+                        <Button
+                          size="sm"
+                          variant={token.active ? 'warning' : 'success'}
+                          className="me-2"
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`/api/tokens/${token.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ active: !token.active })
+                              });
+                              if (resp.ok) {
+                                await loadAll();
+                              }
+                            } catch (e) {
+                              console.error('Failed to toggle token status:', e);
+                            }
+                          }}
+                        >
+                          {token.active ? 'Deactivate' : 'Activate'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline-danger"
+                          onClick={async () => {
+                            if (confirm(`Delete token "${token.name}"? This action cannot be undone.`)) {
+                              try {
+                                const resp = await fetch(`/api/tokens/${token.id}`, { method: 'DELETE' });
+                                if (resp.ok) {
+                                  await loadAll();
+                                }
+                              } catch (e) {
+                                console.error('Failed to delete token:', e);
+                              }
+                            }
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card.Body>
+      </Card>
+
+      {/* Create Token Modal */}
+      <Modal show={showTokenModal} onHide={() => setShowTokenModal(false)} size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>Create API Token</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {generatedToken ? (
+            <div>
+              <Alert variant="success">
+                <Alert.Heading>Token Created Successfully!</Alert.Heading>
+                <p className="mb-2">
+                  <strong>Important:</strong> Copy this token now. You won't be able to see it again.
+                </p>
+              </Alert>
+              <Form.Group className="mb-3">
+                <Form.Label>API Token</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={3}
+                  readOnly
+                  value={generatedToken}
+                  style={{ fontFamily: 'monospace' }}
+                  onClick={(e) => {
+                    (e.target as HTMLTextAreaElement).select();
+                    document.execCommand('copy');
+                  }}
+                />
+                <Form.Text>Click to select and copy</Form.Text>
+              </Form.Group>
+              <Alert variant="info">
+                <p className="mb-2"><strong>Usage in Node-RED or custom apps:</strong></p>
+                <code>Authorization: Bearer {generatedToken.substring(0, 10)}...</code>
+                <hr />
+                <p className="mb-0"><strong>WebSocket connection:</strong></p>
+                <code>ws://devicehub:8090/ws?token={generatedToken.substring(0, 10)}...</code>
+              </Alert>
+            </div>
+          ) : (
+            <Form onSubmit={async (e) => {
+              e.preventDefault();
+              setTokenLoading(true);
+              try {
+                const resp = await fetch('/api/tokens', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    name: newTokenName,
+                    expiresIn: newTokenExpiry ? Number(newTokenExpiry) * 86400 : null
+                  })
+                });
+                if (resp.ok) {
+                  const data = await resp.json();
+                  setGeneratedToken(data.token);
+                  await loadAll();
+                }
+              } catch (e) {
+                console.error('Failed to create token:', e);
+              } finally {
+                setTokenLoading(false);
+              }
+            }}>
+              <Form.Group className="mb-3">
+                <Form.Label>Token Name</Form.Label>
+                <Form.Control
+                  type="text"
+                  placeholder="e.g., Node-RED Integration"
+                  value={newTokenName}
+                  onChange={(e) => setNewTokenName(e.target.value)}
+                  required
+                />
+                <Form.Text>A descriptive name to identify this token</Form.Text>
+              </Form.Group>
+              <Form.Group className="mb-3">
+                <Form.Label>Expiration (optional)</Form.Label>
+                <Form.Control
+                  type="number"
+                  placeholder="Days until expiration (leave empty for no expiration)"
+                  value={newTokenExpiry}
+                  onChange={(e) => setNewTokenExpiry(e.target.value ? Number(e.target.value) : '')}
+                  min="1"
+                />
+                <Form.Text>Number of days before the token expires</Form.Text>
+              </Form.Group>
+              <Button type="submit" variant="primary" disabled={tokenLoading || !newTokenName.trim()}>
+                {tokenLoading ? (
+                  <><Spinner animation="border" size="sm" /> Creating...</>
+                ) : (
+                  'Create Token'
+                )}
+              </Button>
+            </Form>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowTokenModal(false)}>
+            {generatedToken ? 'Close' : 'Cancel'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       {/* Inspect Modal */}
       <Modal show={showInspect} onHide={()=>setShowInspect(false)} size='lg'>

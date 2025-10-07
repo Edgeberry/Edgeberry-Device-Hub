@@ -1,0 +1,23 @@
+[Unit]
+Description=Edgeberry Device Hub Application Service
+After=network.target mosquitto.service devicehub-core.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/Edgeberry/devicehub/application-service
+Environment="NODE_ENV=production"
+Environment="APPLICATION_PORT=8090"
+Environment="DEVICEHUB_DB=/var/lib/edgeberry/devicehub/devicehub.db"
+Environment="MQTT_URL=mqtt://127.0.0.1:1883"
+Environment="JWT_SECRET=change-this-in-production"
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devicehub-application
+
+[Install]
+WantedBy=multi-user.target

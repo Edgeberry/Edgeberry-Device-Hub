@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
 import SystemWidget from '../components/SystemWidget';
+import TokenManagementWidget from '../components/TokenManagementWidget';
 import { getDevices, decommissionDevice, deleteWhitelistByDevice, updateDevice, replaceDevice } from '../api/devicehub';
 import { direct_identifySystem } from '../api/directMethods';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
@@ -234,6 +235,8 @@ export default function Overview(props:{user:any}){
   return (
     <div>
       <SystemWidget user={props.user} />
+      
+      <TokenManagementWidget user={props.user} />
 
       <Card>
         <Card.Header className="d-flex justify-content-between align-items-center">

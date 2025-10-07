@@ -6,13 +6,12 @@ import { EventEmitter } from 'eventemitter3';
  * Application client configuration
  */
 export interface AppClientConfig {
-  baseUrl: string;                    // Device Hub API base URL (e.g., 'https://devicehub.local:8080')
-  apiKey?: string;                    // Optional API key for authentication
-  username?: string;                  // Username for basic auth
-  password?: string;                  // Password for basic auth
+  host: string;                       // Device Hub hostname (e.g., 'localhost')
+  port: number;                       // Application service port (e.g., 8090)
+  token: string;                      // API authentication token
+  secure?: boolean;                   // Use HTTPS/WSS (default: false)
   timeout?: number;                   // Request timeout in milliseconds
   retryAttempts?: number;             // Number of retry attempts for failed requests
-  websocketUrl?: string;              // WebSocket URL for real-time updates
   enableWebSocket?: boolean;          // Enable WebSocket connection for real-time data
 }
 
@@ -117,42 +116,42 @@ export interface WebSocketMessage {
  * A TypeScript client for applications to consume data from the Edgeberry Device Hub.
  * Provides REST API access and real-time WebSocket updates for device data.
  */
-export class EdgeberryDeviceHubAppClient extends EventEmitter {
+export class DeviceHubAppClient extends EventEmitter {
   private config: AppClientConfig;
   private httpClient: AxiosInstance;
   private websocket: WebSocket | null = null;
   private connected: boolean = false;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
+  private baseUrl: string;
+  private wsUrl: string;
 
   constructor(config: AppClientConfig) {
     super();
     
     this.config = {
+      secure: false,
       timeout: 30000,
       retryAttempts: 3,
       enableWebSocket: true,
       ...config
     };
 
+    // Build URLs
+    const protocol = this.config.secure ? 'https' : 'http';
+    const wsProtocol = this.config.secure ? 'wss' : 'ws';
+    this.baseUrl = `${protocol}://${this.config.host}:${this.config.port}`;
+    this.wsUrl = `${wsProtocol}://${this.config.host}:${this.config.port}/ws?token=${this.config.token}`;
+
     // Create HTTP client with authentication
     const axiosConfig: AxiosRequestConfig = {
-      baseURL: this.config.baseUrl,
+      baseURL: this.baseUrl,
       timeout: this.config.timeout,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.token}`
       }
     };
-
-    // Add authentication headers
-    if (this.config.apiKey) {
-      axiosConfig.headers!['Authorization'] = `Bearer ${this.config.apiKey}`;
-    } else if (this.config.username && this.config.password) {
-      axiosConfig.auth = {
-        username: this.config.username,
-        password: this.config.password
-      };
-    }
 
     this.httpClient = axios.create(axiosConfig);
     
@@ -172,7 +171,7 @@ export class EdgeberryDeviceHubAppClient extends EventEmitter {
   async connect(): Promise<void> {
     try {
       // Test HTTP connection
-      await this.httpClient.get('/api/health');
+      await this.httpClient.get('/health');
       console.log('Connected to Device Hub API');
 
       // Establish WebSocket connection if enabled
@@ -193,10 +192,7 @@ export class EdgeberryDeviceHubAppClient extends EventEmitter {
    */
   private async connectWebSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wsUrl = this.config.websocketUrl || 
-        this.config.baseUrl.replace(/^http/, 'ws') + '/ws';
-
-      this.websocket = new WebSocket(wsUrl);
+      this.websocket = new WebSocket(this.wsUrl);
 
       this.websocket.on('open', () => {
         console.log('WebSocket connected');
@@ -231,22 +227,38 @@ export class EdgeberryDeviceHubAppClient extends EventEmitter {
   /**
    * Handle incoming WebSocket messages
    */
-  private handleWebSocketMessage(message: WebSocketMessage): void {
-    switch (message.type) {
-      case 'telemetry':
-        this.emit('telemetry', message.data as TelemetryData);
-        break;
-      case 'event':
-        this.emit('device-event', message.data as DeviceEvent);
-        break;
-      case 'device-status':
-        this.emit('device-status', message.data);
-        break;
-      case 'twin-update':
-        this.emit('twin-update', message.data as DeviceTwin);
-        break;
-      default:
-        this.emit('message', message);
+  private handleWebSocketMessage(message: any): void {
+    // Handle application-service WebSocket message format
+    if (message.type === 'message') {
+      const { topic, deviceId, data } = message;
+      
+      switch (topic) {
+        case 'telemetry':
+          this.emit('telemetry', {
+            deviceId,
+            timestamp: new Date().toISOString(),
+            data
+          } as TelemetryData);
+          break;
+        case 'status':
+          this.emit('device-status', {
+            deviceId,
+            status: data.online ? 'online' : 'offline'
+          });
+          break;
+        case 'events':
+          this.emit('device-event', {
+            deviceId,
+            eventType: 'device-event',
+            timestamp: new Date().toISOString(),
+            data
+          } as DeviceEvent);
+          break;
+        default:
+          this.emit('message', message);
+      }
+    } else {
+      this.emit('message', message);
     }
   }
 
@@ -369,32 +381,74 @@ export class EdgeberryDeviceHubAppClient extends EventEmitter {
   }
 
   /**
-   * Subscribe to real-time telemetry for specific devices
+   * Start telemetry streaming for specific devices
    */
-  subscribeToTelemetry(deviceIds: string[]): void {
+  startTelemetryStream(deviceIds: string[], callback?: (data: TelemetryData) => void): void {
+    if (callback) {
+      this.on('telemetry', callback);
+    }
+    
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       this.websocket.send(JSON.stringify({
         type: 'subscribe',
-        topic: 'telemetry',
-        deviceIds
+        topics: ['telemetry'],
+        devices: deviceIds
       }));
     } else {
-      console.warn('WebSocket not connected, cannot subscribe to telemetry');
+      console.warn('WebSocket not connected, cannot start telemetry stream');
     }
   }
 
   /**
-   * Subscribe to device status updates
+   * Stop telemetry streaming
    */
-  subscribeToDeviceStatus(deviceIds?: string[]): void {
+  stopTelemetryStream(): void {
+    this.removeAllListeners('telemetry');
+  }
+
+  /**
+   * Subscribe to specific device
+   */
+  subscribeToDevice(deviceId: string): void {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       this.websocket.send(JSON.stringify({
         type: 'subscribe',
-        topic: 'device-status',
-        deviceIds
+        topics: ['telemetry', 'status'],
+        devices: [deviceId]
       }));
     } else {
-      console.warn('WebSocket not connected, cannot subscribe to device status');
+      console.warn('WebSocket not connected, cannot subscribe to device');
+    }
+  }
+
+  /**
+   * Unsubscribe from specific device
+   */
+  unsubscribeFromDevice(deviceId: string): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      this.websocket.send(JSON.stringify({
+        type: 'unsubscribe',
+        topics: ['telemetry', 'status'],
+        devices: [deviceId]
+      }));
+    } else {
+      console.warn('WebSocket not connected, cannot unsubscribe from device');
+    }
+  }
+
+  /**
+   * Call device method
+   */
+  async callDeviceMethod(deviceId: string, methodName: string, payload?: any): Promise<any> {
+    try {
+      const response = await this.httpClient.post(
+        `/api/devices/${deviceId}/methods/${methodName}`,
+        payload || {}
+      );
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to call method ${methodName} on device ${deviceId}:`, error);
+      throw error;
     }
   }
 
@@ -416,7 +470,7 @@ export class EdgeberryDeviceHubAppClient extends EventEmitter {
    */
   async getSystemHealth(): Promise<any> {
     try {
-      const response = await this.httpClient.get('/api/health');
+      const response = await this.httpClient.get('/health');
       return response.data;
     } catch (error) {
       console.error('Failed to get system health:', error);
@@ -454,4 +508,4 @@ export class EdgeberryDeviceHubAppClient extends EventEmitter {
   }
 }
 
-export default EdgeberryDeviceHubAppClient;
+export default DeviceHubAppClient;

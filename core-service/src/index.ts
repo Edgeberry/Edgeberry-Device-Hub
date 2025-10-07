@@ -39,6 +39,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { WebSocketServer } from 'ws';
 import Database from 'better-sqlite3';
@@ -963,6 +964,165 @@ app.get('/api/devices/:uuid', (req: Request, res: Response) => {
     });
   }finally{
     try{ db.close(); }catch{}
+  }
+});
+
+// ===== API Token Management Endpoints =====
+
+// GET /api/tokens -> list all API tokens
+app.get('/api/tokens', authRequired, (req: Request, res: Response) => {
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) { res.status(500).json({ error: 'db_unavailable' }); return; }
+  try {
+    // Initialize api_tokens table if not exists
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS api_tokens (
+        id TEXT PRIMARY KEY,
+        token TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        scopes TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        last_used TEXT,
+        active INTEGER DEFAULT 1
+      )
+    `);
+    
+    const tokens = db.prepare(`
+      SELECT id, name, scopes, created_at, expires_at, last_used, active 
+      FROM api_tokens 
+      ORDER BY created_at DESC
+    `).all();
+    
+    res.json({ tokens });
+  } catch (e: any) {
+    console.error('[core-service] Failed to list API tokens:', e);
+    res.status(500).json({ error: 'failed_to_list_tokens' });
+  } finally {
+    try { db.close(); } catch {}
+  }
+});
+
+// POST /api/tokens -> create new API token
+app.post('/api/tokens', authRequired, (req: Request, res: Response) => {
+  const { name, scopes, expiresIn } = req.body;
+  
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    res.status(400).json({ error: 'name_required' }); 
+    return;
+  }
+  
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) { res.status(500).json({ error: 'db_unavailable' }); return; }
+  
+  try {
+    // Initialize api_tokens table if not exists
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS api_tokens (
+        id TEXT PRIMARY KEY,
+        token TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        scopes TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        last_used TEXT,
+        active INTEGER DEFAULT 1
+      )
+    `);
+    
+    const tokenId = crypto.randomBytes(16).toString('hex');
+    const token = crypto.randomBytes(32).toString('hex');
+    const createdAt = new Date().toISOString();
+    
+    let expiresAt = null;
+    if (expiresIn && typeof expiresIn === 'number' && expiresIn > 0) {
+      const expDate = new Date();
+      expDate.setSeconds(expDate.getSeconds() + expiresIn);
+      expiresAt = expDate.toISOString();
+    }
+    
+    const scopesStr = Array.isArray(scopes) ? scopes.join(',') : '';
+    
+    db.prepare(`
+      INSERT INTO api_tokens (id, token, name, scopes, created_at, expires_at, active)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `).run(tokenId, token, name.trim(), scopesStr, createdAt, expiresAt);
+    
+    res.json({
+      id: tokenId,
+      token,
+      name: name.trim(),
+      scopes: scopesStr,
+      created_at: createdAt,
+      expires_at: expiresAt
+    });
+  } catch (e: any) {
+    console.error('[core-service] Failed to create API token:', e);
+    res.status(500).json({ error: 'failed_to_create_token' });
+  } finally {
+    try { db.close(); } catch {}
+  }
+});
+
+// DELETE /api/tokens/:id -> revoke/delete API token
+app.delete('/api/tokens/:id', authRequired, (req: Request, res: Response) => {
+  const { id } = req.params;
+  
+  if (!id) { 
+    res.status(400).json({ error: 'token_id_required' }); 
+    return; 
+  }
+  
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) { res.status(500).json({ error: 'db_unavailable' }); return; }
+  
+  try {
+    const info = db.prepare('DELETE FROM api_tokens WHERE id = ?').run(id);
+    
+    if (info.changes === 0) {
+      res.status(404).json({ error: 'token_not_found' });
+    } else {
+      res.json({ ok: true, deleted: info.changes });
+    }
+  } catch (e: any) {
+    console.error('[core-service] Failed to delete API token:', e);
+    res.status(500).json({ error: 'failed_to_delete_token' });
+  } finally {
+    try { db.close(); } catch {}
+  }
+});
+
+// PATCH /api/tokens/:id -> update API token (activate/deactivate)
+app.patch('/api/tokens/:id', authRequired, (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { active } = req.body;
+  
+  if (!id) { 
+    res.status(400).json({ error: 'token_id_required' }); 
+    return; 
+  }
+  
+  if (typeof active !== 'boolean') {
+    res.status(400).json({ error: 'active_field_required' });
+    return;
+  }
+  
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) { res.status(500).json({ error: 'db_unavailable' }); return; }
+  
+  try {
+    const info = db.prepare('UPDATE api_tokens SET active = ? WHERE id = ?').run(active ? 1 : 0, id);
+    
+    if (info.changes === 0) {
+      res.status(404).json({ error: 'token_not_found' });
+    } else {
+      res.json({ ok: true, updated: info.changes });
+    }
+  } catch (e: any) {
+    console.error('[core-service] Failed to update API token:', e);
+    res.status(500).json({ error: 'failed_to_update_token' });
+  } finally {
+    try { db.close(); } catch {}
   }
 });
 

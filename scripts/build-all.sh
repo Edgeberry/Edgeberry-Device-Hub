@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Clean build all microservices and package as single artifact
-# Services: core-service, provisioning-service, twin-service, translator-service, ui
+# Services: core-service, provisioning-service, twin-service, translator-service, application-service, ui
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ART_DIR="${ROOT_DIR}/dist-artifacts"
@@ -66,6 +66,12 @@ build_service() {
   cp "${dir}/package.json" "${STAGE_DIR}/${svc}/" || error "${svc}: failed to copy package.json"
   [[ -f "${dir}/package-lock.json" ]] && cp "${dir}/package-lock.json" "${STAGE_DIR}/${svc}/" || true
   
+  # Include node_modules with production dependencies
+  if [[ -d "${dir}/node_modules" ]]; then
+    echo "[build-all] Copying node_modules for ${svc} (this may take a moment)..."
+    cp -r "${dir}/node_modules" "${STAGE_DIR}/${svc}/" || error "${svc}: failed to copy node_modules"
+  fi
+  
   log "✓ ${svc}"
 }
 
@@ -118,7 +124,7 @@ build_ui
 build_service core-service
 build_service provisioning-service
 build_service twin-service
-build_service translator-service
+build_service application-service
 
 # Copy shared config and scripts
 [[ -d "${ROOT_DIR}/config" ]] && cp -r "${ROOT_DIR}/config" "${STAGE_DIR}/"

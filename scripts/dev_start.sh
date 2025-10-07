@@ -82,6 +82,10 @@ start_service() {
     translator-service)
       ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
       ;;
+    application-service)
+      ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
+      ENV_VARS+=("APPLICATION_PORT=8090")
+      ;;
   esac
   local cmd
   if has_npm_script "$dir" dev; then
@@ -165,8 +169,8 @@ fi
 start_service core-service core-service
 start_service provisioning-service provisioning-service
 start_service twin-service twin-service
-# translator-service
 start_service translator-service translator-service
+start_service application-service application-service
 
 log "all dev processes started (PIDs: ${PIDS[*]-}). Core-service listening on http://localhost:8080. Press Ctrl-C to stop."
 

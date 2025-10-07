@@ -10,10 +10,11 @@ const targetVersion = rootPackage.version;
 
 // Package paths to update (excluding root package.json)
 const packagePaths = [
+  'package.json',
   'core-service/package.json',
   'provisioning-service/package.json',
   'twin-service/package.json',
-  'translator-service/package.json',
+  'application-service/package.json',
   'ui/package.json',
   'examples/nodered/package.json',
   'examples/virtual-device/package.json',

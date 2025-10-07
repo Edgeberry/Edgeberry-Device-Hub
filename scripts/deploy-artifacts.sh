@@ -27,7 +27,7 @@ configure_service_envs() {
   local ETC_DIR="/etc/Edgeberry/devicehub"
   mkdir -p "$ETC_DIR"
   # Force mqtt:// for provisioning and twin; remove TLS/auth keys that are no longer used
-  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env" "$ETC_DIR/translator.env")
+  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env" "$ETC_DIR/translator.env" "$ETC_DIR/application.env")
   local f
   for f in "${files[@]}"; do
     # Create file if missing and set URL
@@ -45,6 +45,12 @@ configure_service_envs() {
   # Core service environment
   local core_env="$ETC_DIR/core.env"
   ensure_env_kv "$core_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
+  
+  # Application service environment
+  local app_env="$ETC_DIR/application.env"
+  ensure_env_kv "$app_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
+  ensure_env_kv "$app_env" "MQTT_URL" "mqtt://127.0.0.1:1883"
+  ensure_env_kv "$app_env" "APPLICATION_PORT" "8090"
 }
 
 # Create or update key=value in an env file idempotently
@@ -128,41 +134,32 @@ ensure_system_deps() {
   fi
 }
 
-# Install Node.js production dependencies for each microservice
+# Skip npm install since node_modules are included in artifacts
+# But rebuild native modules for the target platform
 install_node_deps() {
   local services=(core-service provisioning-service twin-service)
-  services+=(translator-service)
+  services+=(application-service)
   local svc dir
   for svc in "${services[@]}"; do
     dir="${INSTALL_ROOT}/${svc}"
     if [[ -f "${dir}/package.json" ]]; then
-      log "npm install (prod) in ${dir}"
-      pushd "${dir}" >/dev/null
-      # Ensure node-gyp uses python3 and try to use prebuilt binaries when available
-      export npm_config_python="$(command -v python3 || echo python3)"
-      export npm_config_build_from_source="false"
-      # Limit parallelism to reduce memory consumption on small devices
-      export NPM_CONFIG_JOBS=1
-      # Reduce network noise and prefer cache if present
-      local NPM_FLAGS=(--omit=dev --no-fund --no-audit)
-      if [[ "${DEBUG:-}" != "1" ]]; then NPM_FLAGS+=(--silent); fi
-      # If node_modules exists, avoid wiping it on every deploy; prune and rebuild instead
-      if [[ -d node_modules ]]; then
-        log "node_modules exists; pruning prod deps and rebuilding native modules"
-        timeout 20m npm prune --omit=dev || true
-        timeout 20m npm rebuild --omit=dev || true
-      else
-        # Prefer npm ci when lockfile exists; fall back to install
-        if [[ -f package-lock.json ]]; then
-          if ! timeout 25m npm ci "${NPM_FLAGS[@]}"; then
-            log "WARN: npm ci timed out or failed; falling back to npm install"
-            timeout 25m npm install "${NPM_FLAGS[@]}" || true
-          fi
+      if [[ -d "${dir}/node_modules" ]]; then
+        local module_count=$(find "${dir}/node_modules" -maxdepth 1 -type d | wc -l)
+        log "${svc}: node_modules present with $module_count modules (pre-installed)"
+        
+        # Rebuild native modules if needed
+        pushd "${dir}" >/dev/null
+        # Always rebuild all native modules to ensure compatibility
+        log "${svc}: rebuilding native modules for target architecture..."
+        if ! npm rebuild 2>&1 | tail -n 5; then
+          log "ERROR: ${svc}: failed to rebuild native modules - service may not start"
         else
-          timeout 25m npm install "${NPM_FLAGS[@]}" || true
+          log "${svc}: native modules rebuilt successfully"
         fi
+        popd >/dev/null
+      else
+        log "WARN: ${svc}: node_modules missing, service may not start"
       fi
-      popd >/dev/null
     else
       log "skip ${svc}: no package.json"
     fi
@@ -183,6 +180,7 @@ ALLOWED_NAMES=(
   provisioning-service
   twin-service
   translator-service
+  application-service
   config
   scripts
 )
@@ -326,7 +324,7 @@ install_systemd_units() {
     devicehub-core.service \
     devicehub-provisioning.service \
     devicehub-twin.service \
-    devicehub-translator.service \
+    devicehub-application.service \
     edgeberry-ca-rehash.service \
     edgeberry-ca-rehash.path \
     edgeberry-cert-sync.service \
@@ -390,7 +388,7 @@ stop_services() {
   systemctl_safe stop devicehub-core.service || true
   systemctl_safe stop devicehub-provisioning.service || true
   systemctl_safe stop devicehub-twin.service || true
-  systemctl_safe stop devicehub-translator.service || true
+  systemctl_safe stop devicehub-application.service || true
 }
 
 validate_compiled_no_decorators() {
@@ -438,7 +436,7 @@ start_services() {
   systemctl_safe restart devicehub-core.service || true
   systemctl_safe restart devicehub-provisioning.service || true
   systemctl_safe restart devicehub-twin.service || true
-  systemctl_safe restart devicehub-translator.service || true
+  systemctl_safe restart devicehub-application.service || true
   # Start path units to monitor certificate changes
   if ! systemctl_safe start edgeberry-ca-rehash.path; then
     log "WARN: failed to start edgeberry-ca-rehash.path; dumping recent logs"
