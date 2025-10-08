@@ -211,3 +211,19 @@ export async function runSystemSanityCheck(){
   const res = await fetch(base()+'/system/sanity-check', { method:'POST', credentials:'include' });
   return jsonOrMessage(res);
 }
+
+/**
+ * Reboot the system
+ */
+export async function rebootSystem(){
+  const res = await fetch(base()+'/system/reboot', { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}
+
+/**
+ * Shutdown the system
+ */
+export async function shutdownSystem(){
+  const res = await fetch(base()+'/system/shutdown', { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}

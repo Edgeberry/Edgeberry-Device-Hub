@@ -26,7 +26,6 @@ echo "Stopping and disabling services..."
 systemctl stop devicehub-core.service 2>/dev/null || true
 systemctl stop devicehub-provisioning.service 2>/dev/null || true
 systemctl stop devicehub-twin.service 2>/dev/null || true
-systemctl stop devicehub-translator.service 2>/dev/null || true
 systemctl stop edgeberry-ca-rehash.path 2>/dev/null || true
 systemctl stop edgeberry-ca-rehash.service 2>/dev/null || true
 systemctl stop edgeberry-cert-sync.path 2>/dev/null || true
@@ -35,7 +34,6 @@ systemctl stop edgeberry-cert-sync.service 2>/dev/null || true
 systemctl disable devicehub-core.service 2>/dev/null || true
 systemctl disable devicehub-provisioning.service 2>/dev/null || true
 systemctl disable devicehub-twin.service 2>/dev/null || true
-systemctl disable devicehub-translator.service 2>/dev/null || true
 systemctl disable edgeberry-ca-rehash.path 2>/dev/null || true
 systemctl disable edgeberry-ca-rehash.service 2>/dev/null || true
 systemctl disable edgeberry-cert-sync.path 2>/dev/null || true
@@ -46,7 +44,6 @@ echo "Removing systemd unit files..."
 rm -f /etc/systemd/system/devicehub-core.service
 rm -f /etc/systemd/system/devicehub-provisioning.service
 rm -f /etc/systemd/system/devicehub-twin.service
-rm -f /etc/systemd/system/devicehub-translator.service
 rm -f /etc/systemd/system/edgeberry-ca-rehash.service
 rm -f /etc/systemd/system/edgeberry-ca-rehash.path
 rm -f /etc/systemd/system/edgeberry-cert-sync.service

@@ -27,26 +27,40 @@ class CoreTwinInterface {
     return JSON.stringify([]);
   }
 
+  async GetDeviceStatuses(): Promise<string> {
+    // This is a stub - the actual implementation should be in twin-service
+    // For now, return empty object until proper D-Bus client call is implemented
+    return JSON.stringify({});
+  }
+
   async UpdateDeviceStatus(deviceId: string, status: string, timestamp: string): Promise<string> {
     const timestampNum = parseInt(timestamp);
-    console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${new Date(timestampNum).toISOString()}`);
+    const isOnline = status === 'online';
+    const timestampIso = new Date(timestampNum).toISOString();
     
-    // Broadcast device status update via WebSocket
+    console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${timestampIso} - broadcasting immediately`);
+    
+    // Broadcast device status update via WebSocket immediately
     if (broadcastFunction) {
       const statusUpdate = {
         deviceId,
-        status: status === 'online',
-        timestamp: new Date(timestampNum).toISOString(),
-        last_seen: status === 'offline' ? new Date(timestampNum).toISOString() : null
+        status: isOnline,
+        timestamp: timestampIso,
+        last_seen: isOnline ? null : timestampIso
       };
       
-      // Broadcast to both authenticated and public device status topics
-      broadcastFunction('device.status', { type: 'device.status', data: statusUpdate });
-      broadcastFunction('device.status.public', { type: 'device.status.public', data: { 
-        deviceId, 
-        status: status === 'online',
-        timestamp: new Date(timestampNum).toISOString()
-      }});
+      // Use setImmediate to ensure immediate broadcast
+      setImmediate(() => {
+        broadcastFunction('device.status', { type: 'device.status', data: statusUpdate });
+        broadcastFunction('device.status.public', { type: 'device.status.public', data: { 
+          deviceId, 
+          status: isOnline,
+          timestamp: timestampIso
+        }});
+        console.log(`[core-service] Broadcasted ${deviceId} status (${status}) via WebSocket`);
+      });
+    } else {
+      console.warn(`[core-service] No broadcast function available for device status update`);
     }
     
     return JSON.stringify({ success: true });
@@ -92,6 +106,14 @@ export async function startCoreTwinDbusServer(bus: any): Promise<any> {
         throw error;
       }
     },
+    GetDeviceStatuses: async () => {
+      try {
+        const result = await twinService.GetDeviceStatuses();
+        return result;
+      } catch (error) {
+        throw error;
+      }
+    },
     UpdateDeviceStatus: async (deviceId: string, status: string, timestamp: string) => {
       try {
         const result = await twinService.UpdateDeviceStatus(deviceId, status, timestamp);
@@ -110,6 +132,7 @@ export async function startCoreTwinDbusServer(bus: any): Promise<any> {
       SetDesired: ['ss', 's'],
       SetReported: ['ss', 's'],
       ListDevices: ['', 's'],
+      GetDeviceStatuses: ['', 's'],
       UpdateDeviceStatus: ['sss', 's']
     },
     signals: {}

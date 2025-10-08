@@ -217,7 +217,10 @@ export default function Settings(_props:{user:any}){
       <Row className='g-3'>
         <Col md={6}>
           <Card className='mb-3'>
-            <Card.Header>Server</Card.Header>
+            <Card.Header>
+              <i className="fa-solid fa-server me-2"></i>
+              Server
+            </Card.Header>
             <Card.Body>
               {loading && !server ? <Spinner animation='border' size='sm'/> : (
                 <div>
@@ -232,7 +235,10 @@ export default function Settings(_props:{user:any}){
 
         <Col md={6}>
           <Card className='mb-3'>
-            <Card.Header>Root CA</Card.Header>
+            <Card.Header>
+              <i className="fa-solid fa-certificate me-2"></i>
+              Root CA
+            </Card.Header>
             <Card.Body>
               {root ? (
                 <div>
@@ -266,7 +272,10 @@ export default function Settings(_props:{user:any}){
       </Row>
 
       <Card className='mb-3'>
-        <Card.Header>Provisioning Whitelist</Card.Header>
+        <Card.Header>
+          <i className="fa-solid fa-list-check me-2"></i>
+          Provisioning Whitelist
+        </Card.Header>
         <Card.Body>
           <Form onSubmit={(e)=>{e.preventDefault(); createWhitelistEntry();}}>
             <Row className='g-2'>
@@ -325,7 +334,10 @@ export default function Settings(_props:{user:any}){
       </Card>
 
       <Card className='mb-3'>
-        <Card.Header>Device Lifecycle Status</Card.Header>
+        <Card.Header>
+          <i className="fa-solid fa-chart-pie me-2"></i>
+          Device Lifecycle Status
+        </Card.Header>
         <Card.Body>
           <div style={{marginBottom:10}}>
             <Badge bg='secondary' style={{marginRight:8}}>Total {devices.length}</Badge>
@@ -369,7 +381,10 @@ export default function Settings(_props:{user:any}){
       </Card>
 
       <Card className='mb-3'>
-        <Card.Header>Provisioning Certificates</Card.Header>
+        <Card.Header>
+          <i className="fa-solid fa-id-card me-2"></i>
+          Provisioning Certificates
+        </Card.Header>
         <Card.Body>
           <Form onSubmit={(e)=>{e.preventDefault(); issueProvisioning();}}>
             <Row className='g-2'>

@@ -153,7 +153,16 @@ export function startMqtt(): MqttClient {
           }
           
           if (ENFORCE_WHITELIST && uuid) {
-            try { await dbusMarkUsed(uuid); } catch {}
+            try { 
+              const markResult = await dbusMarkUsed(uuid);
+              if (markResult.ok) {
+                console.log(`[${SERVICE}] marked UUID as used: ${uuid}`);
+              } else {
+                console.warn(`[${SERVICE}] failed to mark UUID as used: ${uuid} - ${markResult.error}`);
+              }
+            } catch (err) {
+              console.error(`[${SERVICE}] error marking UUID as used: ${uuid}`, err);
+            }
           }
           const respTopic = TOPICS.accepted(uuid);
           console.log(`[${SERVICE}] provision accepted for uuid=${uuid}; publishing ${respTopic}`);

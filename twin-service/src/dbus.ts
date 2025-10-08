@@ -109,6 +109,17 @@ export async function dbusUpdateDeviceStatus(deviceId: string, status: string, t
   }
 }
 
+export async function dbusGetDeviceStatuses(): Promise<Record<string, { online: boolean; last_seen: string | null }>> {
+  try {
+    const result = await callDbusMethod(CORE_BUS_NAME, TWIN_OBJECT_PATH, TWIN_IFACE_NAME, 'GetDeviceStatuses');
+    const response = JSON.parse(result[0] as string);
+    return response;
+  } catch (error: any) {
+    console.error(`[${SERVICE}] Failed to get device statuses via D-Bus:`, error);
+    return {};
+  }
+}
+
 /** Get all device statuses from the twin-service database */
 export function getAllDeviceStatusesFromDb(): Record<string, { online: boolean; last_seen: string | null }> {
   try {

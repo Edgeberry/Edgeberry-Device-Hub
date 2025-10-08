@@ -27,7 +27,7 @@ configure_service_envs() {
   local ETC_DIR="/etc/Edgeberry/devicehub"
   mkdir -p "$ETC_DIR"
   # Force mqtt:// for provisioning and twin; remove TLS/auth keys that are no longer used
-  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env" "$ETC_DIR/translator.env" "$ETC_DIR/application.env")
+  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env" "$ETC_DIR/application.env")
   local f
   for f in "${files[@]}"; do
     # Create file if missing and set URL
@@ -179,7 +179,6 @@ ALLOWED_NAMES=(
   core-service
   provisioning-service
   twin-service
-  translator-service
   application-service
   config
   scripts
@@ -418,7 +417,6 @@ enable_services() {
   systemctl_safe enable devicehub-core.service || true
   systemctl_safe enable devicehub-provisioning.service || true
   systemctl_safe enable devicehub-twin.service || true
-  systemctl_safe enable devicehub-translator.service || true
   # Enable CA rehash path (auto-reload broker when CA dir changes)
   systemctl_safe enable edgeberry-ca-rehash.path || true
   systemctl_safe enable edgeberry-ca-rehash.service || true

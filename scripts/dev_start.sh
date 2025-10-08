@@ -79,9 +79,6 @@ start_service() {
     twin-service)
       ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
       ;;
-    translator-service)
-      ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
-      ;;
     application-service)
       ENV_VARS+=("MQTT_URL=mqtt://127.0.0.1:1883")
       ENV_VARS+=("APPLICATION_PORT=8090")
@@ -125,8 +122,6 @@ ensure_deps() {
 ensure_deps "$ROOT_DIR/core-service"
 ensure_deps "$ROOT_DIR/provisioning-service"
 ensure_deps "$ROOT_DIR/twin-service"
-# translator-service
-ensure_deps "$ROOT_DIR/translator-service"
 
 if [[ "${DEV_MOSQUITTO:-0}" = "1" ]]; then
   start_mosquitto
@@ -169,7 +164,6 @@ fi
 start_service core-service core-service
 start_service provisioning-service provisioning-service
 start_service twin-service twin-service
-start_service translator-service translator-service
 start_service application-service application-service
 
 log "all dev processes started (PIDs: ${PIDS[*]-}). Core-service listening on http://localhost:8080. Press Ctrl-C to stop."

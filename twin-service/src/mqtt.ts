@@ -60,16 +60,20 @@ function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean): void
       .run(deviceId, `$SYS/broker/clients/${deviceId}`, payload);
     
     db.close();
-    console.log(`[${SERVICE}] Device ${deviceId} is now ${status}`);
+    console.log(`[${SERVICE}] Device ${deviceId} is now ${status} - reporting to core-service immediately`);
     
-    // Report status change to core-service via D-Bus
-    dbusUpdateDeviceStatus(deviceId, status, timestamp).then((result) => {
-      // result is boolean - true means success
-      if (!result) {
-        console.error(`[${SERVICE}] Failed to report device status to core-service`);
+    // Report status change to core-service via D-Bus immediately
+    setImmediate(async () => {
+      try {
+        const result = await dbusUpdateDeviceStatus(deviceId, status, timestamp);
+        if (result) {
+          console.log(`[${SERVICE}] Successfully reported ${deviceId} status (${status}) to core-service`);
+        } else {
+          console.error(`[${SERVICE}] Failed to report device status to core-service for ${deviceId}`);
+        }
+      } catch (error) {
+        console.error(`[${SERVICE}] Error reporting device status to core-service for ${deviceId}:`, error);
       }
-    }).catch((error) => {
-      console.error(`[${SERVICE}] Error reporting device status to core-service:`, error);
     });
   } catch (error) {
     console.error(`[${SERVICE}] Failed to record connection status for device ${deviceId}:`, error);
@@ -149,11 +153,28 @@ export function startMqtt(db: any): MqttClient {
       if (err) console.error(`[${SERVICE}] subscribe update error`, err);
     });
     // Subscribe to Mosquitto client connection events for device tracking
-    client.subscribe('$SYS/broker/log/N', (err) => {
+    client.subscribe('$SYS/broker/log/N', { qos: 1 }, (err) => {
       if (err) {
         console.error(`[${SERVICE}] failed to subscribe to client events:`, err);
       } else {
         console.log(`[${SERVICE}] subscribed to client connection events`);
+      }
+    });
+    
+    // Also subscribe to additional system topics for more comprehensive monitoring
+    client.subscribe('$SYS/broker/clients/connected', { qos: 1 }, (err) => {
+      if (err) {
+        console.error(`[${SERVICE}] failed to subscribe to connected clients:`, err);
+      } else {
+        console.log(`[${SERVICE}] subscribed to connected clients count`);
+      }
+    });
+    
+    client.subscribe('$SYS/broker/clients/disconnected', { qos: 1 }, (err) => {
+      if (err) {
+        console.error(`[${SERVICE}] failed to subscribe to disconnected clients:`, err);
+      } else {
+        console.log(`[${SERVICE}] subscribed to disconnected clients count`);
       }
     });
   });
@@ -168,8 +189,9 @@ export function startMqtt(db: any): MqttClient {
         
         // Parse connection messages: "New client connected from <ip>:<port> as <clientId>"
         // Parse disconnection messages: "Client <clientId> closed its connection" or "Client <clientId> disconnected"
+        // Also handle: "Client <clientId> has exceeded timeout, disconnecting."
         const connectMatch = message.match(/New client connected from [^\s]+ as ([^\s]+)/);
-        const disconnectMatch = message.match(/Client ([^\s]+) (?:closed its connection|disconnected)/);
+        const disconnectMatch = message.match(/Client ([^\s]+) (?:closed its connection|disconnected|has exceeded timeout, disconnecting)/);
         
         if (connectMatch) {
           const clientId = connectMatch[1];

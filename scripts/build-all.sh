@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Clean build all microservices and package as single artifact
-# Services: core-service, provisioning-service, twin-service, translator-service, application-service, ui
+# Services: core-service, provisioning-service, twin-service, application-service, ui
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ART_DIR="${ROOT_DIR}/dist-artifacts"

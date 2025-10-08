@@ -240,7 +240,10 @@ export default function Overview(props:{user:any}){
 
       <Card>
         <Card.Header className="d-flex justify-content-between align-items-center">
-          <span>Devices</span>
+          <div>
+            <i className="fa-solid fa-microchip me-2"></i>
+            Devices
+          </div>
           <div className="d-flex gap-2">
             <Button size="sm" variant="outline-secondary" onClick={()=> setShowWhitelist(true)} disabled={!props.user}>
               Whitelist

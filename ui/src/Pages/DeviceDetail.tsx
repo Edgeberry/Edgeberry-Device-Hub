@@ -21,7 +21,10 @@ export default function DeviceDetail(props:{user:any}){
   useEffect(()=>{ (async()=>{ if(assetId){ const d = await getDevice(assetId); setDevice(d); } })(); },[assetId]);
   return (
     <Card>
-      <Card.Header>Device: {assetId}</Card.Header>
+      <Card.Header>
+        <i className="fa-solid fa-microchip me-2"></i>
+        Device: {assetId}
+      </Card.Header>
       <Card.Body>
         <pre style={{margin:0}}>{JSON.stringify(device,null,2)}</pre>
       </Card.Body>

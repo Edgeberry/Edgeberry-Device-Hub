@@ -9,7 +9,7 @@ import { Badge, Button, Card, Col, Modal, Row, Spinner, Tab, Tabs } from 'react-
 import { 
   getServices, getServiceLogs, startService, stopService, restartService,
   getMetrics, getHealth, getStatus, getPublicConfig,
-  runSystemSanityCheck
+  runSystemSanityCheck, rebootSystem, shutdownSystem
 } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
@@ -588,7 +588,10 @@ export default function SystemWidget(props: { user: any | null }) {
   return (
     <Card className="mb-3" data-testid="system-widget">
       <Card.Header className="d-flex justify-content-between align-items-center">
-        <span>System</span>
+        <div>
+          <i className="fa-solid fa-server me-2"></i>
+          System
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button
             size="sm"
@@ -755,9 +758,12 @@ export default function SystemWidget(props: { user: any | null }) {
                   if (!confirm('Reboot the server now? This will interrupt connectivity.')) return;
                   setPowerBusy(true); setPowerErr(''); setPowerMsg('');
                   try {
-                    const res = await fetch('/api/system/reboot', { method: 'POST', credentials: 'include' });
-                    const data = await res.json();
-                    setPowerMsg(data?.message || 'Reboot requested');
+                    const data = await rebootSystem();
+                    if (data?.ok) {
+                      setPowerMsg(data?.message || 'Reboot requested');
+                    } else {
+                      setPowerErr(data?.error || 'Failed to request reboot');
+                    }
                   } catch (e: any) {
                     setPowerErr(e?.message || 'Failed to request reboot');
                   } finally {
@@ -774,9 +780,12 @@ export default function SystemWidget(props: { user: any | null }) {
                   if (!confirm('Shutdown the server now? This will power off the device.')) return;
                   setPowerBusy(true); setPowerErr(''); setPowerMsg('');
                   try {
-                    const res = await fetch('/api/system/shutdown', { method: 'POST', credentials: 'include' });
-                    const data = await res.json();
-                    setPowerMsg(data?.message || 'Shutdown requested');
+                    const data = await shutdownSystem();
+                    if (data?.ok) {
+                      setPowerMsg(data?.message || 'Shutdown requested');
+                    } else {
+                      setPowerErr(data?.error || 'Failed to request shutdown');
+                    }
                   } catch (e: any) {
                     setPowerErr(e?.message || 'Failed to request shutdown');
                   } finally {

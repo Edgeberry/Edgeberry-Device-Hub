@@ -1385,11 +1385,16 @@ function getDevicesListSync(): { devices: Array<{ uuid: string; name: string; to
 }
 
 function getTwinServiceDeviceStatuses(): Record<string, { online: boolean; last_seen: string | null }> {
-  const twinDbPath = '/opt/Edgeberry/devicehub/twin-service/twin.db';
-  const db = openDb(twinDbPath);
-  if (!db) { return {}; }
-  
+  // Get device statuses from twin-service database directly
+  // This is a temporary solution until proper async D-Bus calls are implemented
   try {
+    const twinDbPath = process.env.TWIN_DB || '/var/lib/edgeberry/devicehub/twin.db';
+    const db = openDb(twinDbPath);
+    if (!db) {
+      console.error('[core-service] Failed to open twin database:', twinDbPath);
+      return {};
+    }
+    
     // Ensure device_events table exists
     db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1425,12 +1430,12 @@ function getTwinServiceDeviceStatuses(): Record<string, { online: boolean; last_
       }
     }
     
+    db.close();
+    console.log(`[core-service] Retrieved device statuses:`, result);
     return result;
   } catch (error) {
-    console.error('[core-service] Failed to get device statuses from twin-service:', error);
+    console.error('[core-service] Failed to get device statuses from twin-service database:', error);
     return {};
-  } finally {
-    try { db.close(); } catch {}
   }
 }
 
@@ -1977,7 +1982,7 @@ app.post('/api/system/reboot', authRequired, async (req: Request, res: Response)
     console.log('[core-service] System reboot requested by admin');
     
     // Schedule reboot with a 1-minute delay to allow response to be sent
-    const proc = spawn('shutdown', ['-r', 'now'], { 
+    const proc = spawn('shutdown', ['-r', '+1'], { 
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true
     });
@@ -2024,7 +2029,7 @@ app.post('/api/system/shutdown', authRequired, async (req: Request, res: Respons
     console.log('[core-service] System shutdown requested by admin');
     
     // Schedule shutdown with a 1-minute delay to allow response to be sent
-    const proc = spawn('shutdown', ['-h', 'now'], { 
+    const proc = spawn('shutdown', ['-h', '+1'], { 
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true
     });

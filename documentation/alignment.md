@@ -464,7 +464,7 @@ Anonymous access (Observer mode):
 
 - **`application-service/`** — Cloud Application Interface Service (Cloud Bridge)
   - **Primary cloud-side bridge** for external applications and cloud integrations
-  - Replaces the initial translator-service concept with a comprehensive API gateway
+  - Replaces the obsolete translator-service with a comprehensive API gateway
   - Bridge between cloud applications (e.g., Node-RED, custom dashboards) and Device Hub
   - Dual-protocol approach: REST API for management, WebSocket for real-time data
   - Token-based authentication for secure API access
@@ -473,7 +473,7 @@ Anonymous access (Observer mode):
   
   **Cloud Bridge Architecture:**
   - **Purpose:** Serves as the definitive cloud-side interface for Device Hub
-  - **Replaces:** Initial translator-service concept with full-featured API gateway
+  - **Replaces:** Obsolete translator-service with full-featured API gateway
   - **Integration Model:** External applications connect exclusively through this service
   - **Security:** Token-based authentication prevents direct database/MQTT access
   
@@ -744,7 +744,7 @@ CI and releases:
 - Release packaging (MVP): on GitHub release publish, the workflow runs `scripts/build-all.sh` to produce per-service artifacts under `dist-artifacts/` named `devicehub-<service>-<version>.tar.gz`, and uploads them as release assets. Consumers install them on target hosts using `sudo bash scripts/deploy-artifacts.sh <artifact_dir>` or deploy remotely using `scripts/deploy.sh`.
  - Additionally, the Node-RED example under `examples/nodered/` is built and uploaded as a packaged tarball asset for easy install/testing.
  - The `release_node-clients.yml` workflow automatically publishes both `@edgeberry/devicehub-device-client` and `@edgeberry/devicehub-app-client` npm packages on release, with versions matching the release tag.
- - **Note:** The translator-service has been removed and replaced by application-service as the primary cloud bridge.
+ - **Note:** The obsolete translator-service has been removed and replaced by application-service as the primary cloud bridge.
 
 ### Deployment Process (SSH)
 
