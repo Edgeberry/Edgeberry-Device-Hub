@@ -709,7 +709,7 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
    * Schedule reconnection with exponential backoff
    */
   private scheduleReconnect(): void {
-    if (!this.connected) return; // Don't reconnect if already disconnected
+    if (this.connected) return; // Don't reconnect if already connected
 
     const maxDelayMs = 30000;
     const baseDelayMs = 1000;
