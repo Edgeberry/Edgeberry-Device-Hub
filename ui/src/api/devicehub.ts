@@ -227,3 +227,11 @@ export async function shutdownSystem(){
   const res = await fetch(base()+'/system/shutdown', { method:'POST', credentials:'include' });
   return jsonOrMessage(res);
 }
+
+/**
+ * Refresh JWT token to extend session
+ */
+export async function refreshAuthToken(){
+  const res = await fetch(base()+'/auth/refresh', { method:'POST', credentials:'include' });
+  return jsonOrMessage(res);
+}

@@ -934,6 +934,7 @@ For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT
 - Endpoints:
   - `POST /api/auth/login` with `{ username, password }` → issues a signed JWT and sets it in an HttpOnly cookie `fh_session`. Returns `{ ok, user, exp }` where `exp` is the JWT expiration Unix timestamp.
   - `POST /api/auth/logout` → clears the cookie.
+  - `POST /api/auth/refresh` → renews JWT token with fresh expiration. Requires valid session. Returns `{ ok, user, exp }` with new expiration timestamp.
   - `GET /api/auth/me` → verifies JWT and returns `{ authenticated: boolean, user?: string, exp?: number }` where `exp` is the JWT expiration Unix timestamp.
 - Token:
   - Stored in cookie `fh_session` (HttpOnly, SameSite=Lax; set `Secure` when served over HTTPS).
@@ -953,7 +954,7 @@ For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT
   - **Auto-logout:** User is automatically logged out when session expires
   - **Page Visibility Detection:** Session validity is checked when page becomes visible (e.g., after laptop sleep)
   - **Auto-refresh:** Page automatically refreshes on login/logout to ensure clean state
-  - **Stay Logged In:** User can extend session via modal button (re-authenticates)
+  - **Token Renewal:** User can extend session via "Stay Logged In" button which calls `/api/auth/refresh` to issue a new token with fresh expiration
 - UI behavior:
   - The SPA reads auth state from `GET /api/auth/me` and conditionally renders admin UI.
   - Navbar shows "Signed in as <admin>"; Logout is available in the menu.

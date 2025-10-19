@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import ExpirationWarningModal from './ExpirationWarningModal';
+import { refreshAuthToken } from '../api/devicehub';
 
 interface SessionManagerProps {
   user: any;
@@ -136,18 +137,25 @@ export default function SessionManager({ user, onSessionExpired }: SessionManage
     };
   }, [expiresAt, user, onSessionExpired, showWarning]);
 
-  // Handle "Stay Logged In" button - refresh session by re-fetching auth status
+  // Handle "Stay Logged In" button - refresh JWT token to extend session
   const handleExtendSession = useCallback(async () => {
-    const newExp = await fetchSessionExpiration();
-    if (newExp) {
-      // Session is still valid, close warning
-      setShowWarning(false);
-      warningShownRef.current = false;
-    } else {
-      // Session is invalid, log out
+    try {
+      // Call refresh endpoint to get a new token with fresh expiration
+      const result = await refreshAuthToken();
+      if (result.ok && result.exp) {
+        // Token successfully refreshed, update expiration
+        setExpiresAt(result.exp);
+        setShowWarning(false);
+        warningShownRef.current = false;
+      } else {
+        // Refresh failed, log out
+        onSessionExpired();
+      }
+    } catch (err) {
+      console.error('Failed to refresh token:', err);
       onSessionExpired();
     }
-  }, [fetchSessionExpiration, onSessionExpired]);
+  }, [onSessionExpired]);
 
   if (!user) {
     return null;

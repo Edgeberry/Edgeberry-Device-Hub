@@ -759,6 +759,20 @@ app.post('/api/auth/logout', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// POST /api/auth/refresh -> renew JWT token with fresh expiration
+app.post('/api/auth/refresh', (req: Request, res: Response) => {
+  const s = getSession(req);
+  if (!s) { 
+    res.status(401).json({ ok: false, error: 'unauthorized' }); 
+    return; 
+  }
+  // Issue a new token with fresh expiration
+  const token = jwt.sign({ user: s.user }, JWT_SECRET, { algorithm: 'HS256', expiresIn: JWT_TTL_SECONDS, subject: s.user });
+  const decoded = jwt.decode(token) as { exp?: number };
+  setSessionCookie(res, token);
+  res.json({ ok: true, user: s.user, exp: decoded?.exp });
+});
+
 // GET /api/auth/me -> verify cookie and report authentication status
 app.get('/api/auth/me', (req: Request, res: Response) => {
   const s = getSession(req);
