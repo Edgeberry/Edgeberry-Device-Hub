@@ -745,8 +745,9 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   const { username, password } = req.body || {};
   if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
     const token = jwt.sign({ user: ADMIN_USER }, JWT_SECRET, { algorithm: 'HS256', expiresIn: JWT_TTL_SECONDS, subject: ADMIN_USER });
+    const decoded = jwt.decode(token) as { exp?: number };
     setSessionCookie(res, token);
-    res.json({ ok: true, user: ADMIN_USER });
+    res.json({ ok: true, user: ADMIN_USER, exp: decoded?.exp });
   } else {
     res.status(401).json({ ok: false, error: 'invalid credentials' });
   }
@@ -762,7 +763,7 @@ app.post('/api/auth/logout', (_req: Request, res: Response) => {
 app.get('/api/auth/me', (req: Request, res: Response) => {
   const s = getSession(req);
   if (!s) { res.status(401).json({ authenticated: false }); return; }
-  res.json({ authenticated: true, user: s.user });
+  res.json({ authenticated: true, user: s.user, exp: s.exp });
 });
 
 // Middleware moved to src/auth.ts

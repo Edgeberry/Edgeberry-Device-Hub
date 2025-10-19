@@ -932,9 +932,9 @@ For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT
 - Login required for all UI pages and `/api/*` endpoints, except health (`/healthz`, `/api/health`) and auth endpoints.
 - No registration endpoint exists in the MVP; UI hides any register links.
 - Endpoints:
-  - `POST /api/auth/login` with `{ username, password }` → issues a signed JWT and sets it in an HttpOnly cookie `fh_session`.
+  - `POST /api/auth/login` with `{ username, password }` → issues a signed JWT and sets it in an HttpOnly cookie `fh_session`. Returns `{ ok, user, exp }` where `exp` is the JWT expiration Unix timestamp.
   - `POST /api/auth/logout` → clears the cookie.
-  - `GET /api/auth/me` → verifies JWT and returns `{ authenticated: boolean, user?: string }`.
+  - `GET /api/auth/me` → verifies JWT and returns `{ authenticated: boolean, user?: string, exp?: number }` where `exp` is the JWT expiration Unix timestamp.
 - Token:
   - Stored in cookie `fh_session` (HttpOnly, SameSite=Lax; set `Secure` when served over HTTPS).
   - Signed with `JWT_SECRET` using HS256.
@@ -943,10 +943,20 @@ For the dashboard and HTTP APIs, the MVP uses a single-user admin login with JWT
   - `ADMIN_USER` (default `admin`)
   - `ADMIN_PASSWORD` (MUST be set in production)
   - `JWT_SECRET` (MUST be strong in production; default dev value only for local use)
-  - `JWT_TTL_SECONDS` (optional)
+  - `JWT_TTL_SECONDS` (optional, default 86400 seconds = 24 hours)
+    - Configurable via environment variable in `/etc/edgeberry/devicehub/core.env`
+    - Common values: 3600 (1h), 28800 (8h), 86400 (24h), 604800 (7d)
+    - Set during deployment; defaults to 24 hours if not specified
+- UI Session Management:
+  - **Expiration Tracking:** SessionManager component monitors JWT expiration in real-time
+  - **Warning Modal:** Displays 20 seconds before session expires with countdown timer
+  - **Auto-logout:** User is automatically logged out when session expires
+  - **Page Visibility Detection:** Session validity is checked when page becomes visible (e.g., after laptop sleep)
+  - **Auto-refresh:** Page automatically refreshes on login/logout to ensure clean state
+  - **Stay Logged In:** User can extend session via modal button (re-authenticates)
 - UI behavior:
   - The SPA reads auth state from `GET /api/auth/me` and conditionally renders admin UI.
-  - Navbar shows “Signed in as <admin>”; Logout is available in the menu.
+  - Navbar shows "Signed in as <admin>"; Logout is available in the menu.
   - Server no longer injects a separate auth bar into `index.html`; duplication was removed. Registration affordances may still be hidden best-effort via a small injected script.
 
 ### Settings & Certificate Management

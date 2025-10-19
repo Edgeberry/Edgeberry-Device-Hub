@@ -16,7 +16,7 @@ export function parseCookies(header?: string): Record<string, string> {
   return out;
 }
 
-export function getSession(req: Request): { user: string } | null {
+export function getSession(req: Request): { user: string; exp?: number } | null {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies[SESSION_COOKIE];
   if (!token) return null;
@@ -24,7 +24,7 @@ export function getSession(req: Request): { user: string } | null {
     const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string; iat?: number; exp?: number };
     const user = payload.user || payload.sub;
     if (!user) return null;
-    return { user };
+    return { user, exp: payload.exp };
   } catch {
     return null;
   }

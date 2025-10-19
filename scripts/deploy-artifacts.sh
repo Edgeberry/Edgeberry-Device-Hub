@@ -45,6 +45,8 @@ configure_service_envs() {
   # Core service environment
   local core_env="$ETC_DIR/core.env"
   ensure_env_kv "$core_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
+  # JWT session timeout in seconds (default 24 hours = 86400)
+  ensure_env_kv "$core_env" "JWT_TTL_SECONDS" "${JWT_TTL_SECONDS:-86400}"
   
   # Application service environment
   local app_env="$ETC_DIR/application.env"
