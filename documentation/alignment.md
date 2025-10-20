@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-09-04 12:05 CEST
+**Last updated:** 2025-10-20 17:45 CEST
 
 ## Documentation Strategy
 
@@ -579,10 +579,25 @@ Anonymous access (Observer mode):
   - **`examples/app-client/`** — TypeScript library for application-side integration
     - REST API client for device management and data retrieval
     - WebSocket client for real-time device updates and events
-    - Professional Node-RED integration with three nodes (input, output, config)
+    - Token-based authentication for secure API access
     - **Build:** `npm install && npm run build` in this folder; outputs to `examples/app-client/dist/`
-    - **Node-RED Install:** `cd examples && npm install -g .` to install Node-RED nodes globally
-    - CI will build and publish both client libraries to npm for independent use
+    - **Package:** Published as `@edgeberry/devicehub-app-client` on npm
+    - **Usage:** `import DeviceHubAppClient from '@edgeberry/devicehub-app-client'`
+  - **`examples/app-client/examples/`** — Node-RED integration nodes
+    - **Package:** `@edgeberry/devicehub-node-red-contrib` — Official Node-RED nodes for Device Hub
+    - **Architecture:** Two-node design with shared configuration
+      - **Device Hub Config Node:** Reusable configuration for connection settings (host, port, token, HTTPS)
+      - **Device Node:** Represents a single device with bidirectional communication (1 input, 1 output)
+    - **Features:**
+      - Real-time telemetry and event streaming via WebSocket
+      - Direct method invocation (identify, reboot, custom methods)
+      - Device twin updates (desired properties)
+      - Connection status indicators (connecting, connected, disconnected)
+      - Message type routing (telemetry, event, status, twin, method-response)
+    - **Branding:** Edgeberry Electric Blue (#0007FF) with white Edgeberry logo icon
+    - **Installation:** `npm install @edgeberry/devicehub-node-red-contrib` in Node-RED user directory
+    - **Build:** `npm install && npm run build` outputs to `dist/` with icons
+    - CI automatically publishes to npm on release
 
 #### Configuration
 - **`config/`** — System configuration files

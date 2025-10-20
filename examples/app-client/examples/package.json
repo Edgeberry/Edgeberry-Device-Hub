@@ -1,10 +1,10 @@
 {
   "name": "@edgeberry/devicehub-node-red-contrib",
-  "version": "1.3.8",
+  "version": "1.4.3",
   "description": "Node-RED nodes for Edgeberry Device Hub application integration",
   "main": "dist/node-red-device-node.js",
   "scripts": {
-    "build": "tsc && cp node-red-device-node.html dist/node-red-device-node.html",
+    "build": "tsc && cp node-red-device-node.html dist/node-red-device-node.html && cp -r icons dist/",
     "clean": "rimraf dist",
     "dev": "run-p dev:ts dev:html",
     "dev:ts": "tsc -w",
@@ -28,7 +28,6 @@
   },
   "files": [
     "dist/**/*",
-    "icons/**/*",
     "README.md",
     "package.json"
   ],
@@ -36,7 +35,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@edgeberry/devicehub-app-client": "^0.1.0"
+    "@edgeberry/devicehub-app-client": "^1.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.28",

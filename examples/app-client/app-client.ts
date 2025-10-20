@@ -241,22 +241,30 @@ export class DeviceHubAppClient extends EventEmitter {
           } as TelemetryData);
           break;
         case 'status':
-          this.emit('device-status', {
+          this.emit('status', {
             deviceId,
             status: data.online ? 'online' : 'offline'
           });
           break;
         case 'events':
-          this.emit('device-event', {
+          this.emit('event', {
             deviceId,
-            eventType: 'device-event',
+            eventType: data.eventType || 'device-event',
             timestamp: new Date().toISOString(),
             data
           } as DeviceEvent);
           break;
+        case 'twin':
+          this.emit('twin', {
+            deviceId,
+            data
+          });
+          break;
         default:
           this.emit('message', message);
       }
+    } else if (message.type === 'connected') {
+      this.emit('connected');
     } else {
       this.emit('message', message);
     }

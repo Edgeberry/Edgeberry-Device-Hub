@@ -18,14 +18,19 @@ npm install @edgeberry/devicehub-app-client
 
 ## Quick Start
 
+### TypeScript/ESM
+
 ```typescript
-import { DeviceHubAppClient } from '@edgeberry/devicehub-app-client';
+import DeviceHubAppClient from '@edgeberry/devicehub-app-client';
 
 const client = new DeviceHubAppClient({
   host: 'localhost',
   port: 8090,
   token: 'your-api-token'
 });
+
+// Connect to Device Hub
+await client.connect();
 
 // Get all devices
 const devices = await client.getDevices();
@@ -39,6 +44,25 @@ client.startTelemetryStream(['*'], (data) => {
 // Call device method
 const response = await client.callDeviceMethod('device-id', 'identify', { duration: 5 });
 console.log('Method response:', response);
+```
+
+### CommonJS (Node.js)
+
+```javascript
+const DeviceHubAppClient = require('@edgeberry/devicehub-app-client').default;
+
+const client = new DeviceHubAppClient({
+  host: 'localhost',
+  port: 8090,
+  token: 'your-api-token'
+});
+
+// Connect and use
+client.connect().then(() => {
+  client.getDevices().then(devices => {
+    console.log('Devices:', devices);
+  });
+});
 ```
 
 ## API Reference

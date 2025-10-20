@@ -6,7 +6,7 @@
  * - Outputs: Telemetry, events, and status updates from the device
  */
 
-const EdgeberryDeviceHubAppClient = require('@edgeberry/devicehub-app-client').default;
+const DeviceHubAppClient = require('@edgeberry/devicehub-app-client').default;
 
 module.exports = function(RED) {
     "use strict";
@@ -63,7 +63,7 @@ module.exports = function(RED) {
         // Initialize connection to Device Hub
         async function initializeClient() {
             try {
-                client = new EdgeberryDeviceHubAppClient({
+                client = new DeviceHubAppClient({
                     host: hubConfig.host,
                     port: parseInt(hubConfig.port),
                     secure: hubConfig.secure || false,
@@ -73,12 +73,10 @@ module.exports = function(RED) {
 
                 await client.connect();
                 
-                // Wait for WebSocket to be ready before showing connected
-                if (client.ws && client.ws.readyState === 1) {
-                    node.status({fill: "green", shape: "dot", text: `connected: ${node.deviceName}`});
-                } else {
-                    node.status({fill: "yellow", shape: "ring", text: "connecting..."});
-                }
+                // Subscribe to this device's telemetry and events
+                client.startTelemetryStream([node.deviceName]);
+                
+                node.status({fill: "yellow", shape: "ring", text: "connecting..."});
 
                 // Set up event listeners for device messages
                 setupDeviceListeners();
@@ -177,12 +175,11 @@ module.exports = function(RED) {
                             return;
                         }
                         
-                        const response = await client.callDirectMethod({
-                            deviceId: node.deviceName,
-                            methodName: msg.methodName,
-                            payload: msg.payload,
-                            timeout: msg.timeout || 30000
-                        });
+                        const response = await client.callDeviceMethod(
+                            node.deviceName,
+                            msg.methodName,
+                            msg.payload
+                        );
                         
                         node.send({
                             topic: `method-response/${node.deviceName}/${msg.methodName}`,
