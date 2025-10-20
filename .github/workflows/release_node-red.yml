@@ -38,10 +38,7 @@ jobs:
       - name: Publish Node-RED package to npm
         run: |
           pushd examples/app-client/examples
-          # Update version to match release tag (remove 'v' prefix if present)
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          npm version "$VERSION" --no-git-tag-version
+          # Version is already set by sync-versions.js script
           npm publish --provenance --access public
           popd
         env:

@@ -36,13 +36,10 @@ jobs:
           cd examples/${{ matrix.client }}
           npm run build
 
-      - name: Update version and publish ${{ matrix.client }} to npm
+      - name: Publish ${{ matrix.client }} to npm
         run: |
           cd examples/${{ matrix.client }}
-          # Update version to match release tag (remove 'v' prefix if present)
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          npm version "$VERSION" --no-git-tag-version
+          # Version is already set by sync-versions.js script
           npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
