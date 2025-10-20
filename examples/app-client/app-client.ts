@@ -265,6 +265,8 @@ export class DeviceHubAppClient extends EventEmitter {
       }
     } else if (message.type === 'connected') {
       this.emit('connected');
+    } else if (message.type === 'methodResponse') {
+      this.emit(`method-response-${message.requestId}`, message);
     } else {
       this.emit('message', message);
     }
@@ -445,19 +447,40 @@ export class DeviceHubAppClient extends EventEmitter {
   }
 
   /**
-   * Call device method
+   * Call device method via WebSocket
    */
   async callDeviceMethod(deviceId: string, methodName: string, payload?: any): Promise<any> {
-    try {
-      const response = await this.httpClient.post(
-        `/api/devices/${deviceId}/methods/${methodName}`,
-        payload || {}
-      );
-      return response.data;
-    } catch (error) {
-      console.error(`Failed to call method ${methodName} on device ${deviceId}:`, error);
-      throw error;
-    }
+    return new Promise((resolve, reject) => {
+      if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket not connected'));
+        return;
+      }
+
+      const requestId = `method-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const timeout = setTimeout(() => {
+        this.off(`method-response-${requestId}`, responseHandler);
+        reject(new Error('Method call timeout'));
+      }, 30000);
+
+      const responseHandler = (response: any) => {
+        clearTimeout(timeout);
+        if (response.error) {
+          reject(new Error(response.error));
+        } else {
+          resolve(response);
+        }
+      };
+
+      this.once(`method-response-${requestId}`, responseHandler);
+
+      this.websocket.send(JSON.stringify({
+        type: 'callMethod',
+        requestId,
+        deviceId,
+        methodName,
+        payload: payload || {}
+      }));
+    });
   }
 
   /**

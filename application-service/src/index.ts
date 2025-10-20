@@ -196,6 +196,7 @@ function connectMqtt() {
   });
 
   mqttClient.on('message', (topic: string, payload: Buffer) => {
+    console.log(`[${SERVICE}] MQTT message received on topic: ${topic}`);
     handleMqttMessage(topic, payload.toString());
   });
 
@@ -210,6 +211,8 @@ function handleMqttMessage(topic: string, payload: string) {
     const topicParts = topic.split('/');
     const deviceId = topicParts[2];
     const messageType = topicParts[3];
+
+    console.log(`[${SERVICE}] Parsed MQTT - deviceId: ${deviceId}, messageType: ${messageType}`);
 
     let data: any;
     try {
@@ -244,18 +247,26 @@ function handleMqttMessage(topic: string, payload: string) {
 function broadcastToSubscribers(topic: string, data: any) {
   const deviceId = data.deviceId || data.device_id;
   
+  console.log(`[${SERVICE}] Broadcasting ${topic} for device ${deviceId} to ${clients.size} clients`);
+  
   clients.forEach(client => {
+    console.log(`[${SERVICE}] Checking client ${client.appName}: topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}`);
+    
     // Check if client is subscribed to this topic
     if (!client.subscriptions.topics.has(topic) && !client.subscriptions.topics.has('*')) {
+      console.log(`[${SERVICE}] Client ${client.appName} not subscribed to topic ${topic}`);
       return;
     }
     
     // Check if client is subscribed to this device
     if (deviceId && !client.subscriptions.devices.has('*')) {
       if (!client.subscriptions.devices.has(deviceId)) {
+        console.log(`[${SERVICE}] Client ${client.appName} not subscribed to device ${deviceId}`);
         return;
       }
     }
+    
+    console.log(`[${SERVICE}] Sending ${topic} message to client ${client.appName}`);
     
     try {
       client.ws.send(JSON.stringify({
@@ -357,6 +368,7 @@ function handleWebSocketMessage(client: AuthenticatedClient, message: string) {
           // Default to all devices if not specified
           client.subscriptions.devices.add('*');
         }
+        console.log(`[${SERVICE}] Client ${client.appName} subscribed to topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}`);
         client.ws.send(JSON.stringify({
           type: 'subscribed',
           topics: msg.topics,
@@ -382,6 +394,10 @@ function handleWebSocketMessage(client: AuthenticatedClient, message: string) {
         client.ws.send(JSON.stringify({ type: 'pong' }));
         break;
 
+      case 'callMethod':
+        handleMethodCall(client, msg);
+        break;
+
       default:
         client.ws.send(JSON.stringify({
           type: 'error',
@@ -393,7 +409,90 @@ function handleWebSocketMessage(client: AuthenticatedClient, message: string) {
       type: 'error',
       message: 'Invalid message format'
     }));
+    console.error(`[${SERVICE}] Failed to handle WebSocket message:`, e.message);
   }
+}
+
+// Handle method call via WebSocket
+async function handleMethodCall(client: AuthenticatedClient, msg: any) {
+  const { deviceId, methodName, payload, requestId } = msg;
+  
+  if (!deviceId || !methodName) {
+    client.ws.send(JSON.stringify({
+      type: 'methodResponse',
+      requestId,
+      error: 'deviceId and methodName required'
+    }));
+    return;
+  }
+
+  if (!mqttClient || !mqttClient.connected) {
+    client.ws.send(JSON.stringify({
+      type: 'methodResponse',
+      requestId,
+      error: 'MQTT broker not connected'
+    }));
+    return;
+  }
+
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) {
+    client.ws.send(JSON.stringify({
+      type: 'methodResponse',
+      requestId,
+      error: 'Database unavailable'
+    }));
+    return;
+  }
+
+  // Resolve device identifier to UUID
+  const uuid = resolveDeviceIdentifier(deviceId, db);
+  db.close();
+  
+  if (!uuid) {
+    client.ws.send(JSON.stringify({
+      type: 'methodResponse',
+      requestId,
+      error: 'Device not found'
+    }));
+    return;
+  }
+
+  console.log(`[${SERVICE}] WebSocket method call: ${methodName} on device ${deviceId} (${uuid})`);
+
+  // Set up response listener with timeout
+  const timeout = setTimeout(() => {
+    eventEmitter.off(`method-response-${requestId}`, responseHandler);
+    client.ws.send(JSON.stringify({
+      type: 'methodResponse',
+      requestId,
+      error: 'Method call timeout'
+    }));
+  }, 30000);
+
+  const responseHandler = (response: any) => {
+    clearTimeout(timeout);
+    client.ws.send(JSON.stringify({
+      type: 'methodResponse',
+      requestId,
+      status: response.status || 200,
+      payload: response.payload,
+      message: response.message
+    }));
+  };
+
+  eventEmitter.once(`method-response-${requestId}`, responseHandler);
+
+  // Publish method request using UUID
+  mqttClient.publish(
+    `$devicehub/devices/${uuid}/methods/${methodName}/request`,
+    JSON.stringify({
+      requestId,
+      methodName,
+      payload
+    }),
+    { qos: 1 }
+  );
 }
 
 // ============ HELPER FUNCTIONS ============

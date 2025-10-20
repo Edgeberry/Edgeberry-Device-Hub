@@ -71,14 +71,9 @@ module.exports = function(RED) {
                     enableWebSocket: true
                 });
 
-                await client.connect();
-                
-                // Subscribe to this device's telemetry and events
-                client.startTelemetryStream([node.deviceName]);
-                
                 node.status({fill: "yellow", shape: "ring", text: "connecting..."});
 
-                // Set up event listeners for device messages
+                // Set up event listeners BEFORE connecting to avoid race condition
                 setupDeviceListeners();
 
                 // WebSocket connected event
@@ -94,6 +89,10 @@ module.exports = function(RED) {
                     node.error(`Device Hub error: ${error.message}`);
                     node.status({fill: "red", shape: "ring", text: "error"});
                 });
+
+                // Now connect and subscribe
+                await client.connect();
+                client.startTelemetryStream([node.deviceName]);
 
             } catch (error) {
                 node.error(`Failed to connect to Device Hub: ${error.message}`);
