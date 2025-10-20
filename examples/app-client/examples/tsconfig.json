@@ -19,7 +19,7 @@
     "resolveJsonModule": true
   },
   "include": [
-    "*.js"
+    "node-red-device-node.js"
   ],
   "exclude": [
     "node_modules",

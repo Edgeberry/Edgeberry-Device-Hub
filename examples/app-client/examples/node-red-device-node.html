@@ -1,0 +1,194 @@
+<!-- Device Hub Configuration Node -->
+<script type="text/javascript">
+    RED.nodes.registerType('devicehub-config', {
+        category: 'config',
+        defaults: {
+            name: { value: "" },
+            host: { value: "localhost", required: true },
+            port: { value: "8090", required: true, validate: RED.validators.number() },
+            secure: { value: false }
+        },
+        credentials: {
+            token: { type: "password" }
+        },
+        label: function() {
+            return this.name || this.host + ":" + this.port;
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="devicehub-config">
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-config-input-name" placeholder="Optional">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-host"><i class="fa fa-server"></i> Host</label>
+        <input type="text" id="node-config-input-host" placeholder="localhost or IP address">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
+        <input type="text" id="node-config-input-port" placeholder="8090">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-secure"><i class="fa fa-lock"></i> Use HTTPS</label>
+        <input type="checkbox" id="node-config-input-secure" style="width: auto;">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-token"><i class="fa fa-key"></i> Access Token</label>
+        <input type="password" id="node-config-input-token" placeholder="API access token">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="devicehub-config">
+    <p>Configuration for connecting to an Edgeberry Device Hub instance.</p>
+    
+    <h3>Settings</h3>
+    <dl class="message-properties">
+        <dt>Host <span class="property-type">string</span></dt>
+        <dd>Device Hub hostname or IP address (e.g., localhost, 192.168.1.100)</dd>
+        <dt>Port <span class="property-type">number</span></dt>
+        <dd>Application service port (default: 8090)</dd>
+        <dt>Access Token <span class="property-type">string</span></dt>
+        <dd>API token from Device Hub (Settings → API Tokens)</dd>
+    </dl>
+</script>
+
+<!-- Device Hub Device Node -->
+<script type="text/javascript">
+    RED.nodes.registerType('devicehub-device', {
+        category: 'Edgeberry',
+        color: '#1E1E1E',
+        defaults: {
+            name: { value: "" },
+            hub: { value: "", type: "devicehub-config", required: true },
+            deviceName: { value: "", required: true }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "edgeberry.svg",
+        label: function() {
+            return this.name || this.deviceName || "Device Hub Device";
+        },
+        labelStyle: function() {
+            return this.name ? "node_label_italic" : "";
+        },
+        paletteLabel: "device",
+        align: 'left'
+    });
+</script>
+
+<script type="text/html" data-template-name="devicehub-device">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Optional display name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-hub"><i class="fa fa-server"></i> Device Hub</label>
+        <input type="text" id="node-input-hub">
+    </div>
+    <div class="form-row">
+        <label for="node-input-deviceName"><i class="fa fa-microchip"></i> Device</label>
+        <input type="text" id="node-input-deviceName" placeholder="e.g., EDGB-A096" required>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="devicehub-device">
+    <p>Represents a specific device connected to Edgeberry Device Hub.</p>
+    
+    <h3>Configuration</h3>
+    <dl class="message-properties">
+        <dt>Device Hub <span class="property-type">config</span></dt>
+        <dd>Device Hub connection configuration node</dd>
+        <dt>Device <span class="property-type">string</span></dt>
+        <dd>Device name (e.g., EDGB-A096) - required</dd>
+    </dl>
+    
+    <h3>Status Indicators</h3>
+    <ul>
+        <li><b>Yellow ring "connecting"</b> - Establishing connection to Device Hub</li>
+        <li><b>Green dot "connected"</b> - Connected and WebSocket active</li>
+        <li><b>Red ring "disconnected"</b> - Lost connection to Device Hub</li>
+        <li><b>Red ring "no config"</b> - Device Hub config node not selected</li>
+    </ul>
+
+    <h3>Inputs</h3>
+    <p>Send commands and updates to the device:</p>
+    
+    <dl class="message-properties">
+        <dt>action <span class="property-type">string</span></dt>
+        <dd>Action to perform: "method" or "twin"</dd>
+        
+        <dt class="optional">methodName <span class="property-type">string</span></dt>
+        <dd>Method name when action is "method" (e.g., "identify", "reboot")</dd>
+        
+        <dt class="optional">payload <span class="property-type">object</span></dt>
+        <dd>Method parameters or data to send</dd>
+        
+        <dt class="optional">desired <span class="property-type">object</span></dt>
+        <dd>Desired twin properties when action is "twin"</dd>
+        
+        <dt class="optional">timeout <span class="property-type">number</span></dt>
+        <dd>Method call timeout in milliseconds (default: 30000)</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <p>Receives all messages from the device:</p>
+    
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>Message data (telemetry, event, status, or twin update)</dd>
+        
+        <dt>topic <span class="property-type">string</span></dt>
+        <dd>Message topic indicating type and source</dd>
+        
+        <dt>deviceName <span class="property-type">string</span></dt>
+        <dd>Name of the device</dd>
+        
+        <dt>messageType <span class="property-type">string</span></dt>
+        <dd>Type: telemetry, event, status, twin, method-response, or error</dd>
+    </dl>
+
+    <h3>Examples</h3>
+    
+    <p><b>Call Direct Method (Identify):</b></p>
+    <pre>{
+  "action": "method",
+  "methodName": "identify",
+  "payload": { "duration": 5 }
+}</pre>
+
+    <p><b>Call Direct Method (Reboot):</b></p>
+    <pre>{
+  "action": "method",
+  "methodName": "reboot",
+  "payload": { "delay": 10 }
+}</pre>
+
+    <p><b>Update Device Twin:</b></p>
+    <pre>{
+  "action": "twin",
+  "desired": {
+    "telemetryInterval": 10000,
+    "logLevel": "debug"
+  }
+}</pre>
+
+    <p><b>Output Messages:</b></p>
+    <p>The node automatically outputs all messages from the configured device:</p>
+    <ul>
+        <li><b>Telemetry:</b> topic: <code>telemetry/EDGB-A096</code></li>
+        <li><b>Events:</b> topic: <code>event/EDGB-A096/alert</code></li>
+        <li><b>Status:</b> topic: <code>status/EDGB-A096</code></li>
+        <li><b>Twin:</b> topic: <code>twin/EDGB-A096</code></li>
+        <li><b>Method Response:</b> topic: <code>method-response/EDGB-A096/identify</code></li>
+    </ul>
+
+    <h3>Tips</h3>
+    <ul>
+        <li>Use a <b>switch node</b> on the output to route different message types</li>
+        <li>Filter by <code>msg.messageType</code> to handle specific messages</li>
+        <li>The node status shows connection state and device online/offline status</li>
+        <li>Multiple device nodes can connect to the same Device Hub</li>
+    </ul>
+</script>

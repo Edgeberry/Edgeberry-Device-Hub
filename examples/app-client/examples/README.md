@@ -1,174 +1,302 @@
-# Node-RED Edgeberry Device Hub Integration
+![Edgeberry Banner](https://raw.githubusercontent.com/Edgeberry/.github/main/brand/Edgeberry_banner_device_hub.png)
 
-This directory contains a complete Node-RED node implementation that demonstrates how to use the Edgeberry Device Hub App Client for consuming device data in Node-RED flows.
+Node-RED node for integrating with Edgeberry Device Hub.
 
-## Files
+## Overview
 
-- `node-red-node.js` - Main Node-RED node implementation
-- `node-red-node.html` - Node-RED editor UI definitions
-- `package.json` - Node-RED contrib package configuration
+This package provides a **Device** node that represents a specific device connected to your Device Hub. The node enables bidirectional communication:
+- **Receives** all messages from the device (telemetry, events, status, twin updates)
+- **Sends** commands and updates to the device (direct methods, twin updates)
+
+## Architecture
+
+```
+┌──────────────────┐
+│  Device Hub      │  ← Configuration Node
+│  Config          │     (Host, Port, Token)
+│  localhost:8090  │
+└──────────────────┘
+         ↓
+    ┌─────────────────┐
+    │  Device Node    │  ← Flow Node
+    │  EDGB-A096      │     (1 input, 1 output)
+    └─────────────────┘
+         │
+         ├──► Telemetry
+         ├──► Events  
+         ├──► Status
+         └──► Twin Updates
+```
 
 ## Installation
 
-### As a Node-RED Contrib Package
+### From NPM
 
-1. Install the package in your Node-RED installation:
 ```bash
-npm install node-red-contrib-edgeberry-devicehub
+cd ~/.node-red
+npm install @edgeberry/devicehub-node-red-contrib
 ```
 
-2. Restart Node-RED to load the new nodes.
+Restart Node-RED to load the nodes.
 
 ### Local Development
 
-1. Build the app client first:
+1. Build the app-client library:
 ```bash
-cd ../
+cd examples/app-client
+npm install
 npm run build
 ```
 
-2. Link the package locally in your Node-RED installation:
+2. Build the Node-RED package:
 ```bash
-cd ~/.node-red
-npm link /path/to/Edgeberry-Device-Hub/examples/edgeberry-device-hub-app-client/examples
+cd examples
+npm install
+npm run build
 ```
 
-## Available Nodes
+3. Link to your Node-RED installation:
+```bash
+cd ~/.node-red
+npm install /path/to/Edgeberry-Device-Hub/examples/app-client/examples
+```
 
-### Device Hub Config
-Configuration node that stores connection details for the Device Hub:
-- **Base URL**: Device Hub API endpoint (e.g., `https://devicehub.local:8080`)
-- **Authentication**: Username/password or API key
+4. Restart Node-RED
 
-### Device Hub In
-Input node that receives data from Device Hub devices:
-- **Real-time data**: Telemetry, events, device status, twin updates
-- **Historical data**: Query devices, telemetry history, events
-- **Device filtering**: Monitor specific devices or all devices
-- **WebSocket support**: Live data streaming
+## Configuration
 
-### Device Hub Out
-Output node that sends commands to Device Hub devices:
-- **Direct methods**: Call device methods with responses
-- **Twin updates**: Update device twin desired properties
-- **Command responses**: Receive method call results
+### Device Hub Config Node
 
-## Usage Examples
+Create a reusable configuration for connecting to Device Hub:
 
-### Basic Telemetry Monitoring
+1. **Host**: Device Hub hostname or IP (e.g., `localhost`, `192.168.1.100`)
+2. **Port**: Application service port (default: `8090`)
+3. **Use HTTPS**: Enable for secure connections
+4. **Access Token**: API token from Device Hub
 
-1. Add a "Device Hub Config" node and configure your Device Hub connection
-2. Add a "Device Hub In" node and select the config
-3. Configure to receive "telemetry" data types
-4. Connect to a debug node to see incoming telemetry
+#### Getting an Access Token
 
-### Device Control Flow
+1. Open Device Hub UI
+2. Go to **Settings → API Tokens**
+3. Click **Create Token**
+4. Copy the token and paste it in the config node
 
-1. Add an inject node with the following payload:
+### Device Node
+
+Configure the device node:
+
+1. **Device Hub**: Select your Device Hub config node
+2. **Device**: Device name from Device Hub (e.g., `EDGB-A096`)
+3. **Name** (optional): Custom display name for the node
+
+## Usage
+
+### Basic Flow
+
+```
+┌─────────┐     ┌──────────┐     ┌───────┐
+│ Inject  │────►│  Device  │────►│ Debug │
+└─────────┘     │ EDGB-A096│     └───────┘
+                └──────────┘
+```
+
+### Sending Commands to Device
+
+**Call Identify Method:**
 ```json
 {
-  "action": "callDirectMethod",
-  "deviceId": "EDGB-A096",
+  "action": "method",
   "methodName": "identify",
   "payload": { "duration": 5 }
 }
 ```
 
-**Note:** Always use device names (e.g., `EDGB-A096`) as the `deviceId`, never the internal UUID.
-
-2. Connect to a "Device Hub Out" node
-3. Connect the output to a debug node to see the response
-
-### Real-time Device Status Dashboard
-
-1. Configure "Device Hub In" for "status" data type with real-time enabled
-2. Use a function node to format the data for display
-3. Connect to dashboard nodes for visualization
-
-## Message Formats
-
-### Input Node Output Messages
-
-```javascript
-// Telemetry message
+**Call Reboot Method:**
+```json
 {
-  topic: "telemetry/EDGB-A096",
-  payload: {
-    deviceId: "EDGB-A096",  // Device name
-    timestamp: "2024-01-01T12:00:00Z",
-    data: { temperature: 25.5, humidity: 60 }
-  },
-  deviceId: "EDGB-A096",
-  dataType: "telemetry"
-}
-
-// Event message
-{
-  topic: "event/EDGB-A096/alert",
-  payload: {
-    deviceId: "EDGB-A096",  // Device name
-    eventType: "alert",
-    timestamp: "2024-01-01T12:00:00Z",
-    data: { message: "Temperature too high" }
-  },
-  deviceId: "EDGB-A096",
-  dataType: "event"
+  "action": "method",
+  "methodName": "reboot",
+  "payload": { "delay": 10 }
 }
 ```
 
-### Output Node Input Messages
-
-```javascript
-// Direct method call
+**Update Device Twin:**
+```json
 {
-  action: "callDirectMethod",
-  deviceId: "EDGB-A096",  // Use device name, not UUID
-  methodName: "reboot",
-  payload: { delay: 5 },
-  timeout: 30000
-}
-
-// Twin update
-{
-  action: "updateDeviceTwin",
-  deviceId: "EDGB-A096",  // Use device name, not UUID
-  desired: {
-    telemetryInterval: 10000,
-    logLevel: "info"
+  "action": "twin",
+  "desired": {
+    "telemetryInterval": 10000,
+    "logLevel": "debug"
   }
 }
 ```
 
-## Error Handling
+### Receiving Device Messages
 
-The nodes include comprehensive error handling:
-- Connection failures are indicated by red status
-- Invalid messages generate node errors
-- WebSocket disconnections trigger automatic reconnection
-- Method call timeouts are handled gracefully
+The device node automatically outputs all messages from the configured device. Use a **switch** node to route different message types:
 
-## Security
+**Filter by `msg.messageType`:**
+- `telemetry` - Device sensor data
+- `event` - Device events (alerts, notifications)
+- `status` - Online/offline status changes
+- `twin` - Twin property updates
+- `method-response` - Response from direct method calls
+- `error` - Error messages
 
-- All credentials are stored securely by Node-RED
-- Supports both API key and username/password authentication
-- HTTPS/WSS connections are used for secure communication
-- Credentials are not visible in exported flows
+### Advanced: Message Routing
+
+```
+┌──────────┐     ┌────────┐     ┌─────────────┐
+│  Device  │────►│ Switch │────►│ Telemetry   │
+│EDGB-A096 │     │  Node  │  ├─►│ Events      │
+└──────────┘     └────────┘  ├─►│ Status      │
+                              └─►│ Method Resp │
+```
+
+Configure switch node to route on `msg.messageType`:
+- `== telemetry` → Output 1
+- `== event` → Output 2
+- `== status` → Output 3
+- `== method-response` → Output 4
+
+### Example: Dashboard Integration
+
+Extract temperature from telemetry and display on gauge:
+
+```javascript
+// Function node
+if (msg.messageType === 'telemetry') {
+    return {
+        payload: msg.payload.data.temperature,
+        topic: 'Temperature'
+    };
+}
+```
+
+## Connection Status
+
+The device node displays real-time connection status:
+
+- 🟡 **Yellow ring "connecting"** - Establishing connection to Device Hub
+- 🟢 **Green dot "connected: EDGB-A096"** - Connected and WebSocket active
+- 🔴 **Red ring "disconnected"** - Lost connection to Device Hub
+- 🔴 **Red ring "no config"** - Device Hub config node not selected
+- 🔴 **Red ring "no token"** - Access token missing
+
+## Message Format
+
+### Output Messages
+
+All output messages include:
+
+```javascript
+{
+  topic: "telemetry/EDGB-A096",        // Message topic
+  payload: { /* message data */ },      // Message payload
+  deviceName: "EDGB-A096",             // Device name
+  messageType: "telemetry"             // Message type
+}
+```
+
+**Topic patterns:**
+- Telemetry: `telemetry/EDGB-A096`
+- Events: `event/EDGB-A096/alert`
+- Status: `status/EDGB-A096`
+- Twin: `twin/EDGB-A096`
+- Method Response: `method-response/EDGB-A096/identify`
+
+## Troubleshooting
+
+### Node shows "no token"
+- Ensure you've created an API token in Device Hub
+- Check that the token is correctly entered in the Device Hub config node
+
+### Node shows "disconnected"
+- Verify Device Hub is running
+- Check host and port settings in config node
+- Ensure the application service is accessible
+- Check firewall settings
+
+### No messages received
+- Verify the device name matches exactly (case-sensitive)
+- Check that the device is online in Device Hub
+- Ensure WebSocket connections are allowed
+
+### Method calls timeout
+- Verify the device supports the method
+- Check device is online and responding
+- Increase timeout value if needed (default: 30 seconds)
 
 ## Development
 
-To modify or extend these nodes:
+### Building
 
-1. Edit `node-red-node.js` for functionality changes
-2. Edit `node-red-node.html` for UI changes
-3. Test locally using the development installation method
-4. Update version in `package.json` before publishing
+```bash
+npm run build
+```
+
+Compiles JavaScript and copies HTML to `dist/`:
+- `dist/node-red-device-node.js` - Compiled JavaScript
+- `dist/node-red-device-node.html` - Node UI definition
+
+### Project Structure
+
+```
+examples/app-client/examples/
+├── node-red-device-node.js    # Node implementation
+├── node-red-device-node.html  # Node UI definition
+├── package.json               # Package configuration
+├── tsconfig.json             # TypeScript configuration
+└── dist/                     # Built output (generated)
+```
 
 ## Publishing
 
-To publish as an npm package:
+The package is published automatically via GitHub Actions when a new release is created.
 
+**Manual publishing:**
 ```bash
-npm publish
+npm publish --access public
 ```
 
-The package will be available as `node-red-contrib-edgeberry-devicehub` on npm.
+**NPM Package:** `@edgeberry/devicehub-node-red-contrib`
+
+## Support
+
+- **Documentation:** https://github.com/Edgeberry/Edgeberry-Device-Hub
+- **Issues:** https://github.com/Edgeberry/Edgeberry-Device-Hub/issues
+- **License:** GPL-3.0-or-later
+
+## Example Flows
+
+### Monitor Multiple Devices
+
+```
+┌──────────┐
+│  Device  │────► Temperature Dashboard
+│EDGB-A096 │
+└──────────┘
+
+┌──────────┐
+│  Device  │────► Humidity Dashboard  
+│EDGB-B123 │
+└──────────┘
+```
+
+### Alert on High Temperature
+
+```
+┌──────────┐   ┌──────────┐   ┌────────┐
+│  Device  │──►│ Function │──►│ Email  │
+│EDGB-A096 │   │ (filter) │   │  Alert │
+└──────────┘   └──────────┘   └────────┘
+```
+
+Function node:
+```javascript
+if (msg.messageType === 'telemetry' && 
+    msg.payload.data.temperature > 30) {
+    msg.payload = `Alert: High temperature ${msg.payload.data.temperature}°C`;
+    return msg;
+}
+```

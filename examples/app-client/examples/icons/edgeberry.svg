@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Edgeberry favicon (icon only) -->
+
+<svg
+   viewBox="0 0 512 512"
+   version="1.1"
+   id="svg16"
+   sodipodi:docname="favicon.svg"
+   xml:space="preserve"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><defs
+     id="defs20" /><sodipodi:namedview
+     id="namedview18"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="0.76660156"
+     inkscape:cx="219.80127"
+     inkscape:cy="345.0293"
+     inkscape:window-width="1854"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg16" /><path
+     d="m 180.27107,29.80819 v 390.43 h 73.08699 v -390.43 z m -83.213002,131.05 v 177.24 h 73.086002 v -177.24 z m -82.842,27.988 v 177.24 h 73.088 v -177.24 z m 249.609992,78.821 v 177.24 h 73.086 v -177.24 z m 164.61,13.371 v 177.24 h 73.08801 v -177.24 z m -82.363,22.334 v 177.24 h 73.088 v -177.24 z"
+     fill="#0007ff"
+     stroke-linecap="round"
+     stroke-width="1.8898"
+     id="path289" /></svg>
