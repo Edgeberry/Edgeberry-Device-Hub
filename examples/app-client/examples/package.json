@@ -28,8 +28,16 @@
       "devicehub-config": "dist/node-red-node.js"
     }
   },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "edgeberry-device-hub-app-client": "^1.0.0"
+    "@edgeberry/devicehub-app-client": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.28",
@@ -42,10 +50,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Edgeberry/Edgeberry-Device-Hub.git",
-    "directory": "examples/edgeberry-device-hub-app-client/examples"
+    "directory": "examples/app-client/examples"
   },
   "bugs": {
     "url": "https://github.com/Edgeberry/Edgeberry-Device-Hub/issues"
   },
-  "homepage": "https://github.com/Edgeberry/Edgeberry-Device-Hub/tree/main/examples/edgeberry-device-hub-app-client"
+  "homepage": "https://github.com/Edgeberry/Edgeberry-Device-Hub/tree/main/examples/app-client/examples"
 }

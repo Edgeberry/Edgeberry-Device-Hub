@@ -5,19 +5,20 @@
     "lib": ["ES2020"],
     "outDir": "./dist",
     "rootDir": "./",
-    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true
   },
   "include": [
-    "*.ts",
     "*.js"
   ],
   "exclude": [

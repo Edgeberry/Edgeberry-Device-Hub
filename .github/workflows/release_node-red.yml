@@ -1,11 +1,8 @@
-name: Release Artifacts
+name: Publish Node-RED Module
 
-# Disabled for now
-# on:
-#   release:
-#     types: [published]
-
-on: []
+on:
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -29,18 +26,18 @@ jobs:
         run: |
           bash scripts/build-all.sh
 
-      - name: Build and pack Node-RED example
+      - name: Build and pack Node-RED module
         run: |
           mkdir -p dist-artifacts
-          pushd examples/nodered
+          pushd examples/app-client/examples
           npm ci || npm install
           npm run build
-          npm pack --pack-destination ../../dist-artifacts
+          npm pack --pack-destination ../../../dist-artifacts
           popd
 
       - name: Publish Node-RED package to npm
         run: |
-          pushd examples/nodered
+          pushd examples/app-client/examples
           # Update version to match release tag (remove 'v' prefix if present)
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
