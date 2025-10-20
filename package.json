@@ -1,7 +1,7 @@
 {
   "name": "edgeberry-device-hub",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Edgeberry Device Hub monorepo root",
   "license": "GPL-3.0-or-later",
   "scripts": {
