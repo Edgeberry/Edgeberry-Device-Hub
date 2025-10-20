@@ -438,8 +438,13 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
     try {
       const payload = JSON.parse(message.toString());
       
-      if (topic === this.topics.directMethods) {
-        this.handleDirectMethod(payload);
+      // Check if it's a direct method request (matches pattern: $devicehub/devices/{deviceId}/methods/{methodName}/request)
+      const methodRequestPattern = new RegExp(`^\$devicehub\/devices\/${this.deviceId}\/methods\/([^/]+)\/request$`);
+      const methodMatch = topic.match(methodRequestPattern);
+      
+      if (methodMatch) {
+        const methodName = methodMatch[1];
+        this.handleDirectMethod(methodName, payload);
       } else if (topic === this.topics.twinUpdateAccepted || topic === this.topics.twinUpdateRejected) {
         this.handleTwinUpdateResponse(topic, payload);
       } else if (topic === this.topics.twinUpdateDelta) {
@@ -456,53 +461,59 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
   /**
    * Handle direct method calls
    */
-  private handleDirectMethod(payload: any): void {
-    console.log('Received direct method:', payload);
+  private handleDirectMethod(methodName: string, payload: any): void {
+    console.log('Received direct method:', methodName, payload);
     
-    const { name: methodName, requestId } = payload;
+    const { requestId } = payload;
     
     // Find registered method
     const directMethod = this.directMethods.find(m => m.name === methodName);
     
     if (!directMethod) {
       // Method not found
-      this.respondToDirectMethod(requestId, { status: 404, message: 'Method not found' });
+      this.respondToDirectMethod(methodName, requestId, { status: 404, message: 'Method not found' });
       return;
     }
 
-    // Create response handler
-    const respond = (response: { status: number; payload?: any }) => {
-      this.respondToDirectMethod(requestId, response);
+    // Create Express-like request/response objects
+    const req = payload.payload || {};
+    const res = {
+      send: (data: any) => {
+        this.respondToDirectMethod(methodName, requestId, { status: 200, payload: data });
+      },
+      status: (code: number) => {
+        return {
+          send: (data: any) => {
+            this.respondToDirectMethod(methodName, requestId, { status: code, payload: data });
+          }
+        };
+      }
     };
 
-    // Emit event for application to handle
-    this.emit('directMethod', {
-      methodName,
-      requestId,
-      payload: payload.payload || {},
-      respond
-    });
-
-    // Also call registered method if available
+    // Call registered method with req/res pattern (matching Device Software)
     try {
-      directMethod.function(payload, new DirectMethodResponse(requestId, (response: any) => {
-        this.respondToDirectMethod(requestId, response);
-      }));
+      directMethod.function(req, res);
     } catch (error) {
       console.error('Error executing direct method:', error);
-      this.respondToDirectMethod(requestId, { status: 500, message: 'Internal error' });
+      this.respondToDirectMethod(methodName, requestId, { status: 500, message: 'Internal error' });
     }
   }
 
   /**
    * Respond to a direct method call
    */
-  private respondToDirectMethod(requestId: string, response: any): void {
+  private respondToDirectMethod(methodName: string, requestId: string, response: any): void {
     if (!this.client) return;
 
-    const responseTopic = `${this.topics.directMethodsResponse}/${requestId}`;
-    this.client.publish(responseTopic, JSON.stringify(response), { qos: 0, retain: true });
-    console.log('Sent direct method response:', response);
+    const responseTopic = `$devicehub/devices/${this.deviceId}/methods/${methodName}/response`;
+    const responsePayload = {
+      requestId,
+      status: response.status || 200,
+      payload: response.payload,
+      message: response.message
+    };
+    this.client.publish(responseTopic, JSON.stringify(responsePayload), { qos: 0 });
+    console.log('Sent direct method response to:', responseTopic, responsePayload);
   }
 
   /**

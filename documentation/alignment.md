@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-10-20 22:50 CEST
+**Last updated:** 2025-10-20 23:00 CEST
 
 ## Documentation Strategy
 
@@ -591,9 +591,23 @@ Anonymous access (Observer mode):
 - **`examples/`** — Client libraries and integration examples
   - **`examples/device-client/`** — TypeScript library for device-side MQTT integration
     - Complete virtual device implementation with provisioning, mTLS certificates, telemetry simulation
-    - Direct method handling for remote device control
+    - Direct method handling for remote device control with Express-like API
     - Twin property management for device state synchronization
     - Lifecycle management with graceful shutdown and reconnection logic
+    - **Package:** Published as `@edgeberry/devicehub-device-client` on npm
+    - **API Alignment:** v2.0.0+ uses Express-like req/res pattern matching Edgeberry Device Software
+    - **Direct Method Registration:**
+      ```typescript
+      client.registerDirectMethod('identify', (req, res) => {
+        res.send({ message: 'Device identified', duration: req.duration || 5 });
+      });
+      ```
+    - **Response Patterns:**
+      - Success: `res.send(data)` → status 200
+      - Error: `res.status(404).send({ message: 'Not found' })`
+    - **MQTT Topics:**
+      - Request: `$devicehub/devices/{deviceId}/methods/{methodName}/request`
+      - Response: `$devicehub/devices/{deviceId}/methods/{methodName}/response`
     - **Build:** `npm install && npm run build` in this folder; outputs to `examples/device-client/dist/`
     - **Examples:** `npm run example:complete-virtual-device` for full virtual device simulation
   - **`examples/app-client/`** — TypeScript library for application-side integration
