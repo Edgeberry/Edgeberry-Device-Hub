@@ -16,8 +16,8 @@ const packagePaths = [
   'twin-service/package.json',
   'application-service/package.json',
   'ui/package.json',
-  'examples/nodered/package.json',
-  'examples/virtual-device/package.json',
+  'examples/app-client/package.json',
+  'examples/app-client/examples/package.json',
   'examples/device-client/package.json'
 ];
 
