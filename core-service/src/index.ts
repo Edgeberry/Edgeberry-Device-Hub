@@ -141,15 +141,15 @@ async function sendDirectMethod(deviceId: string, methodName: string, payload: a
     return false;
   }
 
-  const topic = `$devicehub/devices/${deviceId}/methods/post`;
+  // Use correct topic pattern: $devicehub/devices/{deviceId}/methods/{methodName}/request
+  const topic = `$devicehub/devices/${deviceId}/methods/${methodName}/request`;
   const message = {
-    name: methodName,
-    payload: payload,
-    timestamp: new Date().toISOString(),
-    requestId: Math.random().toString(36).substring(2, 15)
+    requestId: Math.random().toString(36).substring(2, 15) + Date.now().toString(36),
+    payload: payload
   };
 
-  console.log(`[${SERVICE}] Sending direct method to topic: ${topic}`);
+  console.log(`[${SERVICE}] Sending direct method '${methodName}' to device ${deviceId}`);
+  console.log(`[${SERVICE}] Topic: ${topic}`);
   console.log(`[${SERVICE}] Message:`, JSON.stringify(message, null, 2));
 
   try {
