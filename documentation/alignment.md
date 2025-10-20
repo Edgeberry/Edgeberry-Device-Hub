@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-10-20 17:45 CEST
+**Last updated:** 2025-10-20 22:50 CEST
 
 ## Documentation Strategy
 
@@ -509,9 +509,11 @@ Anonymous access (Observer mode):
   - `GET /api/devices/:deviceId/events` — Get historical device events
   - `GET /api/devices/:deviceId/twin` — Get current device twin state
   - `PATCH /api/devices/:deviceId/twin` — Update device configuration (desired properties)
-  - `POST /api/devices/:deviceId/methods/:methodName` — Invoke device method
-  - `POST /api/batch/methods` — Execute method on multiple devices
+  - `POST /api/devices/:deviceId/methods/:methodName` — Legacy HTTP endpoint (deprecated, use WebSocket for method calls)
+  - `POST /api/batch/methods` — Legacy HTTP endpoint (deprecated)
   - `GET /api/stats/devices` — System-wide device statistics
+  
+  **Note:** Direct method invocation has moved to WebSocket for real-time request/response patterns. The REST endpoints remain for backward compatibility but WebSocket provides better performance and immediate response handling.
   
   **WebSocket (Real-time Data Stream):**
   - Connection: `ws://host:8090/ws?token=<API_TOKEN>`
@@ -534,6 +536,24 @@ Anonymous access (Observer mode):
   - Subscribe to specific devices: `{"type": "subscribe", "topics": ["telemetry"], "devices": ["device-001", "device-002"]}`
   - Unsubscribe: `{"type": "unsubscribe", "topics": ["telemetry"], "devices": ["device-001"]}`
   - Server broadcasts: `{"type": "message", "topic": "telemetry", "deviceId": "device-001", "data": {...}}`
+  
+  **Method Invocation (WebSocket):**
+  - **Purpose:** Call device methods with real-time request/response pattern
+  - **Client Request:** `{"type": "callMethod", "requestId": "unique-id", "deviceId": "device-001", "methodName": "identify", "payload": {"duration": 5}}`
+  - **Server Response:** `{"type": "methodResponse", "requestId": "unique-id", "status": 200, "payload": {...}, "message": "Success"}`
+  - **Error Response:** `{"type": "methodResponse", "requestId": "unique-id", "error": "Device not found"}`
+  - **Timeout:** 30 seconds (server-side), returns error response if device doesn't respond
+  - **Flow:**
+    1. Client generates unique `requestId` and sends `callMethod` message
+    2. Application-service resolves device name to UUID
+    3. Publishes MQTT request to `$devicehub/devices/{uuid}/methods/{methodName}/request`
+    4. Device processes method and publishes response to `$devicehub/devices/{uuid}/methods/{methodName}/response`
+    5. Application-service matches response by `requestId` and forwards to WebSocket client
+  - **Advantages over REST:**
+    - Single persistent connection for all operations
+    - Immediate response delivery without polling
+    - Natural fit for bidirectional real-time communication
+    - Eliminates HTTP connection overhead per method call
   
   **Data Flow Architecture (Cloud Bridge Pattern):**
   - **Real-time Path:** Devices → MQTT → application-service → WebSocket → Cloud Applications
@@ -590,10 +610,12 @@ Anonymous access (Observer mode):
       - **Device Node:** Represents a single device with bidirectional communication (1 input, 1 output)
     - **Features:**
       - Real-time telemetry and event streaming via WebSocket
-      - Direct method invocation (identify, reboot, custom methods)
+      - Direct method invocation via WebSocket (identify, reboot, custom methods)
+      - Request/response pattern with automatic correlation by requestId
       - Device twin updates (desired properties)
       - Connection status indicators (connecting, connected, disconnected)
       - Message type routing (telemetry, event, status, twin, method-response)
+      - Single persistent WebSocket connection for all operations
     - **Branding:** Edgeberry Electric Blue (#0007FF) with white Edgeberry logo icon
     - **Installation:** `npm install @edgeberry/devicehub-node-red-contrib` in Node-RED user directory
     - **Build:** `npm install && npm run build` outputs to `dist/` with icons
