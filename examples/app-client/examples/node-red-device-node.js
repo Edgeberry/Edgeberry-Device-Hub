@@ -6,7 +6,7 @@
  * - Outputs: Telemetry, events, and status updates from the device
  */
 
-const EdgeberryDeviceHubAppClient = require('../dist/app-client.js').default;
+const EdgeberryDeviceHubAppClient = require('@edgeberry/devicehub-app-client').default;
 
 module.exports = function(RED) {
     "use strict";
