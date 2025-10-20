@@ -364,8 +364,8 @@ class CompleteVirtualDevice {
       this.runtimeClient?.publish(`$devicehub/devices/${deviceId}/status`, JSON.stringify(onlinePayload), { qos: 1, retain: true });
       console.log(`[virtual-device] -> $devicehub/devices/${deviceId}/status`, onlinePayload);
 
-      // Subscribe to direct methods
-      this.runtimeClient?.subscribe(`$devicehub/devices/${deviceId}/methods/post`, { qos: 0 }, (err) => {
+      // Subscribe to direct methods (using application-service topic pattern)
+      this.runtimeClient?.subscribe(`$devicehub/devices/${deviceId}/methods/+/request`, { qos: 0 }, (err) => {
         if (err) {
           console.error('[virtual-device] Failed to subscribe to direct methods:', err);
         } else {
@@ -435,8 +435,13 @@ class CompleteVirtualDevice {
     try {
       const message = JSON.parse(payload.toString());
       
-      if (topic === `$devicehub/devices/${deviceId}/methods/post`) {
-        this.handleDirectMethod(deviceId, message);
+      // Check if it's a method request (matches pattern: $devicehub/devices/{deviceId}/methods/{methodName}/request)
+      const methodRequestPattern = new RegExp(`^\$devicehub\/devices\/${deviceId}\/methods\/([^/]+)\/request$`);
+      const methodMatch = topic.match(methodRequestPattern);
+      
+      if (methodMatch) {
+        const methodName = methodMatch[1];
+        this.handleDirectMethod(deviceId, methodName, message);
       } else if (topic.includes('/twin/update/')) {
         this.handleTwinUpdate(deviceId, topic, message);
       }
@@ -445,10 +450,10 @@ class CompleteVirtualDevice {
     }
   }
 
-  private handleDirectMethod(deviceId: string, payload: any): void {
-    console.log('[virtual-device] Received direct method:', payload);
+  private handleDirectMethod(deviceId: string, methodName: string, payload: any): void {
+    console.log('[virtual-device] Received direct method:', methodName, payload);
     
-    const { name: methodName, requestId } = payload;
+    const { requestId } = payload;
     let response: any = { status: 200, payload: {} };
 
     // Handle common direct methods
@@ -490,10 +495,16 @@ class CompleteVirtualDevice {
         response = { status: 404, message: `Method '${methodName}' not implemented` };
     }
 
-    // Send response
-    const responseTopic = `edgeberry/things/${deviceId}/methods/response/${requestId}`;
-    this.runtimeClient?.publish(responseTopic, JSON.stringify(response), { qos: 0, retain: true });
-    console.log('[virtual-device] Sent direct method response:', response);
+    // Send response (using application-service topic pattern)
+    const responseTopic = `$devicehub/devices/${deviceId}/methods/${methodName}/response`;
+    const responsePayload = {
+      requestId,
+      status: response.status,
+      payload: response.payload,
+      message: response.message
+    };
+    this.runtimeClient?.publish(responseTopic, JSON.stringify(responsePayload), { qos: 0 });
+    console.log('[virtual-device] Sent direct method response to:', responseTopic, responsePayload);
   }
 
   private handleTwinUpdate(deviceId: string, topic: string, payload: any): void {

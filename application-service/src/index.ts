@@ -396,6 +396,27 @@ function handleWebSocketMessage(client: AuthenticatedClient, message: string) {
   }
 }
 
+// ============ HELPER FUNCTIONS ============
+
+/**
+ * Resolve device name to UUID
+ * Accepts either a device name (EDGB-XXXX) or UUID and returns the UUID
+ */
+function resolveDeviceIdentifier(identifier: string, db: any): string | null {
+  if (!identifier) return null;
+  
+  // Check if it's already a UUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidPattern.test(identifier)) {
+    return identifier;
+  }
+  
+  // Otherwise, treat it as a device name and look up the UUID
+  const stmt = db.prepare('SELECT uuid FROM devices WHERE name = ?');
+  const device = stmt.get(identifier) as any;
+  return device ? device.uuid : null;
+}
+
 // ============ REST API ENDPOINTS ============
 
 // Health check
@@ -446,8 +467,9 @@ app.get('/api/devices', authenticateToken, async (req: Request, res: Response) =
     const devices = stmt.all(...params);
 
     res.json(devices.map((d: any) => ({
-      deviceId: d.uuid,
-      name: d.name,
+      deviceId: d.name, // Use device name as the public identifier
+      deviceName: d.name,
+      uuid: d.uuid, // Include UUID for internal use only
       status: 'offline', // Default status since last_seen doesn't exist in current schema
       lastSeen: null, // Not available in current schema
       model: d.model,
@@ -463,7 +485,7 @@ app.get('/api/devices', authenticateToken, async (req: Request, res: Response) =
   }
 });
 
-// Get specific device
+// Get specific device (accepts device name or UUID)
 app.get('/api/devices/:deviceId', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
@@ -472,8 +494,16 @@ app.get('/api/devices/:deviceId', authenticateToken, async (req: Request, res: R
       return res.status(500).json({ error: 'Database unavailable' });
     }
 
+    // Resolve device identifier (name or UUID) to UUID
+    const uuid = resolveDeviceIdentifier(deviceId, db);
+    if (!uuid) {
+      db.close();
+      res.status(404).json({ error: 'Device not found' });
+      return;
+    }
+
     const stmt = db.prepare('SELECT * FROM devices WHERE uuid = ?');
-    const device = stmt.get(deviceId) as any;
+    const device = stmt.get(uuid) as any;
 
     if (!device) {
       db.close();
@@ -482,8 +512,9 @@ app.get('/api/devices/:deviceId', authenticateToken, async (req: Request, res: R
     }
 
     res.json({
-      deviceId: device.uuid,
-      name: device.name,
+      deviceId: device.name, // Use device name as the public identifier
+      deviceName: device.name,
+      uuid: device.uuid, // Include UUID for internal use only
       status: 'offline', // Default status since last_seen doesn't exist in current schema
       lastSeen: null, // Not available in current schema
       model: device.model,
@@ -592,7 +623,7 @@ app.post('/api/telemetry', authenticateToken, async (req: Request, res: Response
   }
 });
 
-// Get device events
+// Get device events (accepts device name or UUID)
 app.get('/api/devices/:deviceId/events', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
@@ -603,8 +634,16 @@ app.get('/api/devices/:deviceId/events', authenticateToken, async (req: Request,
       return res.status(500).json({ error: 'Database unavailable' });
     }
 
+    // Resolve device identifier to UUID
+    const uuid = resolveDeviceIdentifier(deviceId, db);
+    if (!uuid) {
+      db.close();
+      res.status(404).json({ error: 'Device not found' });
+      return;
+    }
+
     let query = 'SELECT * FROM device_events WHERE device_id = ?';
-    const params: any[] = [deviceId];
+    const params: any[] = [uuid];
 
     if (eventType) {
       query += ' AND event_type = ?';
@@ -641,10 +680,24 @@ app.get('/api/devices/:deviceId/events', authenticateToken, async (req: Request,
   }
 });
 
-// Get device twin
+// Get device twin (accepts device name or UUID)
 app.get('/api/devices/:deviceId/twin', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
+    
+    const db = openDb(DEVICEHUB_DB);
+    if (!db) {
+      return res.status(500).json({ error: 'Database unavailable' });
+    }
+
+    // Resolve device identifier to UUID
+    const uuid = resolveDeviceIdentifier(deviceId, db);
+    db.close();
+    
+    if (!uuid) {
+      res.status(404).json({ error: 'Device not found' });
+      return;
+    }
     
     // TODO: Call twin service via D-Bus to get twin state
     // For now, return a mock response
@@ -660,7 +713,7 @@ app.get('/api/devices/:deviceId/twin', authenticateToken, async (req: Request, r
   }
 });
 
-// Update device twin desired properties
+// Update device twin desired properties (accepts device name or UUID)
 app.patch('/api/devices/:deviceId/twin', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
@@ -670,10 +723,24 @@ app.patch('/api/devices/:deviceId/twin', authenticateToken, async (req: Request,
       return res.status(400).json({ error: 'desired properties required' });
     }
 
-    // Publish desired state update to MQTT
+    const db = openDb(DEVICEHUB_DB);
+    if (!db) {
+      return res.status(500).json({ error: 'Database unavailable' });
+    }
+
+    // Resolve device identifier to UUID
+    const uuid = resolveDeviceIdentifier(deviceId, db);
+    db.close();
+    
+    if (!uuid) {
+      res.status(404).json({ error: 'Device not found' });
+      return;
+    }
+
+    // Publish desired state update to MQTT using UUID
     if (mqttClient && mqttClient.connected) {
       mqttClient.publish(
-        `$devicehub/devices/${deviceId}/twin/desired`,
+        `$devicehub/devices/${uuid}/twin/desired`,
         JSON.stringify(desired),
         { qos: 1 }
       );
@@ -686,7 +753,7 @@ app.patch('/api/devices/:deviceId/twin', authenticateToken, async (req: Request,
   }
 });
 
-// Call direct method on device
+// Call direct method on device (accepts device name or UUID)
 app.post('/api/devices/:deviceId/methods/:methodName', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId, methodName } = req.params;
@@ -695,6 +762,20 @@ app.post('/api/devices/:deviceId/methods/:methodName', authenticateToken, async 
     
     if (!mqttClient || !mqttClient.connected) {
       return res.status(503).json({ error: 'MQTT broker not connected' });
+    }
+
+    const db = openDb(DEVICEHUB_DB);
+    if (!db) {
+      return res.status(500).json({ error: 'Database unavailable' });
+    }
+
+    // Resolve device identifier to UUID
+    const uuid = resolveDeviceIdentifier(deviceId, db);
+    db.close();
+    
+    if (!uuid) {
+      res.status(404).json({ error: 'Device not found' });
+      return;
     }
 
     // Set up response listener with timeout
@@ -719,9 +800,9 @@ app.post('/api/devices/:deviceId/methods/:methodName', authenticateToken, async 
 
     eventEmitter.once(`method-response-${requestId}`, responseHandler);
 
-    // Publish method request
+    // Publish method request using UUID
     mqttClient.publish(
-      `$devicehub/devices/${deviceId}/methods/${methodName}/request`,
+      `$devicehub/devices/${uuid}/methods/${methodName}/request`,
       JSON.stringify({
         requestId,
         methodName,

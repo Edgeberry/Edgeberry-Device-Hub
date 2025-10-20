@@ -68,11 +68,13 @@ Output node that sends commands to Device Hub devices:
 ```json
 {
   "action": "callDirectMethod",
-  "deviceId": "device001",
+  "deviceId": "EDGB-A096",
   "methodName": "identify",
   "payload": { "duration": 5 }
 }
 ```
+
+**Note:** Always use device names (e.g., `EDGB-A096`) as the `deviceId`, never the internal UUID.
 
 2. Connect to a "Device Hub Out" node
 3. Connect the output to a debug node to see the response
@@ -90,26 +92,26 @@ Output node that sends commands to Device Hub devices:
 ```javascript
 // Telemetry message
 {
-  topic: "telemetry/device001",
+  topic: "telemetry/EDGB-A096",
   payload: {
-    deviceId: "device001",
+    deviceId: "EDGB-A096",  // Device name
     timestamp: "2024-01-01T12:00:00Z",
     data: { temperature: 25.5, humidity: 60 }
   },
-  deviceId: "device001",
+  deviceId: "EDGB-A096",
   dataType: "telemetry"
 }
 
 // Event message
 {
-  topic: "event/device001/alert",
+  topic: "event/EDGB-A096/alert",
   payload: {
-    deviceId: "device001",
+    deviceId: "EDGB-A096",  // Device name
     eventType: "alert",
     timestamp: "2024-01-01T12:00:00Z",
     data: { message: "Temperature too high" }
   },
-  deviceId: "device001",
+  deviceId: "EDGB-A096",
   dataType: "event"
 }
 ```
@@ -120,7 +122,7 @@ Output node that sends commands to Device Hub devices:
 // Direct method call
 {
   action: "callDirectMethod",
-  deviceId: "device001",
+  deviceId: "EDGB-A096",  // Use device name, not UUID
   methodName: "reboot",
   payload: { delay: 5 },
   timeout: 30000
@@ -129,7 +131,7 @@ Output node that sends commands to Device Hub devices:
 // Twin update
 {
   action: "updateDeviceTwin",
-  deviceId: "device001",
+  deviceId: "EDGB-A096",  // Use device name, not UUID
   desired: {
     telemetryInterval: 10000,
     logLevel: "info"

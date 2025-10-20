@@ -283,12 +283,12 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
     
     this.deviceId = this.options.deviceId;
     
-    // Topic patterns following Device Hub conventions
+    // Topic patterns following Device Hub conventions (application-service pattern)
     this.topics = {
       telemetry: `devices/${this.deviceId}/telemetry`,
       events: `$devicehub/devices/${this.deviceId}/messages/events`,
-      directMethods: `$devicehub/devices/${this.deviceId}/methods/post`,
-      directMethodsResponse: `edgeberry/things/${this.deviceId}/methods/response`,
+      directMethods: `$devicehub/devices/${this.deviceId}/methods/+/request`,
+      directMethodsResponse: `$devicehub/devices/${this.deviceId}/methods/+/response`,
       twin: `$devicehub/devices/${this.deviceId}/twin`,
       twinGet: `$devicehub/devices/${this.deviceId}/twin/get`,
       twinUpdate: `$devicehub/devices/${this.deviceId}/twin/update`,

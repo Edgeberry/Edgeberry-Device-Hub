@@ -5,7 +5,7 @@
  * in a Node-RED environment to consume device data from the Device Hub.
  */
 
-const EdgeberryDeviceHubAppClient = require('../dist/edgeberry-device-hub-app-client.js').default;
+const EdgeberryDeviceHubAppClient = require('../dist/app-client.js').default;
 
 module.exports = function(RED) {
     "use strict";
@@ -36,10 +36,10 @@ module.exports = function(RED) {
         async function initializeClient() {
             try {
                 client = new EdgeberryDeviceHubAppClient({
-                    baseUrl: hubConfig.baseUrl,
-                    username: hubConfig.credentials?.username,
-                    password: hubConfig.credentials?.password,
-                    apiKey: hubConfig.credentials?.apiKey,
+                    host: hubConfig.host,
+                    port: parseInt(hubConfig.port),
+                    secure: hubConfig.secure || false,
+                    token: hubConfig.credentials?.apiKey || '',
                     enableWebSocket: node.realtime
                 });
 
@@ -229,16 +229,19 @@ module.exports = function(RED) {
             return;
         }
 
+        // Store configured device ID
+        node.configuredDeviceId = config.deviceId;
+
         let client = null;
 
         // Initialize client
         async function initializeClient() {
             try {
                 client = new EdgeberryDeviceHubAppClient({
-                    baseUrl: hubConfig.baseUrl,
-                    username: hubConfig.credentials?.username,
-                    password: hubConfig.credentials?.password,
-                    apiKey: hubConfig.credentials?.apiKey,
+                    host: hubConfig.host,
+                    port: parseInt(hubConfig.port),
+                    secure: hubConfig.secure || false,
+                    token: hubConfig.credentials?.apiKey || '',
                     enableWebSocket: false // Output node doesn't need WebSocket
                 });
 
@@ -265,14 +268,17 @@ module.exports = function(RED) {
             try {
                 const action = msg.action || msg.topic;
                 
+                // Use msg.deviceId or fall back to configured deviceId
+                const deviceId = msg.deviceId || node.configuredDeviceId;
+                
                 switch (action) {
                     case 'callDirectMethod':
-                        if (!msg.deviceId || !msg.methodName) {
+                        if (!deviceId || !msg.methodName) {
                             node.error("deviceId and methodName required for callDirectMethod");
                             return;
                         }
                         const response = await client.callDirectMethod({
-                            deviceId: msg.deviceId,
+                            deviceId: deviceId,
                             methodName: msg.methodName,
                             payload: msg.payload,
                             timeout: msg.timeout
@@ -280,25 +286,25 @@ module.exports = function(RED) {
                         
                         // Send response back
                         node.send({
-                            topic: `method-response/${msg.deviceId}/${msg.methodName}`,
+                            topic: `method-response/${deviceId}/${msg.methodName}`,
                             payload: response,
-                            deviceId: msg.deviceId,
+                            deviceId: deviceId,
                             methodName: msg.methodName
                         });
                         break;
 
                     case 'updateDeviceTwin':
-                        if (!msg.deviceId || !msg.desired) {
+                        if (!deviceId || !msg.desired) {
                             node.error("deviceId and desired properties required for updateDeviceTwin");
                             return;
                         }
-                        await client.updateDeviceTwin(msg.deviceId, msg.desired);
+                        await client.updateDeviceTwin(deviceId, msg.desired);
                         
                         // Send confirmation
                         node.send({
-                            topic: `twin-updated/${msg.deviceId}`,
+                            topic: `twin-updated/${deviceId}`,
                             payload: { success: true, desired: msg.desired },
-                            deviceId: msg.deviceId
+                            deviceId: deviceId
                         });
                         break;
 
@@ -331,13 +337,18 @@ module.exports = function(RED) {
 
     /**
      * Device Hub Configuration Node
-     * Stores connection details for Device Hub
+     * Stores connection settings for Device Hub
      */
-    function DeviceHubConfigNode(config) {
-        RED.nodes.createNode(this, config);
+    function DeviceHubConfigNode(n) {
+        RED.nodes.createNode(this, n);
+        this.name = n.name;
+        this.host = n.host;
+        this.port = n.port;
+        this.secure = n.secure;
         
-        this.name = config.name;
-        this.baseUrl = config.baseUrl;
+        // Build baseUrl from host and port
+        const protocol = this.secure ? 'https' : 'http';
+        this.baseUrl = `${protocol}://${this.host}:${this.port}`;
         
         // Credentials are stored separately by Node-RED
         if (this.credentials) {

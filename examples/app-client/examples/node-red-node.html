@@ -14,7 +14,7 @@
         outputs: 1,
         icon: "bridge.png",
         label: function() {
-            return this.name || "Device Hub In";
+            return this.name || this.deviceIds || "Device Hub In";
         },
         labelStyle: function() {
             return this.name ? "node_label_italic" : "";
@@ -32,8 +32,8 @@
         <input type="text" id="node-input-hub">
     </div>
     <div class="form-row">
-        <label for="node-input-deviceIds"><i class="fa fa-microchip"></i> Device IDs</label>
-        <input type="text" id="node-input-deviceIds" placeholder="device1,device2 (leave empty for all devices)">
+        <label for="node-input-deviceIds"><i class="fa fa-microchip"></i> Device Names</label>
+        <input type="text" id="node-input-deviceIds" placeholder="EDGB-A096,EDGB-B123 (leave empty for all devices)">
     </div>
     <div class="form-row">
         <label for="node-input-dataTypes"><i class="fa fa-list"></i> Data Types</label>
@@ -90,13 +90,14 @@
         color: '#FF9800',
         defaults: {
             name: { value: "" },
-            hub: { value: "", type: "devicehub-config", required: true }
+            hub: { value: "", type: "devicehub-config", required: true },
+            deviceId: { value: "" }
         },
         inputs: 1,
         outputs: 1,
         icon: "bridge.png",
         label: function() {
-            return this.name || "Device Hub Out";
+            return this.name || this.deviceId || "Device Hub Out";
         },
         labelStyle: function() {
             return this.name ? "node_label_italic" : "";
@@ -113,6 +114,10 @@
         <label for="node-input-hub"><i class="fa fa-server"></i> Device Hub</label>
         <input type="text" id="node-input-hub">
     </div>
+    <div class="form-row">
+        <label for="node-input-deviceId"><i class="fa fa-microchip"></i> Device</label>
+        <input type="text" id="node-input-deviceId" placeholder="e.g., EDGB-A096 (optional: can also use msg.deviceId)">
+    </div>
 </script>
 
 <script type="text/html" data-help-name="devicehub-out">
@@ -123,7 +128,7 @@
         <dt>action <span class="property-type">string</span></dt>
         <dd>Action to perform: callDirectMethod, updateDeviceTwin</dd>
         <dt>deviceId <span class="property-type">string</span></dt>
-        <dd>Target device ID</dd>
+        <dd>Target device name (e.g., EDGB-A096) - optional if configured in node</dd>
         <dt>methodName <span class="property-type">string</span></dt>
         <dd>Direct method name (for callDirectMethod)</dd>
         <dt>payload <span class="property-type">object</span></dt>
@@ -148,15 +153,16 @@
     <p><b>Call Direct Method:</b></p>
     <pre>{
   "action": "callDirectMethod",
-  "deviceId": "device001",
+  "deviceId": "EDGB-A096",
   "methodName": "identify",
   "payload": { "duration": 5 }
 }</pre>
+    <p><em>Note: Always use device names (e.g., EDGB-A096) as deviceId, not UUIDs.</em></p>
 
     <p><b>Update Device Twin:</b></p>
     <pre>{
   "action": "updateDeviceTwin",
-  "deviceId": "device001",
+  "deviceId": "EDGB-A096",
   "desired": { "telemetryInterval": 10000 }
 }</pre>
 </script>
@@ -167,15 +173,15 @@
         category: 'config',
         defaults: {
             name: { value: "" },
-            baseUrl: { value: "https://127.0.0.1:8080", required: true }
+            host: { value: "localhost", required: true },
+            port: { value: "8090", required: true, validate: RED.validators.number() },
+            secure: { value: false }
         },
         credentials: {
-            username: { type: "text" },
-            password: { type: "password" },
             apiKey: { type: "password" }
         },
         label: function() {
-            return this.name || "Device Hub Config";
+            return this.name || this.host + ":" + this.port;
         }
     });
 </script>
@@ -183,23 +189,23 @@
 <script type="text/html" data-template-name="devicehub-config">
     <div class="form-row">
         <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
-        <input type="text" id="node-config-input-name" placeholder="Name">
+        <input type="text" id="node-config-input-name" placeholder="Optional">
     </div>
     <div class="form-row">
-        <label for="node-config-input-baseUrl"><i class="fa fa-server"></i> Base URL</label>
-        <input type="text" id="node-config-input-baseUrl" placeholder="https://devicehub.local:8080">
+        <label for="node-config-input-host"><i class="fa fa-server"></i> Host</label>
+        <input type="text" id="node-config-input-host" placeholder="localhost or IP address">
     </div>
     <div class="form-row">
-        <label for="node-config-input-username"><i class="fa fa-user"></i> Username</label>
-        <input type="text" id="node-config-input-username">
+        <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
+        <input type="text" id="node-config-input-port" placeholder="8090">
     </div>
     <div class="form-row">
-        <label for="node-config-input-password"><i class="fa fa-lock"></i> Password</label>
-        <input type="password" id="node-config-input-password">
+        <label for="node-config-input-secure"><i class="fa fa-lock"></i> Use HTTPS</label>
+        <input type="checkbox" id="node-config-input-secure" style="width: auto;">
     </div>
     <div class="form-row">
-        <label for="node-config-input-apiKey"><i class="fa fa-key"></i> API Key</label>
-        <input type="password" id="node-config-input-apiKey" placeholder="Alternative to username/password">
+        <label for="node-config-input-apiKey"><i class="fa fa-key"></i> Access Token</label>
+        <input type="password" id="node-config-input-apiKey" placeholder="API access token">
     </div>
 </script>
 
