@@ -1,8 +1,13 @@
 /**
- * Token Management Widget
+ * Applications Widget
  * 
- * Displays and manages API tokens for external application access
- * Used on the main dashboard for quick access to token management
+ * Displays and manages external applications that access Device Hub.
+ * Shows API tokens, their connection status, and active WebSocket connections.
+ * Provides a comprehensive view of the application layer that consumes device data.
+ * 
+ * Applications (like Node-RED, custom dashboards) connect via:
+ * - REST API with token authentication
+ * - WebSocket connections for real-time telemetry
  */
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Form, Modal, Spinner, Table } from 'react-bootstrap';
@@ -16,8 +21,25 @@ type ApiToken = {
   last_used?: string;
 };
 
-export default function TokenManagementWidget(props: { user: any | null }) {
+type ActiveConnection = {
+  tokenId: string;
+  appName: string;
+  connectionCount: number;
+  subscriptions: {
+    topics: string[];
+    devices: string[];
+  }[];
+};
+
+type ConnectionStatus = {
+  totalConnections: number;
+  activeApplications: number;
+  connections: ActiveConnection[];
+};
+
+export default function ApplicationsWidget(props: { user: any | null }) {
   const [tokens, setTokens] = useState<ApiToken[]>([]);
+  const [connections, setConnections] = useState<ConnectionStatus>({ totalConnections: 0, activeApplications: 0, connections: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   
@@ -54,9 +76,29 @@ export default function TokenManagementWidget(props: { user: any | null }) {
     }
   }
 
+  async function loadConnections() {
+    try {
+      const resp = await fetch('/api/applications/connections');
+      if (resp.ok) {
+        const data = await resp.json();
+        setConnections(data);
+      }
+    } catch (e: any) {
+      // Silently fail - connections are optional data
+      setConnections({ totalConnections: 0, activeApplications: 0, connections: [] });
+    }
+  }
+
+  async function loadAll() {
+    await Promise.all([loadTokens(), loadConnections()]);
+  }
+
   useEffect(() => {
     if (props.user) {
-      loadTokens();
+      loadAll();
+      // Refresh connections every 10 seconds
+      const interval = setInterval(loadConnections, 10000);
+      return () => clearInterval(interval);
     }
   }, [props.user]);
 
@@ -77,7 +119,7 @@ export default function TokenManagementWidget(props: { user: any | null }) {
       if (resp.ok) {
         const data = await resp.json();
         setGeneratedToken(data.token);
-        await loadTokens();
+        await loadAll();
       } else {
         const err = await resp.json().catch(() => ({}));
         setError(err.error || 'Failed to create token');
@@ -95,7 +137,7 @@ export default function TokenManagementWidget(props: { user: any | null }) {
     try {
       const resp = await fetch(`/api/tokens/${token.id}`, { method: 'DELETE' });
       if (resp.ok) {
-        await loadTokens();
+        await loadAll();
       } else {
         setError('Failed to delete token');
       }
@@ -112,13 +154,18 @@ export default function TokenManagementWidget(props: { user: any | null }) {
         body: JSON.stringify({ active: !token.active })
       });
       if (resp.ok) {
-        await loadTokens();
+        await loadAll();
       } else {
         setError('Failed to update token status');
       }
     } catch (e: any) {
       setError(e?.message || 'Failed to update token');
     }
+  }
+
+  // Get connection info for a specific token
+  function getConnectionInfo(tokenId: string): ActiveConnection | undefined {
+    return connections.connections.find(c => c.tokenId === tokenId);
   }
 
   if (!props.user) {
@@ -130,10 +177,10 @@ export default function TokenManagementWidget(props: { user: any | null }) {
       <Card className="mb-3">
         <Card.Header className="d-flex justify-content-between align-items-center">
           <div>
-            <i className="fa-solid fa-key me-2"></i>
-            API Tokens
+            <i className="fa-solid fa-cloud me-2"></i>
+            Applications
             <small className="text-muted ms-2">
-              ({tokens.filter(t => t.active).length} active)
+              ({tokens.filter(t => t.active).length} configured · {connections.activeApplications} connected)
             </small>
           </div>
           {isAdmin && (
@@ -147,7 +194,7 @@ export default function TokenManagementWidget(props: { user: any | null }) {
                 setShowCreateModal(true);
               }}
             >
-              <i className="fa fa-plus"></i> New Token
+              <i className="fa fa-plus"></i> New Application
             </Button>
           )}
         </Card.Header>
@@ -163,8 +210,12 @@ export default function TokenManagementWidget(props: { user: any | null }) {
             </Alert>
           ) : tokens.length === 0 ? (
             <div className="text-muted text-center py-3">
-              No API tokens configured.
-              {isAdmin && ' Click "New Token" to create one.'}
+              <i className="fa fa-info-circle me-2"></i>
+              No applications configured.
+              {isAdmin && ' Click "New Application" to create one.'}
+              <div className="small mt-2">
+                Applications like Node-RED, custom dashboards, or other tools can connect via API tokens.
+              </div>
             </div>
           ) : (
             <div className="table-responsive">
@@ -173,8 +224,8 @@ export default function TokenManagementWidget(props: { user: any | null }) {
                   <tr>
                     <th>Name</th>
                     <th>Status</th>
+                    <th>Connection</th>
                     <th>Created</th>
-                    <th>Expires</th>
                     <th>Last Used</th>
                     {isAdmin && <th>Actions</th>}
                   </tr>
@@ -182,30 +233,45 @@ export default function TokenManagementWidget(props: { user: any | null }) {
                 <tbody>
                   {tokens.map((token) => {
                     const isExpired = token.expires_at && new Date(token.expires_at) < new Date();
+                    const connInfo = getConnectionInfo(token.id);
+                    const isConnected = !!connInfo && connInfo.connectionCount > 0;
+                    
                     return (
                       <tr key={token.id}>
-                        <td className="align-middle">{token.name}</td>
+                        <td className="align-middle">
+                          <div className="d-flex align-items-center">
+                            <i className="fa-solid fa-cube me-2 text-muted"></i>
+                            <span>{token.name}</span>
+                          </div>
+                        </td>
                         <td className="align-middle">
                           <Badge bg={!token.active ? 'secondary' : isExpired ? 'danger' : 'success'}>
                             {!token.active ? 'Inactive' : isExpired ? 'Expired' : 'Active'}
                           </Badge>
                         </td>
                         <td className="align-middle">
-                          {new Date(token.created_at).toLocaleDateString()}
-                        </td>
-                        <td className="align-middle">
-                          {token.expires_at ? (
-                            isExpired ? (
-                              <span className="text-danger">Expired</span>
-                            ) : (
-                              new Date(token.expires_at).toLocaleDateString()
-                            )
+                          {isConnected ? (
+                            <div>
+                              <Badge bg="success" className="me-1">
+                                <i className="fa fa-circle-dot me-1"></i>
+                                Connected
+                              </Badge>
+                              <small className="text-muted">
+                                {connInfo.connectionCount} {connInfo.connectionCount === 1 ? 'session' : 'sessions'}
+                              </small>
+                            </div>
                           ) : (
-                            'Never'
+                            <Badge bg="secondary">
+                              <i className="fa fa-circle me-1"></i>
+                              Disconnected
+                            </Badge>
                           )}
                         </td>
                         <td className="align-middle">
-                          {token.last_used ? new Date(token.last_used).toLocaleDateString() : 'Never'}
+                          <small>{new Date(token.created_at).toLocaleDateString()}</small>
+                        </td>
+                        <td className="align-middle">
+                          <small>{token.last_used ? new Date(token.last_used).toLocaleDateString() : 'Never'}</small>
                         </td>
                         {isAdmin && (
                           <td className="align-middle">
@@ -236,26 +302,35 @@ export default function TokenManagementWidget(props: { user: any | null }) {
           {!isAdmin && tokens.length > 0 && (
             <div className="text-muted small mt-2">
               <i className="fa fa-info-circle me-1"></i>
-              Contact an administrator to manage API tokens.
+              Contact an administrator to manage applications.
+            </div>
+          )}
+          {connections.totalConnections > 0 && (
+            <div className="mt-3 p-2 bg-light rounded">
+              <small className="text-muted">
+                <i className="fa fa-info-circle me-1"></i>
+                <strong>{connections.totalConnections}</strong> active WebSocket connection{connections.totalConnections !== 1 ? 's' : ''} 
+                from <strong>{connections.activeApplications}</strong> application{connections.activeApplications !== 1 ? 's' : ''}
+              </small>
             </div>
           )}
         </Card.Body>
       </Card>
 
-      {/* Create Token Modal */}
+      {/* Create Application Token Modal */}
       <Modal show={showCreateModal} onHide={() => !creating && setShowCreateModal(false)}>
         <Modal.Header closeButton>
-          <Modal.Title>Create API Token</Modal.Title>
+          <Modal.Title>Add New Application</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {generatedToken ? (
             <div>
               <Alert variant="success">
-                <Alert.Heading>Token Created Successfully!</Alert.Heading>
+                <Alert.Heading>Application Token Created!</Alert.Heading>
                 <p>Copy this token now. You won't be able to see it again.</p>
               </Alert>
               <Form.Group>
-                <Form.Label>Your API Token:</Form.Label>
+                <Form.Label>API Token:</Form.Label>
                 <Form.Control
                   type="text"
                   value={generatedToken}
@@ -267,25 +342,28 @@ export default function TokenManagementWidget(props: { user: any | null }) {
                 </Form.Text>
               </Form.Group>
               <div className="mt-3">
-                <strong>Integration Examples:</strong>
+                <strong>How to use this token:</strong>
                 <ul className="small">
-                  <li>Node-RED: Configure in HTTP request nodes</li>
-                  <li>curl: <code>-H "Authorization: Bearer TOKEN"</code></li>
-                  <li>WebSocket: Send in connection params</li>
+                  <li><strong>REST API:</strong> Add header <code>Authorization: Bearer TOKEN</code></li>
+                  <li><strong>WebSocket:</strong> Connect to <code>ws://devicehub:8090/ws?token=TOKEN</code></li>
+                  <li><strong>Node-RED:</strong> Use the Edgeberry Device Hub nodes with this token</li>
                 </ul>
               </div>
             </div>
           ) : (
             <div>
               <Form.Group className="mb-3">
-                <Form.Label>Token Name</Form.Label>
+                <Form.Label>Application Name</Form.Label>
                 <Form.Control
                   type="text"
-                  placeholder="e.g., Node-RED Integration"
+                  placeholder="e.g., Node-RED Production, Custom Dashboard, Analytics Tool"
                   value={newTokenName}
                   onChange={(e) => setNewTokenName(e.target.value)}
                   disabled={creating}
                 />
+                <Form.Text className="text-muted">
+                  A descriptive name to identify this application
+                </Form.Text>
               </Form.Group>
               <Form.Group>
                 <Form.Label>Expiration (optional)</Form.Label>
@@ -314,7 +392,7 @@ export default function TokenManagementWidget(props: { user: any | null }) {
                 Cancel
               </Button>
               <Button variant="primary" onClick={createToken} disabled={creating || !newTokenName}>
-                {creating ? <><Spinner animation="border" size="sm" /> Creating...</> : 'Create Token'}
+                {creating ? <><Spinner animation="border" size="sm" /> Creating...</> : 'Create Application Token'}
               </Button>
             </>
           )}

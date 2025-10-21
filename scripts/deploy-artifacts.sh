@@ -378,6 +378,24 @@ install_systemd_units() {
   else
     log "WARN: missing $TWIN_DBUS_POLICY_SRC"
   fi
+  
+  # Application service D-Bus files
+  local APP_DBUS_SERVICE_SRC="${ROOT_DIR}/config/io.edgeberry.devicehub.ApplicationService.service"
+  local APP_DBUS_POLICY_SRC="${ROOT_DIR}/config/io.edgeberry.devicehub.ApplicationService.conf"
+  if [[ -f "$APP_DBUS_SERVICE_SRC" ]]; then
+    mkdir -p "$DBUS_SYSTEM_SERVICES_DIR"
+    install -m 0644 "$APP_DBUS_SERVICE_SRC" "$DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.ApplicationService.service"
+    log "installed D-Bus system service: $DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.ApplicationService.service"
+  else
+    log "WARN: missing $APP_DBUS_SERVICE_SRC"
+  fi
+  if [[ -f "$APP_DBUS_POLICY_SRC" ]]; then
+    mkdir -p "$DBUS_SYSTEM_POLICY_DIR"
+    install -m 0644 "$APP_DBUS_POLICY_SRC" "$DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.ApplicationService.conf"
+    log "installed D-Bus policy: $DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.ApplicationService.conf"
+  else
+    log "WARN: missing $APP_DBUS_POLICY_SRC"
+  fi
 }
 
 stop_services() {

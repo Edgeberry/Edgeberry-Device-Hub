@@ -56,8 +56,10 @@ echo "Removing D-Bus services and policies..."
 # Remove D-Bus system services and policies
 rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.Core.service
 rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.Twin.service
+rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.ApplicationService.service
 rm -f /etc/dbus-1/system.d/io.edgeberry.devicehub.Core.conf
 rm -f /etc/dbus-1/system.d/io.edgeberry.devicehub.Twin.conf
+rm -f /etc/dbus-1/system.d/io.edgeberry.devicehub.ApplicationService.conf
 
 echo "Removing application files..."
 # Remove application installation directory

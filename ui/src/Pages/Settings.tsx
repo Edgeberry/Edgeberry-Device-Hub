@@ -437,12 +437,16 @@ export default function Settings(_props:{user:any}){
         </Card.Body>
       </Card>
 
-      {/* API Token Management Card */}
+      {/* Applications Management Card */}
       <Card className="mb-4">
+        <Card.Header>
+          <i className="fa-solid fa-cloud me-2"></i>
+          Applications
+        </Card.Header>
         <Card.Body>
-          <h4 className="mb-3">API Token Management</h4>
           <p className="text-muted mb-3">
-            API tokens allow external applications like Node-RED to access the Device Hub REST API and WebSocket telemetry.
+            Applications are external tools and services that connect to Device Hub to consume device data.
+            Each application uses an API token for authentication and can establish WebSocket connections for real-time telemetry.
           </p>
           <div className="mb-3">
             <Button variant="primary" onClick={() => {
@@ -451,18 +455,21 @@ export default function Settings(_props:{user:any}){
               setGeneratedToken(null);
               setShowTokenModal(true);
             }}>
-              <i className="fa fa-plus"></i> Create New Token
+              <i className="fa fa-plus"></i> Add Application
             </Button>
           </div>
           {apiTokens.length === 0 ? (
-            <Alert variant="info">No API tokens found. Create one to enable external application access.</Alert>
+            <Alert variant="info">
+              <i className="fa fa-info-circle me-2"></i>
+              No applications configured. Create an API token to enable external application access (e.g., Node-RED, custom dashboards, analytics tools).
+            </Alert>
           ) : (
             <div className="table-responsive">
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Status</th>
+                    <th>Application Name</th>
+                    <th>Token Status</th>
                     <th>Created</th>
                     <th>Expires</th>
                     <th>Last Used</th>
@@ -541,16 +548,16 @@ export default function Settings(_props:{user:any}){
         </Card.Body>
       </Card>
 
-      {/* Create Token Modal */}
+      {/* Create Application Token Modal */}
       <Modal show={showTokenModal} onHide={() => setShowTokenModal(false)} size="lg">
         <Modal.Header closeButton>
-          <Modal.Title>Create API Token</Modal.Title>
+          <Modal.Title>Add New Application</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {generatedToken ? (
             <div>
               <Alert variant="success">
-                <Alert.Heading>Token Created Successfully!</Alert.Heading>
+                <Alert.Heading>Application Token Created!</Alert.Heading>
                 <p className="mb-2">
                   <strong>Important:</strong> Copy this token now. You won't be able to see it again.
                 </p>
@@ -571,11 +578,12 @@ export default function Settings(_props:{user:any}){
                 <Form.Text>Click to select and copy</Form.Text>
               </Form.Group>
               <Alert variant="info">
-                <p className="mb-2"><strong>Usage in Node-RED or custom apps:</strong></p>
-                <code>Authorization: Bearer {generatedToken.substring(0, 10)}...</code>
-                <hr />
-                <p className="mb-0"><strong>WebSocket connection:</strong></p>
-                <code>ws://devicehub:8090/ws?token={generatedToken.substring(0, 10)}...</code>
+                <p className="mb-2"><strong>How to use this token:</strong></p>
+                <ul className="mb-2">
+                  <li><strong>REST API:</strong> <code>Authorization: Bearer {generatedToken.substring(0, 10)}...</code></li>
+                  <li><strong>WebSocket:</strong> <code>ws://devicehub:8090/ws?token={generatedToken.substring(0, 10)}...</code></li>
+                  <li><strong>Node-RED:</strong> Use the Edgeberry Device Hub nodes with this token</li>
+                </ul>
               </Alert>
             </div>
           ) : (
@@ -603,15 +611,15 @@ export default function Settings(_props:{user:any}){
               }
             }}>
               <Form.Group className="mb-3">
-                <Form.Label>Token Name</Form.Label>
+                <Form.Label>Application Name</Form.Label>
                 <Form.Control
                   type="text"
-                  placeholder="e.g., Node-RED Integration"
+                  placeholder="e.g., Node-RED Production, Custom Dashboard, Analytics Tool"
                   value={newTokenName}
                   onChange={(e) => setNewTokenName(e.target.value)}
                   required
                 />
-                <Form.Text>A descriptive name to identify this token</Form.Text>
+                <Form.Text>A descriptive name to identify this application</Form.Text>
               </Form.Group>
               <Form.Group className="mb-3">
                 <Form.Label>Expiration (optional)</Form.Label>
@@ -628,7 +636,7 @@ export default function Settings(_props:{user:any}){
                 {tokenLoading ? (
                   <><Spinner animation="border" size="sm" /> Creating...</>
                 ) : (
-                  'Create Token'
+                  'Create Application Token'
                 )}
               </Button>
             </Form>

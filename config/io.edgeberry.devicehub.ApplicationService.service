@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=io.edgeberry.devicehub.ApplicationService
+Exec=/opt/Edgeberry/devicehub/application-service/node_modules/.bin/node /opt/Edgeberry/devicehub/application-service/dist/index.js
+User=root
+SystemdService=devicehub-application.service

@@ -1141,6 +1141,19 @@ app.patch('/api/tokens/:id', authRequired, (req: Request, res: Response) => {
   }
 });
 
+// GET /api/applications/connections -> get active WebSocket connections from application-service via D-Bus
+app.get('/api/applications/connections', authRequired, async (req: Request, res: Response) => {
+  const { getConnectionStatus } = await import('./dbus-application-client.js');
+  try {
+    const status = await getConnectionStatus();
+    res.json(status);
+  } catch (e: any) {
+    console.error('[core-service] Failed to get active connections via D-Bus:', e.message);
+    // Return empty connections instead of error to keep UI functional
+    res.json({ totalConnections: 0, activeApplications: 0, connections: [] });
+  }
+});
+
 // DELETE /api/devices/:uuid -> decommission device
 app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => {
   const { uuid } = req.params;

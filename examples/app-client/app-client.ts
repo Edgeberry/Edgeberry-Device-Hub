@@ -197,6 +197,7 @@ export class DeviceHubAppClient extends EventEmitter {
       this.websocket.on('open', () => {
         console.log('WebSocket connected');
         this.reconnectAttempts = 0;
+        this.connected = true;
         this.emit('websocket-connected');
         resolve();
       });
@@ -212,6 +213,7 @@ export class DeviceHubAppClient extends EventEmitter {
 
       this.websocket.on('close', () => {
         console.log('WebSocket disconnected');
+        this.connected = false;
         this.emit('websocket-disconnected');
         this.scheduleWebSocketReconnect();
       });
@@ -528,7 +530,17 @@ export class DeviceHubAppClient extends EventEmitter {
    * Check if client is connected
    */
   isConnected(): boolean {
-    return this.connected;
+    // Check both the connection flag and actual WebSocket state
+    if (!this.connected) {
+      return false;
+    }
+    
+    // If WebSocket is enabled, verify it's actually connected
+    if (this.config.enableWebSocket && this.websocket) {
+      return this.websocket.readyState === WebSocket.OPEN;
+    }
+    
+    return true;
   }
 
   /**

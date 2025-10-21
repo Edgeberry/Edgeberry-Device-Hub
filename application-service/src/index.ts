@@ -21,6 +21,7 @@ import mqtt from 'mqtt';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
+import { startApplicationDbusService, stopApplicationDbusService } from './dbus.js';
 // Load environment variables
 dotenv.config();
 
@@ -527,6 +528,63 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
+// Helper function to get connection status
+function getConnectionStatus() {
+  // Group active clients by token ID
+  const connectionsByToken = new Map<string, {
+    appName: string;
+    connections: number;
+    subscriptions: {
+      topics: string[];
+      devices: string[];
+    }[];
+  }>();
+
+  clients.forEach(client => {
+    const existing = connectionsByToken.get(client.tokenId);
+    if (existing) {
+      existing.connections++;
+      existing.subscriptions.push({
+        topics: Array.from(client.subscriptions.topics),
+        devices: Array.from(client.subscriptions.devices)
+      });
+    } else {
+      connectionsByToken.set(client.tokenId, {
+        appName: client.appName,
+        connections: 1,
+        subscriptions: [{
+          topics: Array.from(client.subscriptions.topics),
+          devices: Array.from(client.subscriptions.devices)
+        }]
+      });
+    }
+  });
+
+  // Convert to array format
+  const activeConnections = Array.from(connectionsByToken.entries()).map(([tokenId, info]) => ({
+    tokenId,
+    appName: info.appName,
+    connectionCount: info.connections,
+    subscriptions: info.subscriptions
+  }));
+
+  return {
+    totalConnections: clients.size,
+    activeApplications: activeConnections.length,
+    connections: activeConnections
+  };
+}
+
+// Get active WebSocket connections (authenticated - for external API consumers)
+app.get('/api/connections/active', authenticateToken, async (_req: Request, res: Response) => {
+  try {
+    res.json(getConnectionStatus());
+  } catch (e: any) {
+    console.error(`[${SERVICE}] Failed to get active connections:`, e.message);
+    res.status(500).json({ error: 'Failed to retrieve active connections' });
+  }
+});
+
 // Get all devices
 app.get('/api/devices', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -1000,6 +1058,15 @@ async function start() {
   // Initialize database
   initializeDatabase();
   
+  // Initialize D-Bus service
+  try {
+    await startApplicationDbusService(getConnectionStatus);
+    console.log(`[${SERVICE}] D-Bus service initialized`);
+  } catch (error) {
+    console.error(`[${SERVICE}] Failed to start D-Bus service:`, error);
+    console.error(`[${SERVICE}] Continuing without D-Bus support`);
+  }
+  
   // Connect to MQTT
   connectMqtt();
   
@@ -1024,6 +1091,9 @@ process.on('SIGTERM', () => {
   if (mqttClient) {
     mqttClient.end();
   }
+  
+  // Stop D-Bus service
+  stopApplicationDbusService();
   
   // Close HTTP server
   server.close(() => {
