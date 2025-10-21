@@ -1141,6 +1141,34 @@ app.patch('/api/tokens/:id', authRequired, (req: Request, res: Response) => {
   }
 });
 
+// GET /api/tokens/:id/reveal -> reveal the actual token value (admin only)
+app.get('/api/tokens/:id/reveal', authRequired, (req: Request, res: Response) => {
+  const { id } = req.params;
+  
+  if (!id) { 
+    res.status(400).json({ error: 'token_id_required' }); 
+    return; 
+  }
+  
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) { res.status(500).json({ error: 'db_unavailable' }); return; }
+  
+  try {
+    const tokenData = db.prepare('SELECT token FROM api_tokens WHERE id = ?').get(id) as any;
+    
+    if (!tokenData) {
+      res.status(404).json({ error: 'token_not_found' });
+    } else {
+      res.json({ token: tokenData.token });
+    }
+  } catch (e: any) {
+    console.error('[core-service] Failed to reveal API token:', e);
+    res.status(500).json({ error: 'failed_to_reveal_token' });
+  } finally {
+    try { db.close(); } catch {}
+  }
+});
+
 // GET /api/applications/connections -> get active WebSocket connections from application-service via D-Bus
 app.get('/api/applications/connections', authRequired, async (req: Request, res: Response) => {
   const { getConnectionStatus } = await import('./dbus-application-client.js');

@@ -11,6 +11,8 @@
  */
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Form, Modal, Spinner, Table } from 'react-bootstrap';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faKey, faToggleOn, faToggleOff, faTrash, faCopy } from '@fortawesome/free-solid-svg-icons';
 
 type ApiToken = {
   id: string;
@@ -49,6 +51,10 @@ export default function ApplicationsWidget(props: { user: any | null }) {
   const [newTokenExpiry, setNewTokenExpiry] = useState('');
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  
+  // View token modal state
+  const [viewTokenModal, setViewTokenModal] = useState(false);
+  const [viewingToken, setViewingToken] = useState<{id: string, name: string, token: string} | null>(null);
 
   // Check if user is admin
   const isAdmin = props.user && (
@@ -132,7 +138,7 @@ export default function ApplicationsWidget(props: { user: any | null }) {
   }
 
   async function deleteToken(token: ApiToken) {
-    if (!confirm(`Delete token "${token.name}"? This action cannot be undone.`)) return;
+    if (!confirm(`Delete application "${token.name}"? This will revoke access for all services using this token.`)) return;
     
     try {
       const resp = await fetch(`/api/tokens/${token.id}`, { method: 'DELETE' });
@@ -143,6 +149,27 @@ export default function ApplicationsWidget(props: { user: any | null }) {
       }
     } catch (e: any) {
       setError(e?.message || 'Failed to delete token');
+    }
+  }
+
+  async function viewToken(tokenId: string, tokenName: string) {
+    try {
+      const resp = await fetch(`/api/tokens/${tokenId}/reveal`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setViewingToken({ id: tokenId, name: tokenName, token: data.token });
+        setViewTokenModal(true);
+      } else {
+        setError('Failed to retrieve token');
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to retrieve token');
+    }
+  }
+
+  function copyTokenToClipboard() {
+    if (viewingToken?.token) {
+      navigator.clipboard.writeText(viewingToken.token);
     }
   }
 
@@ -275,21 +302,32 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                         </td>
                         {isAdmin && (
                           <td className="align-middle">
-                            <Button
-                              size="sm"
-                              variant={token.active ? 'outline-warning' : 'outline-success'}
-                              className="me-1"
-                              onClick={() => toggleTokenStatus(token)}
-                            >
-                              {token.active ? 'Disable' : 'Enable'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline-danger"
-                              onClick={() => deleteToken(token)}
-                            >
-                              Delete
-                            </Button>
+                            <div className="btn-group" role="group">
+                              <button 
+                                type="button" 
+                                className="btn btn-sm btn-edgeberry"
+                                onClick={() => viewToken(token.id, token.name)}
+                                title="View Token"
+                              >
+                                <FontAwesomeIcon icon={faKey} />
+                              </button>
+                              <button 
+                                type="button" 
+                                className="btn btn-sm btn-edgeberry"
+                                onClick={() => toggleTokenStatus(token)}
+                                title={token.active ? 'Disable' : 'Enable'}
+                              >
+                                <FontAwesomeIcon icon={token.active ? faToggleOn : faToggleOff} />
+                              </button>
+                              <button 
+                                type="button" 
+                                className="btn btn-sm btn-edgeberry"
+                                onClick={() => deleteToken(token)}
+                                title="Delete"
+                              >
+                                <FontAwesomeIcon icon={faTrash} />
+                              </button>
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -316,6 +354,53 @@ export default function ApplicationsWidget(props: { user: any | null }) {
           )}
         </Card.Body>
       </Card>
+
+      {/* View Token Modal */}
+      <Modal show={viewTokenModal} onHide={() => setViewTokenModal(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>View Token</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {viewingToken && (
+            <>
+              <p className="mb-2">
+                <strong>Application:</strong> {viewingToken.name}
+              </p>
+              <div className="mb-3">
+                <label className="form-label"><strong>Token:</strong></label>
+                <div className="input-group">
+                  <input 
+                    type="text" 
+                    className="form-control font-monospace" 
+                    value={viewingToken.token} 
+                    readOnly
+                    style={{ fontSize: '0.875rem' }}
+                  />
+                  <button 
+                    className="btn btn-outline-secondary" 
+                    type="button"
+                    onClick={copyTokenToClipboard}
+                    title="Copy to clipboard"
+                  >
+                    <FontAwesomeIcon icon={faCopy} />
+                  </button>
+                </div>
+              </div>
+              <Alert variant="warning" className="mb-0">
+                <small>
+                  <i className="fa fa-exclamation-triangle me-1"></i>
+                  Keep this token secure. Anyone with this token can access your Device Hub data.
+                </small>
+              </Alert>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setViewTokenModal(false)}>
+            Close
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       {/* Create Application Token Modal */}
       <Modal show={showCreateModal} onHide={() => !creating && setShowCreateModal(false)}>
