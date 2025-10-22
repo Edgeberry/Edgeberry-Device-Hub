@@ -135,40 +135,91 @@ function initMqttClient(): void {
   });
 }
 
-async function sendDirectMethod(deviceId: string, methodName: string, payload: any = {}): Promise<boolean> {
+async function sendDirectMethod(deviceId: string, methodName: string, payload: any = {}): Promise<any> {
   if (!mqttClient || !mqttClient.connected) {
     console.error(`[${SERVICE}] MQTT client not connected, cannot send direct method`);
-    return false;
+    return { success: false, error: 'MQTT client not connected' };
   }
 
-  // Use correct topic pattern: $devicehub/devices/{deviceId}/methods/{methodName}/request
-  const topic = `$devicehub/devices/${deviceId}/methods/${methodName}/request`;
+  // Generate unique request ID
+  const requestId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+  
+  // Topic patterns
+  const requestTopic = `$devicehub/devices/${deviceId}/methods/${methodName}/request`;
+  const responseTopic = `$devicehub/devices/${deviceId}/methods/${methodName}/response`;
+  
   const message = {
-    requestId: Math.random().toString(36).substring(2, 15) + Date.now().toString(36),
+    requestId: requestId,
     payload: payload
   };
 
   console.log(`[${SERVICE}] Sending direct method '${methodName}' to device ${deviceId}`);
-  console.log(`[${SERVICE}] Topic: ${topic}`);
+  console.log(`[${SERVICE}] Request ID: ${requestId}`);
+  console.log(`[${SERVICE}] Request Topic: ${requestTopic}`);
+  console.log(`[${SERVICE}] Response Topic: ${responseTopic}`);
   console.log(`[${SERVICE}] Message:`, JSON.stringify(message, null, 2));
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      mqttClient!.publish(topic, JSON.stringify(message), { qos: 0 }, (error) => {
+  return new Promise((resolve) => {
+    // Set up timeout for response
+    const timeout = setTimeout(() => {
+      console.log(`[${SERVICE}] Direct method '${methodName}' timeout for device ${deviceId}`);
+      mqttClient!.unsubscribe(responseTopic);
+      resolve({ success: false, error: 'Method call timeout', requestId: requestId });
+    }, 30000); // 30 second timeout
+
+    // Subscribe to response topic first
+    mqttClient!.subscribe(responseTopic, { qos: 0 }, (err) => {
+      if (err) {
+        console.error(`[${SERVICE}] Failed to subscribe to response topic:`, err);
+        clearTimeout(timeout);
+        resolve({ success: false, error: 'Failed to subscribe to response topic' });
+        return;
+      }
+
+      // Set up one-time response handler
+      const responseHandler = (topic: string, message: Buffer) => {
+        if (topic === responseTopic) {
+          try {
+            const response = JSON.parse(message.toString());
+            console.log(`[${SERVICE}] Received direct method response for '${methodName}' from device ${deviceId}:`, response);
+            
+            // Check if this response matches our request
+            if (response.requestId === requestId) {
+              clearTimeout(timeout);
+              mqttClient!.unsubscribe(responseTopic);
+              mqttClient!.removeListener('message', responseHandler);
+              
+              // Return the response from the device
+              resolve({
+                success: true,
+                status: response.status || 200,
+                payload: response.payload,
+                message: response.message,
+                requestId: requestId
+              });
+            }
+          } catch (error) {
+            console.error(`[${SERVICE}] Error parsing direct method response:`, error);
+          }
+        }
+      };
+
+      mqttClient!.on('message', responseHandler);
+
+      // Now send the request
+      mqttClient!.publish(requestTopic, JSON.stringify(message), { qos: 0 }, (error) => {
         if (error) {
-          reject(error);
+          console.error(`[${SERVICE}] Failed to send direct method '${methodName}' to device ${deviceId}:`, error);
+          clearTimeout(timeout);
+          mqttClient!.unsubscribe(responseTopic);
+          mqttClient!.removeListener('message', responseHandler);
+          resolve({ success: false, error: 'Failed to publish method request' });
         } else {
-          resolve();
+          console.log(`[${SERVICE}] Direct method '${methodName}' sent to device ${deviceId}, waiting for response...`);
         }
       });
     });
-    
-    console.log(`[${SERVICE}] Direct method '${methodName}' sent to device ${deviceId}`);
-    return true;
-  } catch (error) {
-    console.error(`[${SERVICE}] Failed to send direct method '${methodName}' to device ${deviceId}:`, error);
-    return false;
-  }
+  });
 }
 
 const app = express();
@@ -1513,13 +1564,22 @@ app.post('/api/devices/:uuid/actions/identify', authRequired, async (req: Reques
   
   try {
     console.log(`[${SERVICE}] Sending identify direct method to device ${uuid}`);
-    const success = await sendDirectMethod(uuid, 'identify');
-    console.log(`[${SERVICE}] Direct method result: ${success}`);
+    const result = await sendDirectMethod(uuid, 'identify');
+    console.log(`[${SERVICE}] Direct method result:`, result);
     
-    if (success) {
-      res.json({ ok: true, message: `Identify command sent to device ${uuid}` });
+    if (result.success) {
+      res.json({ 
+        ok: true, 
+        message: result.message || `Identify command executed on device ${uuid}`,
+        payload: result.payload,
+        status: result.status 
+      });
     } else {
-      res.status(500).json({ ok: false, message: 'Failed to send identify command to device' });
+      res.status(500).json({ 
+        ok: false, 
+        message: result.error || 'Failed to execute identify command on device',
+        requestId: result.requestId
+      });
     }
   } catch (error) {
     console.error(`[${SERVICE}] Error sending identify command to device ${uuid}:`, error);

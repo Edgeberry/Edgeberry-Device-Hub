@@ -439,7 +439,7 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
       const payload = JSON.parse(message.toString());
       
       // Check if it's a direct method request (matches pattern: $devicehub/devices/{deviceId}/methods/{methodName}/request)
-      const methodRequestPattern = new RegExp(`^\$devicehub\/devices\/${this.deviceId}\/methods\/([^/]+)\/request$`);
+      const methodRequestPattern = new RegExp(`^\\$devicehub\/devices\/${this.deviceId}\/methods\/([^/]+)\/request$`);
       const methodMatch = topic.match(methodRequestPattern);
       
       if (methodMatch) {
