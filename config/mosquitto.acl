@@ -34,6 +34,11 @@ pattern read  $devicehub/devices/%u/twin/delta
 # Device heartbeat (devices need to publish heartbeat messages)
 pattern write $devicehub/devices/+/heartbeat
 
+# Telemetry and events (devices publish sensor data and events)
+pattern write $devicehub/devices/+/telemetry
+pattern write $devicehub/devices/+/events/+
+pattern write $devicehub/devices/+/status
+
 # Direct methods (devices need to subscribe to method calls and respond)
 pattern read  $devicehub/devices/+/methods/+/request
 pattern write $devicehub/devices/+/methods/+/response

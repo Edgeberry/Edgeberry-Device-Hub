@@ -247,6 +247,7 @@ function handleMqttMessage(topic: string, payload: string) {
 // Broadcast to WebSocket subscribers
 function broadcastToSubscribers(topic: string, data: any) {
   const deviceId = data.deviceId || data.device_id;
+  const db = openDb(DEVICEHUB_DB);
   
   console.log(`[${SERVICE}] Broadcasting ${topic} for device ${deviceId} to ${clients.size} clients`);
   
@@ -261,7 +262,21 @@ function broadcastToSubscribers(topic: string, data: any) {
     
     // Check if client is subscribed to this device
     if (deviceId && !client.subscriptions.devices.has('*')) {
-      if (!client.subscriptions.devices.has(deviceId)) {
+      // Check if client subscribed with UUID
+      let isSubscribed = client.subscriptions.devices.has(deviceId);
+      
+      // If not, check if any of the subscribed device names resolve to this UUID
+      if (!isSubscribed && db) {
+        for (const subscribedDevice of client.subscriptions.devices) {
+          const resolvedUuid = resolveDeviceIdentifier(subscribedDevice, db);
+          if (resolvedUuid === deviceId) {
+            isSubscribed = true;
+            break;
+          }
+        }
+      }
+      
+      if (!isSubscribed) {
         console.log(`[${SERVICE}] Client ${client.appName} not subscribed to device ${deviceId}`);
         return;
       }
@@ -270,10 +285,20 @@ function broadcastToSubscribers(topic: string, data: any) {
     console.log(`[${SERVICE}] Sending ${topic} message to client ${client.appName}`);
     
     try {
+      // Convert UUID to device name for application layer
+      let deviceName = deviceId;
+      if (db) {
+        const stmt = db.prepare('SELECT name FROM devices WHERE uuid = ?');
+        const device = stmt.get(deviceId) as any;
+        if (device && device.name) {
+          deviceName = device.name;
+        }
+      }
+      
       client.ws.send(JSON.stringify({
         type: 'message',
         topic,
-        deviceId,
+        deviceId: deviceName,  // Send device name, not UUID
         data
       }));
     } catch (e) {

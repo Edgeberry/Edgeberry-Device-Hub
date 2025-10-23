@@ -1202,8 +1202,9 @@ Digital Twin (subset):
 
 Runtime telemetry/events:
 
-- Device publish: `devices/{deviceId}/...` (ingested and persisted to `device_events`)
-- Server/ops publish (optional): `devices/{deviceId}/commands/#`
+- Device publish telemetry: `$devicehub/devices/{deviceId}/telemetry` (real-time sensor data)
+- Device publish events: `$devicehub/devices/{deviceId}/events/{eventType}` (alerts and notifications)
+- Server/ops publish (optional): `devices/{deviceId}/commands/#` (not currently implemented)
 
 ## Twin Service (MVP)
 

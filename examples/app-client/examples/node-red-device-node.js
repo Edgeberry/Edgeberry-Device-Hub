@@ -90,9 +90,17 @@ module.exports = function(RED) {
                     node.status({fill: "red", shape: "ring", text: "error"});
                 });
 
-                // Now connect and subscribe
+                // Subscribe once WebSocket is fully connected
+                client.on('websocket-connected', () => {
+                    // Small delay to ensure connection is fully established
+                    setTimeout(() => {
+                        node.log(`Subscribing to telemetry for device: ${node.deviceName}`);
+                        client.startTelemetryStream([node.deviceName]);
+                    }, 100);
+                });
+
+                // Now connect (subscription will happen in websocket-connected event)
                 await client.connect();
-                client.startTelemetryStream([node.deviceName]);
 
             } catch (error) {
                 node.error(`Failed to connect to Device Hub: ${error.message}`);
@@ -101,58 +109,52 @@ module.exports = function(RED) {
         }
 
         // Set up listeners for device messages
+        // Note: application-service already filters messages based on our subscription,
+        // so we receive only messages for this device
         function setupDeviceListeners() {
             // Telemetry data
             client.on('telemetry', (data) => {
-                if (data.deviceId === node.deviceName) {
-                    node.send({
-                        topic: `telemetry/${node.deviceName}`,
-                        payload: data,
-                        deviceName: node.deviceName,
-                        messageType: 'telemetry'
-                    });
-                }
+                node.send({
+                    topic: `telemetry/${node.deviceName}`,
+                    payload: data,
+                    deviceName: node.deviceName,
+                    messageType: 'telemetry'
+                });
             });
 
             // Device events
             client.on('event', (data) => {
-                if (data.deviceId === node.deviceName) {
-                    node.send({
-                        topic: `event/${node.deviceName}/${data.eventType || 'unknown'}`,
-                        payload: data,
-                        deviceName: node.deviceName,
-                        messageType: 'event'
-                    });
-                }
+                node.send({
+                    topic: `event/${node.deviceName}/${data.eventType || 'unknown'}`,
+                    payload: data,
+                    deviceName: node.deviceName,
+                    messageType: 'event'
+                });
             });
 
             // Device status changes
             client.on('status', (data) => {
-                if (data.deviceId === node.deviceName) {
-                    node.send({
-                        topic: `status/${node.deviceName}`,
-                        payload: data,
-                        deviceName: node.deviceName,
-                        messageType: 'status'
-                    });
-                    
-                    // Update node status indicator
-                    const statusText = data.status === 'online' ? 'online' : 'offline';
-                    const statusColor = data.status === 'online' ? 'green' : 'yellow';
-                    node.status({fill: statusColor, shape: "dot", text: `${node.deviceName}: ${statusText}`});
-                }
+                node.send({
+                    topic: `status/${node.deviceName}`,
+                    payload: data,
+                    deviceName: node.deviceName,
+                    messageType: 'status'
+                });
+                
+                // Update node status indicator
+                const statusText = data.status === 'online' ? 'online' : 'offline';
+                const statusColor = data.status === 'online' ? 'green' : 'yellow';
+                node.status({fill: statusColor, shape: "dot", text: `${node.deviceName}: ${statusText}`});
             });
 
             // Twin updates
             client.on('twin', (data) => {
-                if (data.deviceId === node.deviceName) {
-                    node.send({
-                        topic: `twin/${node.deviceName}`,
-                        payload: data,
-                        deviceName: node.deviceName,
-                        messageType: 'twin'
-                    });
-                }
+                node.send({
+                    topic: `twin/${node.deviceName}`,
+                    payload: data,
+                    deviceName: node.deviceName,
+                    messageType: 'twin'
+                });
             });
         }
 

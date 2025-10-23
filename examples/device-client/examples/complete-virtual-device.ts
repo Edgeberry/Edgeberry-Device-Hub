@@ -550,7 +550,7 @@ class CompleteVirtualDevice {
         uptime: process.uptime()
       };
 
-      this.runtimeClient?.publish(`devices/${deviceId}/telemetry`, JSON.stringify(telemetryData));
+      this.runtimeClient?.publish(`$devicehub/devices/${deviceId}/telemetry`, JSON.stringify(telemetryData));
       console.log(`[virtual-device] -> telemetry seq=${sequenceNumber} temp=${telemetryData.temperature.toFixed(1)}°C`);
     };
 
