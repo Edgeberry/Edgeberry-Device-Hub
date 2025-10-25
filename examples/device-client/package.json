@@ -1,6 +1,6 @@
 {
   "name": "@edgeberry/devicehub-device-client",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "author": "Sanne 'SpuQ' Santens",
   "license": "MIT",
   "description": "TypeScript Node.js Device client for Edgeberry Device Hub",
