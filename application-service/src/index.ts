@@ -424,6 +424,10 @@ function handleWebSocketMessage(client: AuthenticatedClient, message: string) {
         handleMethodCall(client, msg);
         break;
 
+      case 'sendMessage':
+        handleSendMessage(client, msg);
+        break;
+
       default:
         client.ws.send(JSON.stringify({
           type: 'error',
@@ -518,6 +522,76 @@ async function handleMethodCall(client: AuthenticatedClient, msg: any) {
       payload
     }),
     { qos: 1 }
+  );
+}
+
+// Handle sendMessage via WebSocket
+async function handleSendMessage(client: AuthenticatedClient, msg: any) {
+  const { deviceId, payload, messageId } = msg;
+  
+  if (!deviceId || !payload) {
+    client.ws.send(JSON.stringify({
+      type: 'messageResponse',
+      messageId,
+      error: 'deviceId and payload required'
+    }));
+    return;
+  }
+
+  if (!mqttClient || !mqttClient.connected) {
+    client.ws.send(JSON.stringify({
+      type: 'messageResponse',
+      messageId,
+      error: 'MQTT broker not connected'
+    }));
+    return;
+  }
+
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) {
+    client.ws.send(JSON.stringify({
+      type: 'messageResponse',
+      messageId,
+      error: 'Database unavailable'
+    }));
+    return;
+  }
+
+  // Resolve device identifier to UUID
+  const uuid = resolveDeviceIdentifier(deviceId, db);
+  db.close();
+  
+  if (!uuid) {
+    client.ws.send(JSON.stringify({
+      type: 'messageResponse',
+      messageId,
+      error: 'Device not found'
+    }));
+    return;
+  }
+
+  console.log(`[${SERVICE}] Sending cloud-to-device message to ${deviceId} (${uuid})`);
+
+  // Publish message to device
+  mqttClient.publish(
+    `$devicehub/devices/${uuid}/messages/devicebound`,
+    JSON.stringify(payload),
+    { qos: 1 },
+    (err) => {
+      if (err) {
+        client.ws.send(JSON.stringify({
+          type: 'messageResponse',
+          messageId,
+          error: 'Failed to send message'
+        }));
+      } else {
+        client.ws.send(JSON.stringify({
+          type: 'messageResponse',
+          messageId,
+          success: true
+        }));
+      }
+    }
   );
 }
 

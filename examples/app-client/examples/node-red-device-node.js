@@ -209,8 +209,25 @@ module.exports = function(RED) {
                         });
                         break;
 
+                    case 'sendMessage':
+                    case 'message':
+                        if (!msg.payload) {
+                            node.error("payload required for sendMessage");
+                            return;
+                        }
+                        
+                        await client.sendMessageToDevice(node.deviceName, msg.payload);
+                        
+                        node.send({
+                            topic: `message-sent/${node.deviceName}`,
+                            payload: { success: true },
+                            deviceName: node.deviceName,
+                            messageType: 'message-confirm'
+                        });
+                        break;
+
                     default:
-                        node.warn(`Unknown action: ${action}. Use 'method' or 'twin'.`);
+                        node.warn(`Unknown action: ${action}. Use 'method', 'twin', or 'message'.`);
                 }
             } catch (error) {
                 node.error(`Failed to execute action: ${error.message}`);

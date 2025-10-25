@@ -43,6 +43,9 @@ pattern write $devicehub/devices/+/status
 pattern read  $devicehub/devices/+/methods/+/request
 pattern write $devicehub/devices/+/methods/+/response
 
+# Cloud-to-device messages (devices subscribe to messages from cloud applications)
+pattern read  $devicehub/devices/+/messages/devicebound
+
 # Optionally allow devices to read public broadcast announcements (if any)
 # topic read $devicehub/broadcast/#
 

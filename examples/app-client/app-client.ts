@@ -269,6 +269,8 @@ export class DeviceHubAppClient extends EventEmitter {
       this.emit('connected');
     } else if (message.type === 'methodResponse') {
       this.emit(`method-response-${message.requestId}`, message);
+    } else if (message.type === 'messageResponse') {
+      this.emit(`message-response-${message.messageId}`, message);
     } else {
       this.emit('message', message);
     }
@@ -481,6 +483,42 @@ export class DeviceHubAppClient extends EventEmitter {
         deviceId,
         methodName,
         payload: payload || {}
+      }));
+    });
+  }
+
+  /**
+   * Send a cloud-to-device message
+   */
+  async sendMessageToDevice(deviceId: string, payload: any): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket not connected'));
+        return;
+      }
+
+      const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const timeout = setTimeout(() => {
+        this.off(`message-response-${messageId}`, responseHandler);
+        reject(new Error('Message send timeout'));
+      }, 10000);
+
+      const responseHandler = (response: any) => {
+        clearTimeout(timeout);
+        if (response.error) {
+          reject(new Error(response.error));
+        } else {
+          resolve();
+        }
+      };
+
+      this.once(`message-response-${messageId}`, responseHandler);
+
+      this.websocket.send(JSON.stringify({
+        type: 'sendMessage',
+        messageId,
+        deviceId,
+        payload
       }));
     });
   }

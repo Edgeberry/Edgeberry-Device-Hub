@@ -287,6 +287,7 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
     this.topics = {
       telemetry: `$devicehub/devices/${this.deviceId}/telemetry`,
       events: `$devicehub/devices/${this.deviceId}/messages/events`,
+      devicebound: `$devicehub/devices/${this.deviceId}/messages/devicebound`,
       directMethods: `$devicehub/devices/${this.deviceId}/methods/+/request`,
       directMethodsResponse: `$devicehub/devices/${this.deviceId}/methods/+/response`,
       twin: `$devicehub/devices/${this.deviceId}/twin`,
@@ -417,6 +418,15 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
       }
     });
 
+    // Subscribe to cloud-to-device messages
+    this.client.subscribe(this.topics.devicebound, { qos: 1 }, (err) => {
+      if (err) {
+        console.error('Failed to subscribe to cloud-to-device messages:', err);
+      } else {
+        console.log('Subscribed to cloud-to-device messages');
+      }
+    });
+
     // Subscribe to twin updates
     this.client.subscribe([
       this.topics.twinUpdateAccepted,
@@ -445,6 +455,8 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
       if (methodMatch) {
         const methodName = methodMatch[1];
         this.handleDirectMethod(methodName, payload);
+      } else if (topic === this.topics.devicebound) {
+        this.handleDeviceboundMessage(payload);
       } else if (topic === this.topics.twinUpdateAccepted || topic === this.topics.twinUpdateRejected) {
         this.handleTwinUpdateResponse(topic, payload);
       } else if (topic === this.topics.twinUpdateDelta) {
@@ -531,6 +543,14 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
     console.log('Received twin delta:', payload);
     this.emit('twinDesired', payload);
     this.emit('twin-delta', { topic: this.topics.twinUpdateDelta, body: payload });
+  }
+
+  /**
+   * Handle cloud-to-device messages
+   */
+  private handleDeviceboundMessage(payload: any): void {
+    console.log('Received cloud-to-device message:', payload);
+    this.emit('cloudMessage', payload);
   }
 
   /**
