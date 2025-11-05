@@ -825,8 +825,11 @@ EOF
   
   # Sync to core-service data directory
   mkdir -p "$INSTALL_ROOT/core-service/data/certs/root"
+  mkdir -p "$INSTALL_ROOT/core-service/data/certs/provisioning"
   cp "$PERSISTENT_CA" "$INSTALL_ROOT/core-service/data/certs/root/ca.crt"
   cp "$PERSISTENT_CA_KEY" "$INSTALL_ROOT/core-service/data/certs/root/ca.key"
+  cp "$PERSISTENT_PROV_CERT" "$INSTALL_ROOT/core-service/data/certs/provisioning/provisioning.crt"
+  cp "$PERSISTENT_PROV_KEY" "$INSTALL_ROOT/core-service/data/certs/provisioning/provisioning.key"
   
   log "persistent certificates configured"
 }
