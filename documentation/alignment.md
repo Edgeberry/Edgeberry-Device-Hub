@@ -389,6 +389,12 @@ Internal modularity is an implementation detail and must not leak into the publi
 - Use this URL for on-device validation after running `scripts/deploy.sh`.
  - SSH user for this test server: `spuq` (use with `-u spuq`).
 
+##### Production Server
+- **Official Edgeberry Device Hub production instance:**
+  - **Host:** 146.190.236.44 (Digital Ocean Droplet)
+  - **Platform:** Digital Ocean
+  - **Purpose:** Production deployment for live device fleet management
+
 #### API Structure
 - **HTTP API prefix:** `/api` (versioning via headers or path TBD) — served directly by `core-service`
 - **Observability endpoints:** Provided by `core-service`, including logs snapshot (`/api/logs`)
