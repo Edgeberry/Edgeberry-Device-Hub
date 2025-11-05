@@ -36,6 +36,12 @@ else
   openssl rehash "$MQTT_CA_DIR"
 fi
 
+# Ensure CA directory and all contents are readable by mosquitto group
+if id -u mosquitto >/dev/null 2>&1; then
+  chown -R root:mosquitto "$MQTT_CA_DIR" 2>/dev/null || true
+  chmod -R 640 "$MQTT_CA_DIR"/* 2>/dev/null || true
+fi
+
 # Reload/restart Mosquitto to pick up new certificates
 if systemctl is-active --quiet mosquitto; then
   systemctl reload mosquitto || systemctl restart mosquitto

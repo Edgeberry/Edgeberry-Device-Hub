@@ -52,6 +52,12 @@ elif command -v openssl >/dev/null 2>&1; then
   openssl rehash "$CAPATH" >/dev/null 2>&1 || true
 fi
 
+# Ensure CA directory and all contents remain readable by mosquitto group after rehash
+if id -u mosquitto >/dev/null 2>&1; then
+  chown -R root:mosquitto "$CAPATH" 2>/dev/null || true
+  chmod -R 640 "$CAPATH"/* 2>/dev/null || true
+fi
+
 # Reload/restart Mosquitto
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
   log "reloading mosquitto"

@@ -570,6 +570,9 @@ EOF
 
     if id -u mosquitto >/dev/null 2>&1; then
       chown root:mosquitto "$ETC_CA" "$ETC_CERT" "$ETC_KEY" 2>/dev/null || true
+      # Ensure CA directory and all contents are readable by mosquitto group
+      chown -R root:mosquitto "$ETC_CA_DIR" 2>/dev/null || true
+      chmod -R 640 "$ETC_CA_DIR"/* 2>/dev/null || true
     fi
 
     # Ensure persistence directory exists with correct ownership (common failure)
