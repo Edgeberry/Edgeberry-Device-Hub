@@ -7,10 +7,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ART_DIR="$ROOT_DIR/dist-artifacts"
 
-# Default values
-HOST=""
-USER="$(whoami)"
-IDENTITY_FILE=""
+# Default values (can be overridden via environment variables)
+HOST="${DEPLOY_HOST:-}"
+USER="${DEPLOY_USER:-$(whoami)}"
+IDENTITY_FILE="${DEPLOY_IDENTITY_FILE:-}"
 PASSWORD=""
 SKIP_BUILD=0
 VERBOSE=0
@@ -24,14 +24,32 @@ usage() {
 Usage: $(basename "$0") -h <host> [-u <user>] [-i <key>] [-p <password>] [--skip-build] [-v] [--force-clean]
 
 Options:
-  -h <host>      Remote host (required)
-  -u <user>      SSH username (default: current user)
-  -i <key>       SSH private key file
+  -h <host>      Remote host (required, or set DEPLOY_HOST env var)
+  -u <user>      SSH username (default: current user, or set DEPLOY_USER env var)
+  -i <key>       SSH private key file (or set DEPLOY_IDENTITY_FILE env var)
   -p <password>  SSH password (will prompt if not provided)
   --skip-build   Skip local build
   --force-clean  Force clean install (removes persistent certificates and database)
   -v             Verbose output
   --help         Show help
+
+Environment Variables:
+  DEPLOY_HOST           Default remote host
+  DEPLOY_USER           Default SSH username
+  DEPLOY_IDENTITY_FILE  Default SSH private key file
+
+Examples:
+  # Using command-line arguments
+  $(basename "$0") -h 192.168.1.100 -u spuq
+
+  # Using environment variables
+  export DEPLOY_HOST=192.168.1.100
+  export DEPLOY_USER=spuq
+  $(basename "$0")
+
+  # Override environment defaults with command-line args
+  export DEPLOY_HOST=192.168.1.100
+  $(basename "$0") -h 192.168.1.200  # Uses 192.168.1.200 instead
 EOF
 }
 

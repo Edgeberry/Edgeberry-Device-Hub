@@ -868,7 +868,9 @@ function ensureDeviceHubSchema(){
     try {
       const whitelistInfo = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
       const hasLegacyColumns = whitelistInfo.some((col: any) => col.name === 'device_id' || col.name === 'name' || col.name === 'note');
-      const hasNewColumns = whitelistInfo.some((col: any) => col.name === 'hardware_version' && col.name === 'manufacturer');
+      const hasHardwareVersion = whitelistInfo.some((col: any) => col.name === 'hardware_version');
+      const hasManufacturer = whitelistInfo.some((col: any) => col.name === 'manufacturer');
+      const hasNewColumns = hasHardwareVersion && hasManufacturer;
       
       if (hasLegacyColumns || !hasNewColumns) {
         console.log('[ensureDeviceHubSchema] Migrating uuid_whitelist table to new schema');

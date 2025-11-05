@@ -153,10 +153,34 @@ install_node_deps() {
         pushd "${dir}" >/dev/null
         # Always rebuild all native modules to ensure compatibility
         log "${svc}: rebuilding native modules for target architecture..."
-        if ! npm rebuild 2>&1 | tail -n 5; then
-          log "ERROR: ${svc}: failed to rebuild native modules - service may not start"
-        else
+        
+        # Capture full output for diagnostics
+        local rebuild_output
+        rebuild_output=$(mktemp)
+        
+        # Force rebuild from source for better-sqlite3 to ensure ABI compatibility
+        if npm rebuild --build-from-source 2>&1 | tee "$rebuild_output"; then
           log "${svc}: native modules rebuilt successfully"
+          rm -f "$rebuild_output"
+        else
+          log "ERROR: ${svc}: failed to rebuild native modules"
+          log "--- Rebuild output (last 50 lines) ---"
+          tail -n 50 "$rebuild_output" || true
+          log "--- Node.js version ---"
+          node --version || true
+          log "--- npm version ---"
+          npm --version || true
+          log "--- Python version (required for native builds) ---"
+          python3 --version || true
+          log "--- Compiler availability ---"
+          which gcc g++ make || true
+          rm -f "$rebuild_output"
+          
+          # For critical services, fail the deployment
+          if [[ "$svc" == "core-service" ]] || [[ "$svc" == "application-service" ]]; then
+            log "FATAL: ${svc} is critical and rebuild failed - stopping deployment"
+            exit 1
+          fi
         fi
         popd >/dev/null
       else
