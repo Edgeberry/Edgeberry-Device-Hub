@@ -1,0 +1,132 @@
+name: Deploy Release to Production
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    name: Deploy to Production Server
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      
+      - name: Wait for release assets
+        run: |
+          echo "Waiting for release assets to be uploaded..."
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+          
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ASSET_COUNT=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
+              jq '.assets | length')
+            
+            echo "Found $ASSET_COUNT asset(s)"
+            
+            # Check if we have the main combined artifact
+            COMBINED_ASSET=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
+              jq -r '.assets[] | select(.name | startswith("devicehub-combined-")) | .name')
+            
+            if [ -n "$COMBINED_ASSET" ]; then
+              echo "✅ Found combined artifact: $COMBINED_ASSET"
+              break
+            fi
+            
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Waiting 10 seconds..."
+            sleep 10
+          done
+          
+          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+            echo "❌ Timeout waiting for release assets"
+            exit 1
+          fi
+      
+      - name: Download release artifacts
+        run: |
+          mkdir -p dist-artifacts
+          
+          # Get the combined artifact download URL
+          ASSET_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
+            jq -r '.assets[] | select(.name | startswith("devicehub-combined-")) | .browser_download_url')
+          
+          if [ -z "$ASSET_URL" ]; then
+            echo "❌ Combined artifact not found"
+            exit 1
+          fi
+          
+          echo "Downloading from: $ASSET_URL"
+          wget -q --header="Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -O "dist-artifacts/devicehub-combined-${{ github.event.release.tag_name }}.tar.gz" \
+            "$ASSET_URL"
+          
+          echo "✅ Downloaded artifact"
+          ls -lh dist-artifacts/
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+      
+      - name: Setup SSH key
+        if: ${{ secrets.DEPLOY_SSH_KEY != '' }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      
+      - name: Deploy to production server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || '146.190.231.65' }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
+        run: |
+          # Export for deploy.sh script
+          export DEPLOY_HOST="$DEPLOY_HOST"
+          export DEPLOY_USER="$DEPLOY_USER"
+          
+          # Build deploy command
+          if [ -n "${{ secrets.DEPLOY_SSH_KEY }}" ]; then
+            # Use SSH key authentication
+            bash scripts/deploy.sh -h "$DEPLOY_HOST" -u "$DEPLOY_USER" -i ~/.ssh/deploy_key --skip-build
+          elif [ -n "$DEPLOY_PASSWORD" ]; then
+            # Use password authentication
+            bash scripts/deploy.sh -h "$DEPLOY_HOST" -u "$DEPLOY_USER" -p "$DEPLOY_PASSWORD" --skip-build
+          else
+            echo "❌ No authentication method configured"
+            echo "Set either DEPLOY_SSH_KEY or DEPLOY_PASSWORD secret"
+            exit 1
+          fi
+      
+      - name: Verify deployment
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || '146.190.231.65' }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
+        run: |
+          echo "Checking deployment status..."
+          
+          if [ -n "${{ secrets.DEPLOY_SSH_KEY }}" ]; then
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
+              "systemctl is-active devicehub-core.service"
+          elif [ -n "$DEPLOY_PASSWORD" ]; then
+            sshpass -p "$DEPLOY_PASSWORD" ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
+              "systemctl is-active devicehub-core.service"
+          fi
+      
+      - name: Create deployment notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment successful for ${{ github.event.release.tag_name }}"
+            echo "Server: ${{ secrets.DEPLOY_HOST || '146.190.231.65' }}"
+          else
+            echo "❌ Deployment failed for ${{ github.event.release.tag_name }}"
+          fi
