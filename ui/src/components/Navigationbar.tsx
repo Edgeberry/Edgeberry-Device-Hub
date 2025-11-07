@@ -26,7 +26,12 @@ const NavigationBar = (props:{user:any|null, onLoginClick?: ()=>void })=>{
                             </span>
                         )}
                         {props.user ? (
-                          <Link to='/logout' className='btn btn-sm btn-outline-light'>Logout</Link>
+                          <>
+                            <Link to='/logout' className='btn btn-sm btn-outline-light'>Logout</Link>
+                            <Link to='/settings' className='btn btn-sm btn-outline-light' title='Settings'>
+                              <i className="fa-solid fa-cog"></i>
+                            </Link>
+                          </>
                         ) : (
                           <button className='btn btn-sm btn-outline-light' onClick={props.onLoginClick}>Login</button>
                         )}

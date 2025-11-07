@@ -17,6 +17,7 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard from './Pages/Dashboard';
 import Overview from './Pages/Overview';
+import Settings from './Pages/Settings';
 import Logout from './Pages/Logout';
 import SessionManager from './components/SessionManager';
 
@@ -81,6 +82,7 @@ function App(){
           { /* One-page app: everything resolves to '/' with Overview */ }
           <Route path='/' element={<Dashboard user={user} onLoggedIn={handleLogin} /> }>
             <Route index element={<Overview user={user} />} />
+            <Route path='settings' element={<RequireAuth><Settings user={user} /></RequireAuth>} />
             { /* Protected route for logout action */ }
             <Route path='logout' element={<RequireAuth><Logout user={user} onLogout={handleLogout} /></RequireAuth>} />
             <Route path='*' element={<Navigate to='/' replace />} />

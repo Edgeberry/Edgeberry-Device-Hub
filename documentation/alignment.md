@@ -4,7 +4,7 @@ This file defines the foundational philosophy, design intent, and system archite
 
 **Status:** MVP stage (active). This document reflects MVP constraints and temporary trade-offs.
 
-**Last updated:** 2025-10-20 23:00 CEST
+**Last updated:** 2025-11-07 10:18 CET
 
 ## Documentation Strategy
 
@@ -420,9 +420,97 @@ Anonymous access (Observer mode):
 - Anonymous mode is enabled: non-sensitive data is visible without login; admin-only actions are disabled.
 - Login is presented as a modal triggered from the navbar (no dedicated `/login` page).
 - Logout returns to `/` (anonymous view) instead of redirecting to a login page.
-- The former menu/off-canvas is removed. Navbar shows auth status and a Login/Logout control only.
+- The navbar shows auth status with Login/Logout controls and a Settings cog icon (⚙️) for authenticated admins.
+- Settings page accessible at `/settings` route (admin-only, protected by authentication).
 - Layout: full-viewport (100vh/100vw) with a sticky footer. Only the inner content container scrolls.
 - Footer: transparent background with a subtle top border and license notice.
+
+#### Admin Authentication and Password Management
+
+**Authentication Model:**
+- Single-user admin authentication using JWT tokens
+- Session cookies (`fh_session`) stored as HttpOnly cookies
+- JWT validation on protected routes via `authRequired` middleware
+- Default credentials: `admin` / `admin` (configurable via environment variables)
+
+**Password Storage:**
+- Passwords stored as bcrypt hashes in the `users` table within `devicehub.db`
+- Bcrypt salt rounds: 10 (industry standard)
+- Environment variable fallback: `ADMIN_USER` and `ADMIN_PASSWORD` for backward compatibility
+- First password change migrates credentials from environment to database
+
+**Authentication Flow:**
+1. Check database for user credentials (hashed password)
+2. Fallback to environment variables (`ADMIN_USER` and `ADMIN_PASSWORD`) if no database entry exists
+3. Issue JWT token on successful authentication
+4. Token stored in HttpOnly session cookie for security
+
+**Password Management API:**
+- `POST /api/auth/login` — Authenticate with username/password, returns JWT cookie
+- `POST /api/auth/logout` — Clear session cookie
+- `GET /api/auth/me` — Verify authentication status
+- `POST /api/auth/change-password` — Change password (requires authentication)
+  - Request: `{ currentPassword, newPassword }`
+  - Response: `{ ok: true, message: 'password updated successfully' }`
+  - Validates current password before allowing change
+  - Enforces minimum 8-character password length
+  - Updates database with new bcrypt hash
+
+**Settings Page (Admin-Only):**
+- Accessible via cog icon (⚙️) in navbar (right of Logout button)
+- Route: `/settings`
+- Protected by authentication (redirects to login if not authenticated)
+- Sections:
+  - **Account & Security** — Password management with "Change Password" button
+  - **Server** — Server configuration and status
+  - **Root CA** — Certificate authority management
+  - **Provisioning Whitelist** — UUID whitelist management
+  - **Device Lifecycle Status** — Device online/offline overview
+  - **Provisioning Certificates** — Certificate operations
+  - **Applications** — API token management for external integrations
+
+**Password Requirements:**
+- Minimum length: 8 characters
+- Maximum length: 128 characters
+- No complexity requirements enforced in MVP (can be expanded post-MVP)
+
+**Security Features:**
+- Bcrypt password hashing (one-way encryption)
+- Current password verification required for changes
+- Database-stored credentials with automatic migration from environment variables
+- HttpOnly session cookies prevent XSS attacks
+- JWT with configurable expiration (default: 24 hours via `JWT_TTL_SECONDS`)
+
+**Environment Variables:**
+- `ADMIN_USER` — Default admin username (default: `admin`)
+- `ADMIN_PASSWORD` — Default admin password (default: `admin`)
+- `JWT_SECRET` — Secret key for JWT signing (required, must be set in production)
+- `JWT_TTL_SECONDS` — JWT token time-to-live in seconds (default: 86400 = 24 hours)
+- `SESSION_COOKIE` — Session cookie name (default: `fh_session`)
+
+**Database Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS users (
+  username TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Migration Path:**
+- Existing deployments continue using environment variables without changes
+- First admin password change creates database entry
+- Subsequent authentications check database first, then fall back to environment
+- Environment variables remain functional for backward compatibility and recovery
+
+**Production Recommendations:**
+1. Change default password immediately after installation
+2. Use strong passwords (12+ characters recommended)
+3. Set unique `JWT_SECRET` in production environment
+4. Consider removing `ADMIN_PASSWORD` from environment after database migration
+5. Use HTTPS in production to protect password transmission
+6. Regular password updates as part of security hygiene
 
 ### Execution Model & IPC
 

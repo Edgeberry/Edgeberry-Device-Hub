@@ -47,6 +47,7 @@ import jwt from 'jsonwebtoken';
 import morgan from 'morgan';
 import serveStatic from 'serve-static';
 import { connect, type MqttClient, type IClientOptions } from 'mqtt';
+import { hashPassword, verifyPassword, validatePasswordStrength } from './password.js';
 import {
   SERVICE,
   PORT,
@@ -792,13 +793,46 @@ await startDbusServices();
 // Auth routes (no registration)
 // POST /api/auth/login
 // Authenticate admin user and set JWT session cookie
-app.post('/api/auth/login', (req: Request, res: Response) => {
+// Checks database first for hashed password, falls back to env var for backward compatibility
+app.post('/api/auth/login', async (req: Request, res: Response) => {
   const { username, password } = req.body || {};
-  if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
-    const token = jwt.sign({ user: ADMIN_USER }, JWT_SECRET, { algorithm: 'HS256', expiresIn: JWT_TTL_SECONDS, subject: ADMIN_USER });
+  
+  if (!username || !password) {
+    res.status(401).json({ ok: false, error: 'invalid credentials' });
+    return;
+  }
+
+  let authenticated = false;
+  let userExistsInDb = false;
+  
+  // Try database first (with hashed password)
+  const db = openDb(DEVICEHUB_DB);
+  if (db) {
+    try {
+      const user = db.prepare('SELECT username, password_hash FROM users WHERE username = ?').get(username) as { username: string; password_hash: string } | undefined;
+      if (user) {
+        // User exists in DB, verify hashed password
+        userExistsInDb = true;
+        authenticated = await verifyPassword(password, user.password_hash);
+      }
+    } catch (e) {
+      console.error('[core-service] Error checking database for user:', e);
+    } finally {
+      try { db.close(); } catch {}
+    }
+  }
+  
+  // Only fallback to environment variable if user doesn't exist in DB
+  // This prevents old env password from working after password change
+  if (!authenticated && !userExistsInDb && username === ADMIN_USER && password === ADMIN_PASSWORD) {
+    authenticated = true;
+  }
+  
+  if (authenticated) {
+    const token = jwt.sign({ user: username }, JWT_SECRET, { algorithm: 'HS256', expiresIn: JWT_TTL_SECONDS, subject: username });
     const decoded = jwt.decode(token) as { exp?: number };
     setSessionCookie(res, token);
-    res.json({ ok: true, user: ADMIN_USER, exp: decoded?.exp });
+    res.json({ ok: true, user: username, exp: decoded?.exp });
   } else {
     res.status(401).json({ ok: false, error: 'invalid credentials' });
   }
@@ -829,6 +863,74 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
   const s = getSession(req);
   if (!s) { res.status(401).json({ authenticated: false }); return; }
   res.json({ authenticated: true, user: s.user, exp: s.exp });
+});
+
+// POST /api/auth/change-password -> change admin password (requires authentication)
+app.post('/api/auth/change-password', authRequired, async (req: Request, res: Response) => {
+  const s = getSession(req);
+  if (!s) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+
+  const { currentPassword, newPassword } = req.body || {};
+
+  if (!currentPassword || !newPassword) {
+    res.status(400).json({ ok: false, error: 'currentPassword and newPassword are required' });
+    return;
+  }
+
+  // Validate new password strength
+  const validationError = validatePasswordStrength(newPassword);
+  if (validationError) {
+    res.status(400).json({ ok: false, error: validationError });
+    return;
+  }
+
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) {
+    res.status(500).json({ ok: false, error: 'database unavailable' });
+    return;
+  }
+
+  try {
+    // Verify current password first
+    let currentPasswordValid = false;
+    const user = db.prepare('SELECT username, password_hash FROM users WHERE username = ?').get(s.user) as { username: string; password_hash: string } | undefined;
+    
+    if (user) {
+      // User exists in DB, verify hashed password
+      currentPasswordValid = await verifyPassword(currentPassword, user.password_hash);
+    } else {
+      // User not in DB yet, verify against env var
+      if (s.user === ADMIN_USER && currentPassword === ADMIN_PASSWORD) {
+        currentPasswordValid = true;
+      }
+    }
+
+    if (!currentPasswordValid) {
+      res.status(401).json({ ok: false, error: 'current password is incorrect' });
+      return;
+    }
+
+    // Hash new password
+    const newPasswordHash = await hashPassword(newPassword);
+
+    // Update or insert user with new password
+    if (user) {
+      db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?').run(newPasswordHash, s.user);
+    } else {
+      db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(s.user, newPasswordHash);
+    }
+
+    console.log(`[core-service] Password updated for user: ${s.user}`);
+    res.json({ ok: true, message: 'password updated successfully' });
+  } catch (e: any) {
+    console.error('[core-service] Error changing password:', e);
+    res.status(500).json({ ok: false, error: e?.message || 'failed to change password' });
+  } finally {
+    try { db.close(); } catch {}
+  }
 });
 
 // Middleware moved to src/auth.ts
@@ -967,6 +1069,17 @@ function ensureDeviceHubSchema(){
     db.prepare('CREATE INDEX IF NOT EXISTS idx_device_events_ts ON device_events(ts)').run();
     // Remove old index that references non-existent status column
     // db.prepare('CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)').run();
+
+    // users: admin user table for password management
+    // Stores hashed passwords. Falls back to ADMIN_PASSWORD env var if no users in DB.
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS users ('+
+      ' username TEXT PRIMARY KEY,'+
+      ' password_hash TEXT NOT NULL,'+
+      ' created_at TEXT DEFAULT CURRENT_TIMESTAMP,'+
+      ' updated_at TEXT DEFAULT CURRENT_TIMESTAMP)'
+    ).run();
+    console.log('[ensureDeviceHubSchema] Users table ready');
 
   }catch{
     // ignore; routes will handle errors if schema still unavailable

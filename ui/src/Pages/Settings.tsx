@@ -47,6 +47,14 @@ export default function Settings(_props:{user:any}){
   const [newTokenExpiry, setNewTokenExpiry] = useState<number | ''>('');
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
+  // Password change state
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | undefined>();
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
   // Re-render every second to update relative offline timers
   const [now, setNow] = useState<number>(()=> Date.now());
   useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
@@ -176,6 +184,54 @@ export default function Settings(_props:{user:any}){
     else { const d = await res.json().catch(()=>({})); setError(d?.error || 'Failed to delete whitelist entry'); }
   }
 
+  async function handlePasswordChange(){
+    setPasswordError(undefined);
+    setPasswordSuccess(false);
+    
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError('All fields are required');
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match');
+      return;
+    }
+    
+    if (newPassword.length < 8) {
+      setPasswordError('Password must be at least 8 characters long');
+      return;
+    }
+    
+    setPasswordLoading(true);
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      
+      const data = await res.json().catch(() => ({}));
+      
+      if (res.ok) {
+        setPasswordSuccess(true);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setTimeout(() => {
+          setShowPasswordModal(false);
+          setPasswordSuccess(false);
+        }, 2000);
+      } else {
+        setPasswordError(data?.error || 'Failed to change password');
+      }
+    } catch (e: any) {
+      setPasswordError(e?.message || 'Failed to change password');
+    } finally {
+      setPasswordLoading(false);
+    }
+  }
+
   function fmtDate(s?:string){ try{ return s? new Date(s).toLocaleString() : '-'; }catch{ return s || '-'; } }
   const formatOfflineSince = (last_seen?: string|null): string => {
     if (!last_seen) return '';
@@ -213,6 +269,36 @@ export default function Settings(_props:{user:any}){
     <div style={{textAlign:'left'}}>
       <h3>Settings</h3>
       {error && <Alert variant='danger'>{error}</Alert>}
+
+      {/* Account & Security Card - Full Width */}
+      <Card className='mb-3'>
+        <Card.Header>
+          <i className="fa-solid fa-user-shield me-2"></i>
+          Account & Security
+        </Card.Header>
+        <Card.Body>
+          <div className='mb-3'>
+            <p className='text-muted mb-2'>
+              Manage your admin account credentials. After changing your password, you'll need to log in again with the new credentials.
+            </p>
+            <Button 
+              variant='primary' 
+              size='sm'
+              onClick={() => {
+                setCurrentPassword('');
+                setNewPassword('');
+                setConfirmPassword('');
+                setPasswordError(undefined);
+                setPasswordSuccess(false);
+                setShowPasswordModal(true);
+              }}
+            >
+              <i className="fa-solid fa-key me-2"></i>
+              Change Password
+            </Button>
+          </div>
+        </Card.Body>
+      </Card>
 
       <Row className='g-3'>
         <Col md={6}>
@@ -674,6 +760,82 @@ export default function Settings(_props:{user:any}){
           {inspectName && <a className='btn btn-outline-primary' href={`/api/settings/certs/provisioning/${encodeURIComponent(inspectName||'')}/download`}>Download</a>}
           {inspectName && <Button variant='outline-danger' onClick={()=>deleteCert(inspectName)}>Delete</Button>}
           <Button variant='secondary' onClick={()=>setShowInspect(false)}>Close</Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* Password Change Modal */}
+      <Modal show={showPasswordModal} onHide={() => setShowPasswordModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Change Password</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {passwordSuccess ? (
+            <Alert variant='success'>
+              <i className="fa-solid fa-check-circle me-2"></i>
+              Password changed successfully!
+            </Alert>
+          ) : (
+            <Form onSubmit={(e) => { e.preventDefault(); handlePasswordChange(); }}>
+              {passwordError && (
+                <Alert variant='danger' dismissible onClose={() => setPasswordError(undefined)}>
+                  {passwordError}
+                </Alert>
+              )}
+              <Form.Group className='mb-3'>
+                <Form.Label>Current Password</Form.Label>
+                <Form.Control
+                  type='password'
+                  placeholder='Enter current password'
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  required
+                  disabled={passwordLoading}
+                />
+              </Form.Group>
+              <Form.Group className='mb-3'>
+                <Form.Label>New Password</Form.Label>
+                <Form.Control
+                  type='password'
+                  placeholder='Enter new password (min 8 characters)'
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  disabled={passwordLoading}
+                  minLength={8}
+                />
+                <Form.Text className='text-muted'>
+                  Password must be at least 8 characters long
+                </Form.Text>
+              </Form.Group>
+              <Form.Group className='mb-3'>
+                <Form.Label>Confirm New Password</Form.Label>
+                <Form.Control
+                  type='password'
+                  placeholder='Confirm new password'
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  disabled={passwordLoading}
+                />
+              </Form.Group>
+            </Form>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          {!passwordSuccess && (
+            <>
+              <Button variant='secondary' onClick={() => setShowPasswordModal(false)} disabled={passwordLoading}>
+                Cancel
+              </Button>
+              <Button variant='primary' onClick={handlePasswordChange} disabled={passwordLoading}>
+                {passwordLoading ? (
+                  <><Spinner animation='border' size='sm' className='me-2' />Changing...</>
+                ) : (
+                  <><i className="fa-solid fa-key me-2"></i>Change Password</>
+                )}
+              </Button>
+            </>
+          )}
         </Modal.Footer>
       </Modal>
     </div>
