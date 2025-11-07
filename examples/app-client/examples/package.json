@@ -1,6 +1,6 @@
 {
   "name": "@edgeberry/devicehub-node-red-contrib",
-  "version": "1.8.1",
+  "version": "1.8.3",
   "description": "Node-RED nodes for Edgeberry Device Hub application integration",
   "main": "dist/node-red-device-node.js",
   "scripts": {
