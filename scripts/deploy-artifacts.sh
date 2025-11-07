@@ -47,6 +47,8 @@ configure_service_envs() {
   ensure_env_kv "$core_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
   # JWT session timeout in seconds (default 24 hours = 86400)
   ensure_env_kv "$core_env" "JWT_TTL_SECONDS" "${JWT_TTL_SECONDS:-86400}"
+  # Production port (3000 for reverse proxy setup)
+  ensure_env_kv "$core_env" "PORT" "3000"
   
   # Application service environment
   local app_env="$ETC_DIR/application.env"

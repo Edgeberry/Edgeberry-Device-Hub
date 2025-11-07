@@ -7,7 +7,7 @@ Wants=network-online.target dbus.service
 Type=simple
 WorkingDirectory=/opt/Edgeberry/devicehub/core-service
 Environment=NODE_ENV=production
-Environment=PORT=80
+Environment=PORT=3000
 EnvironmentFile=-/etc/Edgeberry/devicehub/core.env
 # Optionally serve built UI from /opt/Edgeberry/devicehub/ui/build
 Environment=UI_DIST=/opt/Edgeberry/devicehub/ui/build
