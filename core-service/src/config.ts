@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 export const SERVICE = 'core-service';
 
 export const NODE_ENV = process.env.NODE_ENV || 'development';
-export const PORT: number = Number(process.env.PORT || (NODE_ENV === 'production' ? 80 : 8080));
+export const PORT: number = Number(process.env.PORT || (NODE_ENV === 'production' ? 3000 : 8080));
 
 export const ADMIN_USER: string = process.env.ADMIN_USER || 'admin';
 export const ADMIN_PASSWORD: string = process.env.ADMIN_PASSWORD || 'admin'; // change in prod

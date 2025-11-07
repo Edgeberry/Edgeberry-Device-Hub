@@ -50,6 +50,7 @@ import { connect, type MqttClient, type IClientOptions } from 'mqtt';
 import { hashPassword, verifyPassword, validatePasswordStrength } from './password.js';
 import {
   SERVICE,
+  NODE_ENV,
   PORT,
   ADMIN_USER,
   ADMIN_PASSWORD,
@@ -226,6 +227,10 @@ async function sendDirectMethod(deviceId: string, methodName: string, payload: a
 const app = express();
 // Disable ETag so API responses (e.g., /api/auth/me) aren't served as 304 Not Modified
 app.set('etag', false);
+// Trust proxy when behind reverse proxy (Nginx) - allows correct client IP, protocol detection
+if (NODE_ENV === 'production') {
+  app.set('trust proxy', true);
+}
 // PORT now comes from src/config.ts
 // Environment variables overview (MVP):
 // - PORT: HTTP port (defaults 8080 dev, 80 prod)
