@@ -391,9 +391,12 @@ Internal modularity is an implementation detail and must not leak into the publi
 
 ##### Production Server
 - **Official Edgeberry Device Hub production instance:**
-  - **Host:** 146.190.236.44 (Digital Ocean Droplet)
+  - **Host:** 146.190.231.65 (Digital Ocean Droplet)
+  - **Domain:** devicehub.edgeberry.io
   - **Platform:** Digital Ocean
   - **Purpose:** Production deployment for live device fleet management
+  - **Architecture:** Nginx reverse proxy (443/80) → Device Hub (localhost:3000)
+  - **Firewall:** Port 3000 blocked externally (localhost only), HTTPS via Nginx
 
 #### API Structure
 - **HTTP API prefix:** `/api` (versioning via headers or path TBD) — served directly by `core-service`
@@ -531,6 +534,7 @@ CREATE TABLE IF NOT EXISTS users (
 - **Clean install:** Use `--force-clean` flag to remove all persistent data for fresh installation
 - **Certificate renewal:** Automatic synchronization via systemd path units monitors persistent certificate changes and updates MQTT broker
 - **Certificate Management (v1.1.0+):** Core service automatically sets proper permissions (`0640` with `root:mosquitto` ownership) on all generated certificates to ensure Mosquitto compatibility
+- **Production domain configuration:** Set `DEVICEHUB_DOMAIN` environment variable during installation to include custom domain in MQTT server certificate SANs (e.g., `export DEVICEHUB_DOMAIN=devicehub.edgeberry.io && sudo -E ./install.sh`)
 
 ### Directory Structure
 

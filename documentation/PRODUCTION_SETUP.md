@@ -21,6 +21,17 @@ This guide covers deploying Edgeberry Device Hub in a production environment wit
 
 ## 1. Install Device Hub
 
+**For production with custom domain**, set the domain before installation:
+
+```bash
+export DEVICEHUB_DOMAIN=devicehub.edgeberry.io
+wget -O install.sh https://github.com/Edgeberry/Edgeberry-Device-Hub/releases/latest/download/install.sh
+chmod +x install.sh
+sudo -E ./install.sh -y
+```
+
+**For local/development installation**:
+
 ```bash
 wget -O install.sh https://github.com/Edgeberry/Edgeberry-Device-Hub/releases/latest/download/install.sh
 chmod +x install.sh
@@ -32,6 +43,7 @@ The installer will:
 - Create persistent data directory at `/var/lib/edgeberry/devicehub/`
 - Configure systemd services
 - Set up MQTT broker with mTLS on port 8883
+- Generate server certificate with domain in SANs (if `DEVICEHUB_DOMAIN` is set)
 
 ## 2. Configure Firewall
 
@@ -336,6 +348,86 @@ sudo tar -xzf devicehub-backup-YYYYMMDD.tar.gz -C /
 # Restart services
 sudo systemctl start 'devicehub-*'
 ```
+
+## MQTT Certificate Management
+
+### Adding Domain to Existing Certificate
+
+If you installed without setting `DEVICEHUB_DOMAIN` and devices can't connect using the domain name, regenerate the server certificate:
+
+```bash
+sudo su -
+cd /var/lib/edgeberry/devicehub/certs
+
+# Create certificate configuration with domain
+cat > server_san.cnf << 'EOF'
+[ req ]
+default_bits = 2048
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[ req_distinguished_name ]
+CN = devicehub.edgeberry.io
+
+[ v3_req ]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = localhost
+DNS.2 = EdgeberryDeviceHub
+DNS.3 = devicehub.edgeberry.io
+IP.1 = 127.0.0.1
+IP.2 = YOUR_SERVER_IP
+EOF
+
+# Generate new certificate
+openssl genrsa -out server_new.key 2048
+openssl req -new -key server_new.key -out server_new.csr -config server_san.cnf
+openssl x509 -req -in server_new.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out server_new.crt -days 825 -sha256 -extensions v3_req -extfile server_san.cnf
+
+# Verify the certificate includes your domain
+openssl x509 -in server_new.crt -text -noout | grep -A1 'X509v3 Subject Alternative Name'
+
+# Replace old certificate
+mv server.crt server.crt.old
+mv server.key server.key.old
+mv server_new.crt server.crt
+mv server_new.key server.key
+chmod 0640 server.crt server.key
+
+# Update Mosquitto
+cp server.crt server.key /etc/mosquitto/certs/
+chown root:mosquitto /etc/mosquitto/certs/server.crt /etc/mosquitto/certs/server.key
+systemctl restart mosquitto
+
+# Cleanup
+rm -f server_new.csr server_san.cnf
+exit
+```
+
+**Verify the certificate:**
+```bash
+openssl s_client -connect devicehub.edgeberry.io:8883 -CAfile /etc/mosquitto/certs/ca.crt
+```
+
+Expected output should include: `Verify return code: 0 (ok)`
+
+### Certificate Requirements for Devices
+
+Devices connecting to the MQTT broker (port 8883) validate the server certificate. The certificate must include:
+
+1. **DNS name** if devices connect via domain (e.g., `devicehub.edgeberry.io`)
+2. **IP address** if devices connect via IP (e.g., `146.190.231.65`)
+3. **localhost** for local connections
+
+**Common connection errors:**
+- `Hostname/IP does not match certificate's altnames` → Certificate missing the domain/IP in SANs
+- `certificate verify failed` → Client doesn't trust the CA certificate
+- `Connection refused` → Firewall blocking port 8883
 
 ## Troubleshooting
 

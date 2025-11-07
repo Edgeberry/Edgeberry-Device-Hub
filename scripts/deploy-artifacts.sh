@@ -789,8 +789,11 @@ setup_persistent_certificates() {
     pushd "$PERSISTENT_CERTS_DIR" >/dev/null
     local PRIMARY_IP
     PRIMARY_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    local FQDN
+    FQDN="$(hostname -f 2>/dev/null || echo 'devicehub.local')"
     
     # Create server certificate with SANs
+    # Include DEVICEHUB_DOMAIN environment variable if set (for production domains)
     cat > server.ext <<EOF
 authorityKeyIdentifier=keyid,issuer
 basicConstraints=CA:FALSE
@@ -799,10 +802,16 @@ subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = localhost
-DNS.2 = $(hostname -f 2>/dev/null || echo "devicehub.local")
+DNS.2 = $FQDN
 IP.1 = 127.0.0.1
 IP.2 = ${PRIMARY_IP:-192.168.1.1}
 EOF
+    
+    # Add custom domain if DEVICEHUB_DOMAIN is set (e.g., devicehub.edgeberry.io)
+    if [[ -n "${DEVICEHUB_DOMAIN:-}" ]]; then
+      echo "DNS.3 = $DEVICEHUB_DOMAIN" >> server.ext
+      log "including custom domain in server certificate: $DEVICEHUB_DOMAIN"
+    fi
     
     if openssl genrsa -out server.key 2048 >/dev/null 2>&1 && \
        openssl req -new -key server.key -subj "/CN=Edgeberry Device Hub Server" -out server.csr >/dev/null 2>&1 && \
