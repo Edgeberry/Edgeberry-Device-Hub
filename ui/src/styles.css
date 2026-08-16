@@ -1,43 +1,38 @@
 :root {
-  /* Edgeberry Blue for success */
-  --bs-success: #0007FF;
-  --bs-success-rgb: 0, 7, 255;
+  /*
+   *  Unify every "primary action" affordance onto Edgeberry Blue rather than
+   *  letting Bootstrap's default blue (--bs-primary), a hijacked --bs-success,
+   *  and the bespoke .btn-edgeberry class all compete for the role. Success and
+   *  danger point at the same status tokens Edgeberry-device-software uses, so
+   *  "online"/"active" reads as --eb-ok green (not brand blue) and destructive
+   *  actions read as --eb-fault red. The *-rgb variables must stay literal
+   *  "r, g, b" triplets - Bootstrap composes them into rgba() - so keep them in
+   *  sync with theme.css by hand.
+   */
+  --bs-primary: var(--eb-primary);
+  --bs-primary-rgb: 0, 7, 255;
 
-  /* Optional: refine shades for hover/active states */
-  --bs-success-bg-subtle: rgba(0, 7, 255, 0.12);
-  --bs-success-border-subtle: rgba(0, 7, 255, 0.35);
+  --bs-success: var(--eb-ok);
+  --bs-success-rgb: 46, 160, 67;
+  --bs-success-bg-subtle: rgba(46, 160, 67, 0.12);
+  --bs-success-border-subtle: rgba(46, 160, 67, 0.35);
+
+  --bs-danger: var(--eb-fault);
+  --bs-danger-rgb: 224, 49, 49;
+  --bs-danger-bg-subtle: rgba(224, 49, 49, 0.12);
+  --bs-danger-border-subtle: rgba(224, 49, 49, 0.35);
 }
 
-/* Ensure buttons and badges reflect the new success color */
-.btn-success {
-  --bs-btn-bg: var(--bs-success);
-  --bs-btn-border-color: var(--bs-success);
-  --bs-btn-hover-bg: #0006e6;
-  --bs-btn-hover-border-color: #0006e6;
-  --bs-btn-active-bg: #0005cc;
-  --bs-btn-active-border-color: #0005cc;
-  --bs-btn-disabled-bg: var(--bs-success);
-  --bs-btn-disabled-border-color: var(--bs-success);
-}
-
-.badge.bg-success {
-  background-color: var(--bs-success) !important;
-  color: white !important;
-}
-
-.text-bg-success {
-  background-color: var(--bs-success) !important;
-}
-
-/* Progress, alerts, etc. using success color */
 .alert-success {
   --bs-alert-bg: var(--bs-success-bg-subtle);
   --bs-alert-border-color: var(--bs-success-border-subtle);
-  --bs-alert-color: rgb(0, 40, 180);
+  --bs-alert-color: #145a28;
 }
 
-.progress-bar.bg-success {
-  background-color: var(--bs-success) !important;
+.alert-danger {
+  --bs-alert-bg: var(--bs-danger-bg-subtle);
+  --bs-alert-border-color: var(--bs-danger-border-subtle);
+  --bs-alert-color: #7a1f1f;
 }
 
 /* Global sizing and background */
@@ -50,11 +45,13 @@ html, body, #root {
 }
 
 body {
-  /* In Vite, assets in /public are served from root */
-  background-image: url('/cardboard.png');
+  background-color: var(--eb-bg);
 }
 
-/* App container Laika background */
+/* App container. The faint Laika illustration in the corner is a deliberate
+   Edgeberry touch - kept, but the busy tiled cardboard texture that used to
+   sit behind everything is gone in favour of the flat --eb-bg surface the
+   rest of the theme assumes. */
 .App {
   height: 100vh;
   width: 100vw;
@@ -66,30 +63,188 @@ body {
   background-position: bottom right;
 }
 
-/* Device list styling */
+/*
+ *  Panels. Bootstrap's default card is a plain white box with a hairline
+ *  border; give it the same quiet, flat treatment as Edgeberry-device-software
+ *  and turn the header into a SectionLabel-style strip (small caps, brand-blue
+ *  icon) instead of a heavy grey bar.
+ */
+.card {
+  border-color: var(--eb-line);
+}
+
+.card-header {
+  background-color: var(--bs-tertiary-bg);
+  border-bottom-color: var(--eb-line);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.card-header i.fa-solid,
+.card-header i.fa-regular {
+  color: var(--eb-primary);
+}
+
+/*
+ *  Modals. Dark header matching the navbar, same as every ModalShell in
+ *  Edgeberry-device-software, so a settings dialog and the top bar read as
+ *  one surface rather than two different products.
+ */
+.modal-content {
+  background-color: var(--eb-bg);
+  border-color: var(--eb-line);
+}
+
+.modal-header {
+  background-color: var(--eb-navbar-bg);
+  color: var(--eb-navbar-fg);
+  border-bottom: none;
+}
+
+.modal-title {
+  color: var(--eb-navbar-fg);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/*
+ *  Fixed-shape modal, for content that varies a lot in length (device detail:
+ *  a "Loading..." spinner one moment, three tabs of panels and raw JSON dumps
+ *  the next). react-bootstrap's `scrollable` prop only caps height with
+ *  max-height, so a short tab still shrinks the dialog - a real height keeps
+ *  the window the same size regardless of which tab or loading state is
+ *  showing, and the body scrolls inside it. Same convention as
+ *  Edgeberry-device-software's .eb-modal-content.
+ */
+.eb-modal-content {
+  height: 85vh;
+}
+
+@media (max-width: 575.98px) {
+  .eb-modal-content {
+    height: 100%;
+  }
+}
+
+/* Bootstrap's .btn-close is dark-on-transparent by default, which disappears
+   against the dark header above. Bootstrap ships an .invert() filter for this
+   exact case (.btn-close-white) - apply it to every modal close button rather
+   than remembering to add the class at each call site. */
+.modal-header .btn-close {
+  filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+/* Table headers get the same small-caps treatment as card headers, for the
+   same reason - one consistent "this is a label" convention across the app. */
+.table > thead {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--bs-secondary-color);
+}
+
+/*
+ *  Device list interactivity.
+ *
+ *  Per-row actions (view/identify/edit/delete/replace) stay out of the way
+ *  until the row is actually being looked at - hidden by default, revealed on
+ *  hover/focus so the list reads as a clean table rather than a wall of
+ *  buttons. Opacity rather than display:none so nothing reflows when they
+ *  appear, and focus-within (not just :hover) keeps them reachable via
+ *  keyboard/screen reader without a mouse.
+ */
 .device-row {
   background-color: transparent !important;
-  transition: background-color 0.2s ease;
+  border-left: 2px solid transparent;
+  transition: background-color 0.15s ease, border-left-color 0.15s ease;
 }
 
-.device-row:hover {
-  background-color: rgba(0, 7, 255, 0.08) !important;
+.device-row:hover,
+.device-row:focus-within {
+  background-color: color-mix(in srgb, var(--eb-primary) 8%, transparent) !important;
+  border-left-color: var(--eb-primary);
 }
 
-/* Edgeberry blue button styling */
+.device-actions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.device-row:hover .device-actions,
+.device-row:focus-within .device-actions,
+.device-tile:hover .device-actions,
+.device-tile:focus-within .device-actions {
+  opacity: 1;
+}
+
+/* Tile view gets the same quiet-until-hovered treatment as the list rows. */
+.device-tile {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.device-tile:hover {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+/* Actions are keyboard/touch-reachable even without hover support (coarse
+   pointers, some assistive tech) - a real :hover never fires there. */
+@media (hover: none) {
+  .device-actions {
+    opacity: 1;
+  }
+}
+
+/* Edgeberry blue button styling (outline, filled solid Edgeberry blue on
+   hover/active) - used where a filled .btn-primary would be too heavy, e.g.
+   the per-row action icon buttons in the device list. */
 .btn-edgeberry {
-  --bs-btn-color: #0007FF;
+  --bs-btn-color: var(--eb-primary);
   --bs-btn-bg: transparent;
-  --bs-btn-border-color: #0007FF;
+  --bs-btn-border-color: var(--eb-primary);
   --bs-btn-hover-color: #fff;
-  --bs-btn-hover-bg: #0007FF;
-  --bs-btn-hover-border-color: #0007FF;
+  --bs-btn-hover-bg: var(--eb-primary);
+  --bs-btn-hover-border-color: var(--eb-primary);
   --bs-btn-focus-shadow-rgb: 0, 7, 255;
   --bs-btn-active-color: #fff;
   --bs-btn-active-bg: #0006e6;
   --bs-btn-active-border-color: #0006e6;
   --bs-btn-active-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.125);
-  --bs-btn-disabled-color: #0007FF;
+  --bs-btn-disabled-color: var(--eb-primary);
   --bs-btn-disabled-bg: transparent;
-  --bs-btn-disabled-border-color: #0007FF;
+  --bs-btn-disabled-border-color: var(--eb-primary);
+}
+
+/*
+ *  Portal-rendered dropdown menus (PortalMenu in components/ui.tsx).
+ *
+ *  Rendered into <body> as a plain <ul>, so it never carries Bootstrap's
+ *  .dropdown-menu class - but its children are .dropdown-item, and every rule
+ *  for that is written against --bs-dropdown-* variables Bootstrap only
+ *  declares ON .dropdown-menu. With no such ancestor those items get no
+ *  padding, no hover and an invisible divider. Declaring the variables here
+ *  restores Bootstrap's own rules, tuned for the dark navbar chrome. Mirrors
+ *  Edgeberry-device-software's index.css.
+ */
+.eb-menu {
+  --bs-dropdown-item-padding-y: 0.5rem;
+  --bs-dropdown-item-padding-x: 1rem;
+  --bs-dropdown-link-color: var(--eb-navbar-fg);
+  --bs-dropdown-link-hover-color: var(--eb-navbar-fg);
+  --bs-dropdown-link-hover-bg: rgba(255, 255, 255, 0.1);
+}
+
+.eb-menu .dropdown-item {
+  cursor: pointer;
+}
+
+.eb-menu .dropdown-item i {
+  font-size: 0.875em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .eb-menu .dropdown-item {
+    transition: background-color 0.1s ease;
+  }
 }

@@ -5,7 +5,7 @@
  * with system action buttons and integrated health information.
  */
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { Badge, Button, Card, Col, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
+import { Badge, Button, Card, Col, Collapse, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
 import { 
   getServices, getServiceLogs, startService, stopService, restartService,
   getMetrics, getHealth, getStatus, getPublicConfig,
@@ -129,6 +129,11 @@ export default function SystemWidget(props: { user: any | null }) {
   // UI state
   const [wsOn, setWsOn] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('overview');
+  // Devices and Applications are the reason this product exists; System is a
+  // diagnostics panel, not the headline. Collapsed by default so it reads as
+  // a compact status strip rather than the first thing pushing everything
+  // else down the page - expand it when you actually need the detail.
+  const [expanded, setExpanded] = useState<boolean>(false);
   
   // Modals
   const [showPower, setShowPower] = useState<boolean>(false);
@@ -584,15 +589,37 @@ export default function SystemWidget(props: { user: any | null }) {
 
   const healthStatus = (health?.health === 'ok' || health?.ok === true) ? 'Healthy' : 'Degraded';
   const healthColor = (health?.health === 'ok' || health?.ok === true) ? 'success' : 'danger';
+  const activeServicesCount = services.filter(s => s.status === 'active').length;
 
   return (
     <Card className="mb-3" data-testid="system-widget">
-      <Card.Header className="d-flex justify-content-between align-items-center">
-        <div>
-          <i className="fa-solid fa-server me-2"></i>
-          System
+      <Card.Header
+        className="d-flex justify-content-between align-items-center flex-wrap"
+        style={{ gap: 8, cursor: 'pointer' }}
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className="d-flex align-items-center flex-wrap" style={{ gap: 14 }}>
+          <span><i className="fa-solid fa-server me-2"></i>System</span>
+          {/* Compact status strip: what you'd want to know without expanding. */}
+          {!metricsLoading && !servicesLoading && (
+            <div
+              className="d-flex align-items-center flex-wrap"
+              style={{ gap: 10, fontSize: '0.8rem', fontWeight: 400, textTransform: 'none', letterSpacing: 'normal' }}
+            >
+              <Badge bg={healthColor}>{healthStatus}</Badge>
+              <span className="text-muted">up {humanizedUptime(status, metrics)}</span>
+              <span className="text-muted">
+                CPU {metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}
+                {' · '}MEM {metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}
+                {' · '}DISK {metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}
+              </span>
+              <Badge bg={activeServicesCount === services.length ? 'success' : 'warning'}>
+                {activeServicesCount}/{services.length} services
+              </Badge>
+            </div>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
           <Button
             size="sm"
             variant="outline-primary"
@@ -625,9 +652,19 @@ export default function SystemWidget(props: { user: any | null }) {
           >
             <i className="fa-solid fa-power-off" aria-hidden="true" />
           </Button>
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            title={expanded ? 'Collapse' : 'Expand details'}
+            onClick={() => setExpanded(v => !v)}
+          >
+            <i className={`fa-solid fa-chevron-${expanded ? 'up' : 'down'}`} aria-hidden="true" />
+          </Button>
         </div>
       </Card.Header>
-      <Card.Body>
+      <Collapse in={expanded}>
+        <div>
+        <Card.Body>
         {/* Single page layout - no tabs */}
         <div>
             <div className="mt-3">
@@ -742,7 +779,9 @@ export default function SystemWidget(props: { user: any | null }) {
               )}
             </div>
         </div>
-      </Card.Body>
+        </Card.Body>
+        </div>
+      </Collapse>
 
       {/* Power Management Modal */}
         <Modal show={showPower} onHide={() => { if (!powerBusy) setShowPower(false); }} centered>

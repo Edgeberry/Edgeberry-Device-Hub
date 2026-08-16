@@ -96,8 +96,10 @@ export default function DeviceDetailModal(props:{
         direct_getConnectionParameters(deviceId),
         direct_getProvisioningParameters(deviceId)
       ]);
+      // Runs silently on open and after every action-triggered refresh - a
+      // success toast here would fire constantly and say nothing useful.
+      // Failures still surface, since those are actionable.
       setInfo({ app, sys, net, conn, prov });
-      setMsg({ text:'Info fetched', type:'success' });
     }catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to fetch info', type:'danger'});} finally{ setBusy(false); }
   }
 
@@ -141,7 +143,7 @@ export default function DeviceDetailModal(props:{
   }
 
   return (
-    <Modal show={show} onHide={onClose} size="xl" centered scrollable>
+    <Modal show={show} onHide={onClose} size="xl" centered scrollable contentClassName="eb-modal-content">
       <Modal.Header closeButton>
         <div style={{ width: '100%' }}>
           <div style={{ float: 'right' }}>

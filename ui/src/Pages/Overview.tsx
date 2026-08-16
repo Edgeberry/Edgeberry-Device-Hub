@@ -234,10 +234,9 @@ export default function Overview(props:{user:any}){
 
   return (
     <div>
-      <SystemWidget user={props.user} />
-      
-      <ApplicationsWidget user={props.user} />
-
+      {/* Devices and connected Applications are what Device Hub is for - they
+          lead the page. System is diagnostics, not the headline, so it comes
+          last and starts collapsed (see SystemWidget). */}
       <Card>
         <Card.Header className="d-flex justify-content-between align-items-center">
           <div>
@@ -340,7 +339,7 @@ export default function Overview(props:{user:any}){
                         </Badge>
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
-                        <div className="btn-group" role="group">
+                        <div className="btn-group device-actions" role="group">
                           <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
                             <FontAwesomeIcon icon={faEye} />
                           </button>
@@ -402,13 +401,13 @@ export default function Overview(props:{user:any}){
 
                 return (
                   <div key={uuid} className="col-md-6 col-lg-4 mb-3">
-                    <Card className={`h-100 ${status === 'online' ? 'border-success' : 'border-secondary'}`}>
+                    <Card className={`h-100 device-tile ${status === 'online' ? 'border-success' : 'border-secondary'}`}>
                       <Card.Body>
                         <div className="d-flex justify-content-between align-items-start mb-2">
                           <Badge bg={status === 'online' ? 'success' : 'secondary'}>
                             {status || 'unknown'}
                           </Badge>
-                          <div className="btn-group" role="group">
+                          <div className="btn-group device-actions" role="group">
                             <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
                               <FontAwesomeIcon icon={faEye} />
                             </button>
@@ -496,6 +495,10 @@ export default function Overview(props:{user:any}){
           )}
         </Card.Body>
       </Card>
+
+      <ApplicationsWidget user={props.user} />
+
+      <SystemWidget user={props.user} />
 
       <DeviceDetailModal deviceId={selected||''} show={!!selected} onClose={()=> setSelected(null)} />
       <CertificateSettingsModal show={showCerts} onClose={()=> setShowCerts(false)} user={props.user} />
