@@ -1,8 +1,9 @@
 name: Publish Device Hub Node.js Clients
 
+# Disabled from auto-running on release publish. Trigger manually from the
+# Actions tab when the Node SDK (device-client / app-client) needs publishing.
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
