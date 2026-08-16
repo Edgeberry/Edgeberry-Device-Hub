@@ -1,8 +1,10 @@
 name: Publish Node-RED Module
 
+# Disabled from auto-running on release publish (was clobbering the
+# devicehub-<tag>.tar.gz release asset - see release_node-red.yml history).
+# Trigger manually from the Actions tab when a Node-RED release is needed.
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,10 +24,6 @@ jobs:
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Build all services
-        run: |
-          bash scripts/build-all.sh
-
       - name: Build and pack Node-RED module
         run: |
           mkdir -p dist-artifacts
@@ -44,17 +42,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create single combined tarball
-        run: |
-          # Create a single tarball that contains everything under dist-artifacts/
-          mkdir -p dist-artifacts
-          TAR_NAME="devicehub-${{ github.ref_name }}.tar.gz"
-          tar -C dist-artifacts -czf "dist-artifacts/${TAR_NAME}" .
-
       - name: Upload artifact to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist-artifacts/devicehub-${{ github.ref_name }}.tar.gz
+            dist-artifacts/*.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

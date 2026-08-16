@@ -20,53 +20,55 @@ jobs:
           echo "Waiting for release assets to be uploaded..."
           MAX_ATTEMPTS=60
           ATTEMPT=0
-          
+          EXPECTED_ASSET="devicehub-${{ github.event.release.tag_name }}.tar.gz"
+
           while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
             ASSET_COUNT=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
               jq '.assets | length')
-            
+
             echo "Found $ASSET_COUNT asset(s)"
-            
+
             # Check if we have the main combined artifact
             COMBINED_ASSET=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
-              jq -r '.assets[] | select(.name | startswith("devicehub-combined-")) | .name')
-            
+              jq -r --arg name "$EXPECTED_ASSET" '.assets[] | select(.name == $name) | .name')
+
             if [ -n "$COMBINED_ASSET" ]; then
               echo "✅ Found combined artifact: $COMBINED_ASSET"
               break
             fi
-            
+
             ATTEMPT=$((ATTEMPT + 1))
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Waiting 10 seconds..."
             sleep 10
           done
-          
+
           if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
             echo "❌ Timeout waiting for release assets"
             exit 1
           fi
-      
+
       - name: Download release artifacts
         run: |
           mkdir -p dist-artifacts
-          
+          EXPECTED_ASSET="devicehub-${{ github.event.release.tag_name }}.tar.gz"
+
           # Get the combined artifact download URL
           ASSET_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
-            jq -r '.assets[] | select(.name | startswith("devicehub-combined-")) | .browser_download_url')
-          
+            jq -r --arg name "$EXPECTED_ASSET" '.assets[] | select(.name == $name) | .browser_download_url')
+
           if [ -z "$ASSET_URL" ]; then
             echo "❌ Combined artifact not found"
             exit 1
           fi
-          
+
           echo "Downloading from: $ASSET_URL"
           wget -q --header="Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -O "dist-artifacts/devicehub-combined-${{ github.event.release.tag_name }}.tar.gz" \
+            -O "dist-artifacts/${EXPECTED_ASSET}" \
             "$ASSET_URL"
-          
+
           echo "✅ Downloaded artifact"
           ls -lh dist-artifacts/
       
