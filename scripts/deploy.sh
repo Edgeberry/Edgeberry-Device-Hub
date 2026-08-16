@@ -102,9 +102,18 @@ command -v scp >/dev/null || error "scp not found"
 log "testing connection to $USER@$HOST..."
 ssh_run true || error "Cannot connect to $USER@$HOST"
 
-# Test sudo access
+# Test sudo access. Prefer passwordless sudo; fall back to feeding the SSH
+# login password to `sudo -S` (common single-user setups use the same
+# password for both).
 log "testing sudo access..."
-ssh_run "sudo -n true" || error "Sudo access required on remote host"
+SUDO_PREFIX="sudo"
+if ssh_run "sudo -n true" 2>/dev/null; then
+  :
+elif [[ -n "$PASSWORD" ]] && ssh_run "echo '$PASSWORD' | sudo -S -p '' true" 2>/dev/null; then
+  SUDO_PREFIX="echo '$PASSWORD' | sudo -S -p ''"
+else
+  error "Sudo access required on remote host"
+fi
 
 # Build artifacts locally
 if [[ $SKIP_BUILD -eq 0 ]]; then
@@ -140,7 +149,7 @@ INSTALL_ARGS="'$REMOTE_STAGING'"
 [[ $FORCE_CLEAN -eq 1 ]] && INSTALL_ARGS="$INSTALL_ARGS --force-clean"
 
 # Build the command with optional DEBUG environment variable
-DEPLOY_CMD="cd '$REMOTE_STAGING' && sudo"
+DEPLOY_CMD="cd '$REMOTE_STAGING' && $SUDO_PREFIX"
 [[ -n "${DEBUG:-}" ]] && DEPLOY_CMD="$DEPLOY_CMD DEBUG=1"
 DEPLOY_CMD="$DEPLOY_CMD bash scripts/deploy-artifacts.sh $INSTALL_ARGS"
 
