@@ -88,6 +88,23 @@ import { startCoreTwinDbusServer, setBroadcastFunction } from './dbus-twin.js';
 import { startDevicesDbusServer } from './dbus-devices.js';
 import { twinGetTwin } from './dbus-twin-client.js';
 
+// dbus-native has a known bug where introspection requests from another
+// process (e.g. provisioning-service or twin-service calling into the
+// WhitelistService/CertificateService/DevicesService exported below) throw
+// an uncaught exception with message "No root XML node" instead of a
+// catchable rejection. Without this guard that exception kills the whole
+// process — including the HTTP API and UI — most visibly during device
+// provisioning, when Core's D-Bus interfaces get hit hardest. Mirrors the
+// same guard in twin-service/src/dbus.ts. Any other uncaught exception
+// remains fatal.
+process.on('uncaughtException', (error) => {
+  if (error?.message?.includes('No root XML node')) {
+    console.error(`[${SERVICE}] D-Bus XML introspection error (non-fatal):`, error.message);
+    return;
+  }
+  throw error;
+});
+
 // Function to get hardware UUID from device tree
 function getHardwareUUID(): string | null {
   try {

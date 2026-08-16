@@ -37,6 +37,21 @@ import { registerShutdown } from './shutdown.js';
 
 type Json = Record<string, unknown>;
 
+// dbus-native has a known bug where D-Bus introspection throws an uncaught
+// exception with message "No root XML node" instead of a catchable
+// rejection. This service calls into core-service over D-Bus on every
+// provisioning request (CheckUUID, IssueFromCSR, RegisterDevice, MarkUsed),
+// so without this guard a single introspection hiccup during device
+// provisioning kills the whole process. Mirrors the same guard in
+// twin-service/src/dbus.ts. Any other uncaught exception remains fatal.
+process.on('uncaughtException', (error) => {
+  if (error?.message?.includes('No root XML node')) {
+    console.error(`[${SERVICE}] D-Bus XML introspection error (non-fatal):`, error.message);
+    return;
+  }
+  throw error;
+});
+
 async function main() {
   console.log(`[${SERVICE}] starting...`);
   const client = startMqtt();

@@ -38,6 +38,21 @@ const MQTT_URL = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';
 // JWT secret (must match core-service for token validation)
 // const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 
+// dbus-native has a known bug where D-Bus introspection throws an uncaught
+// exception with message "No root XML node" instead of a catchable
+// rejection. This service exports its own ApplicationService D-Bus
+// interface and is introspected by core-service, so without this guard the
+// whole process (REST API + WebSocket) can die on an introspection hiccup.
+// Mirrors the same guard in twin-service/src/dbus.ts. Any other uncaught
+// exception remains fatal.
+process.on('uncaughtException', (error) => {
+  if (error?.message?.includes('No root XML node')) {
+    console.error(`[${SERVICE}] D-Bus XML introspection error (non-fatal):`, error.message);
+    return;
+  }
+  throw error;
+});
+
 // Service instance
 const app = express();
 const server = http.createServer(app);
