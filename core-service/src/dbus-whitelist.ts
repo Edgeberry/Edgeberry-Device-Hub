@@ -37,8 +37,8 @@ export class WhitelistInterface {
     }
 
     try {
-      const row = db.prepare('SELECT uuid, hardware_version, manufacturer, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
-      
+      const row = db.prepare('SELECT uuid, hardware_version, manufacturer, used_at, disabled_at FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
+
       if (!row) {
         return JSON.stringify({
           success: false,
@@ -49,6 +49,24 @@ export class WhitelistInterface {
         });
       }
 
+      // An admin-disabled entry is rejected the same way a used one is -
+      // just reversible, where used_at never clears.
+      if (row.disabled_at) {
+        return JSON.stringify({
+          success: false,
+          uuid: row.uuid,
+          note: `${row.manufacturer} ${row.hardware_version}` || null,
+          used_at: row.used_at || null,
+          error: 'UUID disabled'
+        });
+      }
+
+      // used_at is informational now ("last claimed"), not a gate - a
+      // whitelisted UUID is the device's durable hardware identity, not a
+      // one-time secret, and it must be able to reprovision itself (a fresh
+      // start: a new random name, a new certificate) for as long as it stays
+      // whitelisted and not disabled. disabled_at above is the only thing an
+      // admin needs to revoke a specific device's ability to (re)provision.
       return JSON.stringify({
         success: true,
         uuid: row.uuid,
@@ -152,9 +170,17 @@ export class WhitelistInterface {
     }
   }
 
+  // Records the most recent successful claim. No longer a one-shot gate -
+  // reprovisioning is meant to work every time, so this always succeeds for
+  // a UUID that exists (whether or not it was claimed before). The actual
+  // "only one claim in flight at a time" guarantee comes from Mosquitto
+  // itself: the provisioning connection's client ID is the UUID, and the
+  // broker only tolerates one live connection per client ID, so two
+  // concurrent claim attempts for the same UUID can't both be mid-handshake
+  // at once (see provisioning-service/src/mqtt.ts).
   async MarkUsed(uuid: string): Promise<string> {
     console.log(`[WhitelistInterface] MarkUsed called for: ${uuid}`);
-    
+
     const db = openDb(DEVICEHUB_DB);
     if (!db) {
       return JSON.stringify({
@@ -165,9 +191,8 @@ export class WhitelistInterface {
 
     try {
       const now = new Date().toISOString();
-      
-      // Check if UUID exists in whitelist
-      const existing = db.prepare('SELECT uuid, used_at FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
+
+      const existing = db.prepare('SELECT uuid FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
       if (!existing) {
         return JSON.stringify({
           success: false,
@@ -175,14 +200,6 @@ export class WhitelistInterface {
         });
       }
 
-      if (existing.used_at) {
-        return JSON.stringify({
-          success: false,
-          error: 'UUID already marked as used'
-        });
-      }
-
-      // Mark as used
       const info = db.prepare('UPDATE uuid_whitelist SET used_at = ? WHERE uuid = ?').run(now, uuid);
       
       if (info.changes === 0) {

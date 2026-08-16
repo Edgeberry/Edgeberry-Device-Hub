@@ -1,7 +1,8 @@
 import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
-import { CA_CRT, CA_KEY, CERTS_DIR, PROV_DIR, ROOT_DIR } from './config.js';
+import Database from 'better-sqlite3';
+import { CA_CRT, CA_KEY, CERTS_DIR, PROV_DIR, ROOT_DIR, DEVICEHUB_DB, CRL_PATH, CRL_NUMBER_PATH, PERSISTENT_CERTS_DIR } from './config.js';
 import os from 'os';
 
 export function ensureDirs() {
@@ -12,16 +13,16 @@ export function ensureDirs() {
 
 function runCmd(cmd: string, args: string[], input?: string): Promise<{ code: number | null; out: string; err: string }>{
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     const out: string[] = [];
     const err: string[] = [];
-    p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
-    p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
+    child.stdout.on('data', (chunk: Buffer) => out.push(chunk.toString()));
+    child.stderr.on('data', (chunk: Buffer) => err.push(chunk.toString()));
     if (input) {
-      p.stdin.write(input);
-      p.stdin.end();
+      child.stdin.write(input);
+      child.stdin.end();
     }
-    p.on('close', (code) => resolve({ code, out: out.join(''), err: err.join('') }));
+    child.on('close', (code) => resolve({ code, out: out.join(''), err: err.join('') }));
   });
 }
 
@@ -57,13 +58,13 @@ export async function generateRootCA(params?: { cn?: string; days?: number; keyB
 
 export async function readCertMeta(pemPath: string): Promise<{ fingerprintSha256?: string; notAfter?: string; subject?: string }>{
   if (!fs.existsSync(pemPath)) return {};
-  const fp = await runCmd('openssl', ['x509', '-noout', '-fingerprint', '-sha256', '-in', pemPath]);
-  const nd = await runCmd('openssl', ['x509', '-noout', '-enddate', '-in', pemPath]);
-  const sj = await runCmd('openssl', ['x509', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', pemPath]);
+  const fingerprintResult = await runCmd('openssl', ['x509', '-noout', '-fingerprint', '-sha256', '-in', pemPath]);
+  const endDateResult = await runCmd('openssl', ['x509', '-noout', '-enddate', '-in', pemPath]);
+  const subjectResult = await runCmd('openssl', ['x509', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', pemPath]);
   return {
-    fingerprintSha256: fp.out.toString().trim().split('=').pop(),
-    notAfter: nd.out.toString().trim().split('=').pop(),
-    subject: sj.out.toString().trim().replace(/^subject=/, ''),
+    fingerprintSha256: fingerprintResult.out.toString().trim().split('=').pop(),
+    notAfter: endDateResult.out.toString().trim().split('=').pop(),
+    subject: subjectResult.out.toString().trim().replace(/^subject=/, ''),
   };
 }
 
@@ -114,8 +115,142 @@ export async function issueProvisioningCert(name: string, days?: number): Promis
 }
 
 
+function openCertsDb(): Database.Database {
+  const db = new Database(DEVICEHUB_DB);
+  db.prepare(`CREATE TABLE IF NOT EXISTS certificates (
+    serial TEXT PRIMARY KEY,
+    uuid TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    issued_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT
+  )`).run();
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_certificates_uuid ON certificates(uuid)').run();
+  return db;
+}
+
+// Tracked by the board's UUID, not just its currently-assigned name: a UUID
+// that reprovisions (fresh-start - see ClaimDeviceName) gets a new name and a
+// new cert each time, and revoking a stolen board ("the board is the
+// passport" - disabling its whitelist entry) needs to reach every cert ever
+// issued for that UUID, not only the one it happens to be using right now.
+function recordIssuedCertificate(serial: string, uuid: string, deviceId: string, days: number): void {
+  if (!serial) return;
+  try {
+    const db = openCertsDb();
+    try {
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+      db.prepare('INSERT OR REPLACE INTO certificates (serial, uuid, device_id, issued_at, expires_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL)')
+        .run(serial, uuid, deviceId, now.toISOString(), expiresAt.toISOString());
+    } finally { db.close(); }
+  } catch (e) {
+    console.warn('[certs] Warning: failed to record issued certificate:', (e as Error).message);
+  }
+}
+
+// Marks every certificate ever issued for this UUID as revoked (idempotent -
+// already-revoked rows keep their original revoked_at). Does not itself touch
+// the live CRL; call regenerateCRL() after to publish the change.
+export async function revokeCertificatesForUuid(uuid: string): Promise<string[]> {
+  const db = openCertsDb();
+  try {
+    const now = new Date().toISOString();
+    db.prepare('UPDATE certificates SET revoked_at = ? WHERE uuid = ? AND revoked_at IS NULL').run(now, uuid);
+    const rows = db.prepare('SELECT serial FROM certificates WHERE uuid = ? AND revoked_at IS NOT NULL').all(uuid) as Array<{ serial: string }>;
+    return rows.map(r => r.serial);
+  } finally { db.close(); }
+}
+
+function toCaDate(iso: string): string {
+  // openssl's CA-database (index.txt) date format: YYMMDDHHMMSSZ. Two-digit
+  // years are unambiguous through 2049, which covers every certificate this
+  // system will realistically ever issue (max validity is a couple of years).
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getUTCFullYear() % 100)}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+}
+
+// Rebuilds the CRL from every revoked row in the certificates table and
+// publishes it to CRL_PATH. This system doesn't use openssl's `ca` command for
+// day-to-day signing (issueDeviceCertFromCSR/issueProvisioningCert use the
+// one-shot `x509 -req -CA ... -CAcreateserial` form, which keeps no index), so
+// the index.txt `ca -gencrl` needs is synthesized fresh each time from our own
+// SQLite table - it only needs to list revoked ("R") rows, since that's all a
+// CRL contains anyway.
+export async function regenerateCRL(): Promise<void> {
+  if (!(await caExists())) throw new Error('Root CA not found. Generate it first.');
+
+  const db = openCertsDb();
+  let revoked: Array<{ serial: string; device_id: string; expires_at: string; revoked_at: string }>;
+  try {
+    revoked = db.prepare('SELECT serial, device_id, expires_at, revoked_at FROM certificates WHERE revoked_at IS NOT NULL').all() as any[];
+  } finally { db.close(); }
+
+  fs.mkdirSync(PERSISTENT_CERTS_DIR, { recursive: true });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edgeberry-crl-'));
+  try {
+    const indexPath = path.join(tmpDir, 'index.txt');
+    const cnfPath = path.join(tmpDir, 'openssl.cnf');
+    const outPath = path.join(tmpDir, 'crl.pem');
+    const crlNumberWorkPath = path.join(tmpDir, 'crlnumber');
+
+    const indexLines = revoked.map(r =>
+      `R\t${toCaDate(r.expires_at)}\t${toCaDate(r.revoked_at)}\t${r.serial}\tunknown\t/CN=${r.device_id}`
+    );
+    fs.writeFileSync(indexPath, indexLines.length ? indexLines.join('\n') + '\n' : '');
+
+    // crlnumber persists across regenerations (in PERSISTENT_CERTS_DIR, not the
+    // temp dir) so CRL numbers only ever increase - reusing one could make a
+    // TLS stack treat a newer CRL as stale next to one it already cached.
+    if (!fs.existsSync(CRL_NUMBER_PATH)) fs.writeFileSync(CRL_NUMBER_PATH, '01\n');
+    fs.copyFileSync(CRL_NUMBER_PATH, crlNumberWorkPath);
+
+    const cnf = [
+      '[ca]',
+      'default_ca = CA_default',
+      '',
+      '[CA_default]',
+      `database = ${indexPath}`,
+      `certificate = ${CA_CRT}`,
+      `private_key = ${CA_KEY}`,
+      `crlnumber = ${crlNumberWorkPath}`,
+      'default_crl_days = 30',
+      'default_md = sha256',
+      '',
+    ].join('\n');
+    fs.writeFileSync(cnfPath, cnf);
+
+    const res = await runCmd('openssl', ['ca', '-config', cnfPath, '-gencrl', '-out', outPath]);
+    if (res.code !== 0) throw new Error(`openssl ca -gencrl failed: ${res.err || res.out}`);
+
+    fs.copyFileSync(crlNumberWorkPath, CRL_NUMBER_PATH);
+
+    // Publish via same-directory temp file + rename (atomic on POSIX) so the
+    // only thing edgeberry-cert-sync.path ever observes in PERSISTENT_CERTS_DIR
+    // is a complete, valid crl.pem - never a partially-written one.
+    const publishTmpPath = `${CRL_PATH}.tmp`;
+    fs.copyFileSync(outPath, publishTmpPath);
+    try {
+      fs.chmodSync(publishTmpPath, 0o640);
+      await runCmd('chgrp', ['mosquitto', publishTmpPath]);
+    } catch (e) {
+      console.warn('[certs] Warning: could not set CRL permissions:', (e as Error).message);
+    }
+    fs.renameSync(publishTmpPath, CRL_PATH);
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+/** Publish an initial (possibly empty) CRL at boot so Mosquitto's `crlfile` always has something valid to load - an empty revoked-set is itself a valid CRL. */
+export async function ensureCRLExists(): Promise<void> {
+  if (fs.existsSync(CRL_PATH)) return;
+  await regenerateCRL();
+}
+
 // Issue a device certificate from a CSR PEM and return PEM strings for cert and CA chain
-export async function issueDeviceCertFromCSR(deviceId: string, csrPem: string, days?: number): Promise<{ certPem: string; caChainPem: string }>{
+export async function issueDeviceCertFromCSR(uuid: string, deviceId: string, csrPem: string, days?: number): Promise<{ certPem: string; caChainPem: string }>{
   if (!(await caExists())) {
     throw new Error('Root CA not found. Generate it first.');
   }
@@ -130,10 +265,10 @@ export async function issueDeviceCertFromCSR(deviceId: string, csrPem: string, d
   // Validate CSR CN equals deviceId because Mosquitto maps CN -> username for ACLs
   // If mismatched, the device would authenticate under a different username than the topic deviceId
   try {
-    const subj = await runCmd('openssl', ['req', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', csrPath]);
-    const line = (subj.out || '').toString().trim();
-    const m = line.match(/CN=([^,\/]+)/);
-    const cn = m ? m[1] : '';
+    const subjectResult = await runCmd('openssl', ['req', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', csrPath]);
+    const subjectLine = (subjectResult.out || '').toString().trim();
+    const cnMatch = subjectLine.match(/CN=([^,\/]+)/);
+    const cn = cnMatch ? cnMatch[1] : '';
     if (!cn || cn !== deviceId) {
       try { fs.unlinkSync(csrPath); } catch {}
       throw new Error('csr_cn_mismatch');
@@ -143,7 +278,8 @@ export async function issueDeviceCertFromCSR(deviceId: string, csrPem: string, d
     if ((e as Error).message === 'csr_cn_mismatch') throw e;
     throw new Error('invalid_csr_subject');
   }
-  const daysStr = String(days ?? 825);
+  const certDays = days ?? 825;
+  const daysStr = String(certDays);
   const extContent = [
     '[v3_client]',
     'basicConstraints=CA:FALSE',
@@ -161,9 +297,12 @@ export async function issueDeviceCertFromCSR(deviceId: string, csrPem: string, d
     try { fs.unlinkSync(crtPath); } catch {}
     throw new Error(`cert_issue_failed: ${res.err || res.out}`);
   }
+  const serialRes = await runCmd('openssl', ['x509', '-in', crtPath, '-noout', '-serial']);
+  const serial = (serialRes.out || '').trim().split('=').pop() || '';
   const certPem = fs.readFileSync(crtPath, 'utf8');
   try { fs.unlinkSync(crtPath); } catch {}
   const caChainPem = fs.readFileSync(CA_CRT, 'utf8');
+  recordIssuedCertificate(serial, uuid, deviceId, certDays);
   return { certPem, caChainPem };
 }
 

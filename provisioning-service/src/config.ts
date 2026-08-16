@@ -29,5 +29,8 @@ export const CERT_DAYS: number = Number(process.env.CERT_DAYS || '825');
 // Lightweight HTTP server configuration
 // HTTP server removed; provisioning HTTP API is now served by core-service
 
-// If true, incoming provision requests must include a UUID that exists in uuid_whitelist, matches device_id, and not yet used
-export const ENFORCE_WHITELIST: boolean = (process.env.ENFORCE_WHITELIST || 'false').toLowerCase() === 'true';
+// If true, incoming provision requests must include a UUID that exists in uuid_whitelist, matches device_id, and not yet used.
+// Secure by default: nothing in the installer or systemd units sets this env var explicitly, so whichever way this
+// default falls is what every deployment actually runs with. Any device that reaches the provisioning topic with a
+// valid CSR gets a certificate and gets registered when this is off - only set ENFORCE_WHITELIST=false deliberately.
+export const ENFORCE_WHITELIST: boolean = (process.env.ENFORCE_WHITELIST || 'true').toLowerCase() === 'true';

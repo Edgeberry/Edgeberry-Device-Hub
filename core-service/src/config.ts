@@ -33,6 +33,24 @@ export const DEVICEHUB_DB: string = process.env.DEVICEHUB_DB || (
     : path.resolve(process.cwd(), 'data', 'devicehub.db')
 );
 
+// Where the live Certificate Revocation List is published. Distinct from
+// CERTS_DIR (the CA's own key/cert - read-only inputs for signing): this is an
+// *output* the broker needs to pick up, so in production it points at the
+// persistent dir that scripts/sync-certs.sh (triggered by the
+// edgeberry-cert-sync.path unit watching this directory) already mirrors into
+// /etc/mosquitto/certs and reloads Mosquitto for - the same pipeline
+// ca.crt/server.crt/server.key already ride.
+export const PERSISTENT_CERTS_DIR: string = process.env.PERSISTENT_CERTS_DIR || (
+  NODE_ENV === 'production' ? '/var/lib/edgeberry/devicehub/certs' : CERTS_DIR
+);
+export const CRL_PATH: string = path.join(PERSISTENT_CERTS_DIR, 'crl.pem');
+// Deliberately NOT in PERSISTENT_CERTS_DIR: that directory is watched by
+// edgeberry-cert-sync.path, and writing crlnumber there as a separate step
+// from crl.pem would let the watcher fire on the *first* file write and race
+// sync-certs.sh against the second - CRL_PATH is written via a same-directory
+// temp-file + atomic rename specifically so it is the only visible change.
+export const CRL_NUMBER_PATH: string = path.join(CERTS_DIR, 'crlnumber');
+
 // Legacy environment variables for backward compatibility
 export const REGISTRY_DB: string = process.env.REGISTRY_DB || DEVICEHUB_DB;
 export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || DEVICEHUB_DB;

@@ -5,6 +5,8 @@
  */
 import React, { useEffect, useState, useRef } from 'react';
 import { Alert, Badge, Button, Col, Form, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faToggleOn, faToggleOff, faTrash } from '@fortawesome/free-solid-svg-icons';
 import { batchUploadWhitelist } from '../api/devicehub';
 
 export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; user:any|null }){
@@ -14,13 +16,9 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
 
   // Form state
   const [wlUuid, setWlUuid] = useState('');
-  const [wlHardwareVersion, setWlHardwareVersion] = useState('');
-  const [wlManufacturer, setWlManufacturer] = useState('');
   const [wlBusy, setWlBusy] = useState(false);
-  
+
   // Batch upload state
-  const [batchHardwareVersion, setBatchHardwareVersion] = useState('');
-  const [batchManufacturer, setBatchManufacturer] = useState('');
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchResults, setBatchResults] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -52,14 +50,12 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   async function createEntry(){
     if (!props.user) return;
     if (!wlUuid) { setError('UUID is required'); return; }
-    if (!wlHardwareVersion) { setError('Hardware version is required'); return; }
-    if (!wlManufacturer) { setError('Manufacturer is required'); return; }
     setWlBusy(true);
     try{
-      const body = { uuid: wlUuid, hardware_version: wlHardwareVersion.trim(), manufacturer: wlManufacturer.trim() };
+      const body = { uuid: wlUuid };
       const res = await fetch('/api/admin/uuid-whitelist', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
       const d = await res.json().catch(()=>({}));
-      if (res.ok){ setWlUuid(''); setWlHardwareVersion(''); setWlManufacturer(''); await refresh(); }
+      if (res.ok){ setWlUuid(''); await refresh(); }
       else { setError(d?.error || 'Failed to create whitelist entry'); }
     } finally { setWlBusy(false); }
   }
@@ -71,39 +67,43 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
     if (res.ok){ await refresh(); }
     else { const d = await res.json().catch(()=>({})); setError(d?.error || 'Failed to delete whitelist entry'); }
   }
-  
+
+  async function toggleDisabled(uuid:string, disabled:boolean){
+    if (!props.user) return;
+    const res = await fetch(`/api/admin/uuid-whitelist/${encodeURIComponent(uuid)}`, {
+      method:'PATCH',
+      headers:{'content-type':'application/json'},
+      body: JSON.stringify({ disabled })
+    });
+    if (res.ok){ await refresh(); }
+    else { const d = await res.json().catch(()=>({})); setError(d?.error || `Failed to ${disabled ? 'disable' : 'enable'} whitelist entry`); }
+  }
+
+
   async function handleBatchUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    
-    if (!batchHardwareVersion.trim() || !batchManufacturer.trim()) {
-      setError('Hardware version and manufacturer are required for batch upload');
-      return;
-    }
-    
+
     setBatchBusy(true);
     setBatchResults(null);
     setError(undefined);
-    
+
     try {
       const text = await file.text();
       const uuids = text.split('\n')
         .map(line => line.trim())
         .filter(line => line.length > 0);
-      
+
       if (uuids.length === 0) {
         setError('No valid UUIDs found in file');
         return;
       }
-      
-      const result = await batchUploadWhitelist(uuids, batchHardwareVersion.trim(), batchManufacturer.trim());
-      
+
+      const result = await batchUploadWhitelist(uuids);
+
       if (result.ok) {
         setBatchResults(result.results);
         await refresh();
-        // Clear form
-        setBatchHardwareVersion('');
-        setBatchManufacturer('');
         if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
         setError(result.error || 'Batch upload failed');
@@ -118,7 +118,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   function fmtDate(s?:string){ try{ return s? new Date(s).toLocaleString() : '-'; }catch{ return s || '-'; } }
 
   return (
-    <Modal show={props.show} onHide={props.onClose} size='xl'>
+    <Modal show={props.show} onHide={props.onClose} size='xl' scrollable contentClassName="eb-modal-content">
       <Modal.Header closeButton>
         <Modal.Title>Whitelist</Modal.Title>
       </Modal.Header>
@@ -132,10 +132,6 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
                 <Row className='g-2'>
                   <Col md={12}><Form.Label>UUID <span className="text-danger">*</span></Form.Label>
                     <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' disabled={!props.user} /></Col>
-                  <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
-                    <Form.Control value={wlHardwareVersion} onChange={e=>setWlHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
-                  <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
-                    <Form.Control value={wlManufacturer} onChange={e=>setWlManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
                 </Row>
                 <Button className='mt-3' disabled={!props.user || wlBusy} onClick={createEntry} variant='success'>
                   {wlBusy? <Spinner animation='border' size='sm'/> : 'Add Entry'}
@@ -143,21 +139,17 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
               </Form>
             </div>
           </Tab>
-          
+
           <Tab eventKey="batch" title="Batch Upload">
             <div className="mt-3">
               <p className="text-muted">Upload a plain text file with one UUID per line</p>
               <Row className='g-2'>
-                <Col md={6}><Form.Label>Hardware Version <span className="text-danger">*</span></Form.Label>
-                  <Form.Control value={batchHardwareVersion} onChange={e=>setBatchHardwareVersion(e.target.value)} placeholder='e.g. v1.2, Rev A' disabled={!props.user} /></Col>
-                <Col md={6}><Form.Label>Manufacturer <span className="text-danger">*</span></Form.Label>
-                  <Form.Control value={batchManufacturer} onChange={e=>setBatchManufacturer(e.target.value)} placeholder='e.g. Acme Corp' disabled={!props.user} /></Col>
                 <Col md={12}><Form.Label>UUID File <span className="text-danger">*</span></Form.Label>
-                  <Form.Control 
+                  <Form.Control
                     ref={fileInputRef}
-                    type="file" 
-                    accept=".txt,.csv" 
-                    onChange={handleBatchUpload} 
+                    type="file"
+                    accept=".txt,.csv"
+                    onChange={handleBatchUpload}
                     disabled={!props.user || batchBusy}
                   />
                 </Col>
@@ -196,34 +188,48 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
                 <thead>
                   <tr>
                     <th>UUID</th>
-                    <th>Hardware Version</th>
-                    <th>Manufacturer</th>
                     <th>Created</th>
-                    <th>Used</th>
-                    <th style={{width:220}}>Actions</th>
+                    <th>Status</th>
+                    <th style={{width:180}} className='text-end'>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {entries.length===0 ? (
-                    <tr><td colSpan={6} style={{color:'#666'}}>No whitelist entries.</td></tr>
-                  ) : entries.map((w:any)=> (
-                    <tr key={w.uuid}>
-                      <td style={{fontFamily:'monospace', fontSize:'0.85em'}}>{w.uuid}</td>
-                      <td>{w.hardware_version || '-'}</td>
-                      <td>{w.manufacturer || '-'}</td>
-                      <td>{fmtDate(w.created_at)}</td>
+                    <tr><td colSpan={4} style={{color:'#666'}}>No whitelist entries.</td></tr>
+                  ) : entries.map((entry:any)=> (
+                    <tr key={entry.uuid} className='device-row'>
+                      <td style={{fontFamily:'monospace', fontSize:'0.85em'}}>{entry.uuid}</td>
+                      <td>{fmtDate(entry.created_at)}</td>
                       <td>
-                        {w.used_at ? <Badge bg='secondary'>Used</Badge> : <Badge bg='success'>Unused</Badge>}
-                        <div style={{fontSize:12, opacity:.8}}>{w.used_at ? fmtDate(w.used_at) : ''}</div>
+                        {entry.disabled_at ? (
+                          <Badge bg='danger' title={`Disabled ${fmtDate(entry.disabled_at)}`}>Disabled</Badge>
+                        ) : entry.used_at ? (
+                          <Badge bg='secondary' title={`Last claimed ${fmtDate(entry.used_at)}`}>In use</Badge>
+                        ) : (
+                          <Badge bg='success'>Unused</Badge>
+                        )}
                       </td>
-                      <td>
-                        <Button size='sm' variant='outline-primary' style={{marginRight:8}}
-                          onClick={()=>{ navigator.clipboard?.writeText(w.uuid).catch(()=>{}); }}>
-                          Copy UUID
-                        </Button>
-                        <Button size='sm' variant='outline-danger' onClick={()=>deleteEntry(w.uuid)} disabled={!props.user}>
-                          Delete
-                        </Button>
+                      <td className='text-end'>
+                        <div className="btn-group device-actions" role="group">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-edgeberry"
+                            onClick={()=>toggleDisabled(entry.uuid, !entry.disabled_at)}
+                            disabled={!props.user}
+                            title={entry.disabled_at ? 'Enable' : 'Disable'}
+                          >
+                            <FontAwesomeIcon icon={entry.disabled_at ? faToggleOff : faToggleOn} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-edgeberry"
+                            onClick={()=>deleteEntry(entry.uuid)}
+                            disabled={!props.user}
+                            title="Delete"
+                          >
+                            <FontAwesomeIcon icon={faTrash} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

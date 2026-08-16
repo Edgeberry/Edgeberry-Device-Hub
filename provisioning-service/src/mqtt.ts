@@ -1,7 +1,7 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync, existsSync } from 'fs';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, ENFORCE_WHITELIST, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, CERT_DAYS } from './config.js';
-import { dbusCheckUUID, dbusMarkUsed, dbusIssueFromCSR, dbusRegisterDevice } from './dbus.js';
+import { dbusCheckUUID, dbusMarkUsed, dbusIssueFromCSR, dbusRegisterDevice, dbusClaimDeviceName, dbusResolveDeviceIdByUuid } from './dbus.js';
 import type { Json } from './types.js';
 
 // Topic helpers and constants
@@ -106,18 +106,17 @@ export function startMqtt(): MqttClient {
       console.log(`[${SERVICE}] provision parsed uuid=${uuid} csrPemLen=${csrPem ? csrPem.length : 0}`);
       if (hasBodyUuid && bodyUuid !== uuidFromTopic) {
         console.warn(`[${SERVICE}] uuid mismatch: topic=${uuidFromTopic} body=${bodyUuid}`);
-        const rej = TOPICS.rejected(uuidFromTopic);
-        client.publish(rej, JSON.stringify({ error: 'uuid_mismatch', message: 'body.uuid must match topic UUID' }), { qos: 1 });
+        const rejectedTopic = TOPICS.rejected(uuidFromTopic);
+        client.publish(rejectedTopic, JSON.stringify({ error: 'uuid_mismatch', message: 'body.uuid must match topic UUID' }), { qos: 1 });
         return;
       }
       if (ENFORCE_WHITELIST) {
         if (!uuid) throw new Error('missing_uuid');
         // Ask Core over D-Bus
-        const res = await dbusCheckUUID(uuid);
-        if (!res.ok) throw new Error(res.error || 'uuid_not_whitelisted');
+        const checkResult = await dbusCheckUUID(uuid);
+        if (!checkResult.ok) throw new Error(checkResult.error || 'uuid_not_whitelisted');
         console.log(`[${SERVICE}] whitelist ok for uuid=${uuid}`);
       }
-      const name = typeof body.name === 'string' ? (body.name as string) : undefined;
       const token = typeof body.token === 'string' ? (body.token as string) : undefined;
       let meta = typeof body.meta === 'object' && body.meta ? (body.meta as Json) : undefined;
       // Persist UUID inside device meta so it is available to admin UI; harmless for anonymous as UI won't render it
@@ -129,54 +128,92 @@ export function startMqtt(): MqttClient {
           meta = { uuid } as Json;
         }
       }
-      // If CSR provided, issue device certificate using Root CA
+
+      // Two round trips over the same provisioning connection, distinguished
+      // by whether a CSR is present, so the device's UUID (a one-time claim
+      // token) never becomes its ongoing MQTT/TLS identity:
+      //   1) claim  - no csrPem: Core assigns a *fresh* random name (fresh
+      //      start - see ClaimDeviceName in core-service/src/dbus-devices.ts),
+      //      replacing whatever was claimed for this uuid before.
+      //   2) issue  - csrPem present, CN'd for that assigned name: Core reads
+      //      back the name round 1 just assigned (does NOT claim a new one -
+      //      claiming is a one-shot-per-session action, not idempotent) and
+      //      the device's CSR must match it exactly, else the request is
+      //      rejected as deviceId_mismatch.
+      let deviceId: string;
       if (!csrPem) {
-        throw new Error('missing_csrPem');
+        const claim = await dbusClaimDeviceName(uuid);
+        if (!claim.ok || !claim.deviceId) {
+          throw new Error(claim.error || 'claim_failed');
+        }
+        deviceId = claim.deviceId;
+        const acceptedTopic = TOPICS.accepted(uuid);
+        console.log(`[${SERVICE}] claim accepted for uuid=${uuid} -> deviceId=${deviceId}; publishing ${acceptedTopic}`);
+        client.publish(acceptedTopic, JSON.stringify({ deviceId }), { qos: 1 });
+        return;
       }
-      // Use uuid as deviceId for certificate issuance (device identity equals UUID)
-      dbusIssueFromCSR(uuid, csrPem, CERT_DAYS)
-        .then(async (res) => {
-          if (!res.ok || !res.certPem || !res.caChainPem) throw new Error(res.error || 'issue_failed');
-          const { certPem, caChainPem } = res;
-          
+
+      const resolved = await dbusResolveDeviceIdByUuid(uuid);
+      if (!resolved.ok || !resolved.deviceId) {
+        throw new Error(resolved.error || 'no_claim_in_progress');
+      }
+      deviceId = resolved.deviceId;
+
+      const bodyDeviceId = typeof body.deviceId === 'string' ? (body.deviceId as string) : undefined;
+      if (bodyDeviceId !== deviceId) {
+        throw new Error('deviceId_mismatch');
+      }
+
+      dbusIssueFromCSR(uuid, deviceId, csrPem, CERT_DAYS)
+        .then(async (issueResult) => {
+          if (!issueResult.ok || !issueResult.certPem || !issueResult.caChainPem) throw new Error(issueResult.error || 'issue_failed');
+          const { certPem, caChainPem } = issueResult;
+
+          // Record this as the whitelist entry's most recent claim. This is
+          // informational only now (used_at is a "last claimed" timestamp,
+          // not a one-shot lock - a whitelisted UUID must be able to
+          // reprovision indefinitely, see CheckUUID/MarkUsed in
+          // core-service/src/dbus-whitelist.ts), so it only throws on a
+          // genuine failure (DB unavailable, UUID not in the whitelist
+          // table at all), never on "already used". The real defense
+          // against two devices sharing one UUID is upstream of here: only
+          // one MQTT connection can hold this UUID's client ID at a time,
+          // and ClaimDeviceName's uuid PRIMARY KEY + DELETE-then-INSERT
+          // transaction (dbus-devices.ts) makes each claim a fresh start.
+          if (ENFORCE_WHITELIST && uuid) {
+            const markResult = await dbusMarkUsed(uuid);
+            if (!markResult.ok) {
+              throw new Error(markResult.error || 'mark_used_failed');
+            }
+            console.log(`[${SERVICE}] recorded claim for UUID: ${uuid}`);
+          }
+
           // Register device in database after successful certificate issuance
           try {
             const metaJson = JSON.stringify(meta || {});
-            const regRes = await dbusRegisterDevice(uuid, '', token || '', metaJson);
+            const regRes = await dbusRegisterDevice(uuid, deviceId, token || '', metaJson);
             if (regRes.ok) {
-              console.log(`[${SERVICE}] device registered: ${uuid}`);
+              console.log(`[${SERVICE}] device registered: ${uuid} -> ${deviceId}`);
             } else {
               console.warn(`[${SERVICE}] device registration failed for ${uuid}: ${regRes.error}`);
             }
           } catch (regErr) {
             console.warn(`[${SERVICE}] device registration error for ${uuid}:`, regErr);
           }
-          
-          if (ENFORCE_WHITELIST && uuid) {
-            try { 
-              const markResult = await dbusMarkUsed(uuid);
-              if (markResult.ok) {
-                console.log(`[${SERVICE}] marked UUID as used: ${uuid}`);
-              } else {
-                console.warn(`[${SERVICE}] failed to mark UUID as used: ${uuid} - ${markResult.error}`);
-              }
-            } catch (err) {
-              console.error(`[${SERVICE}] error marking UUID as used: ${uuid}`, err);
-            }
-          }
-          const respTopic = TOPICS.accepted(uuid);
-          console.log(`[${SERVICE}] provision accepted for uuid=${uuid}; publishing ${respTopic}`);
-          client.publish(respTopic, JSON.stringify({ deviceId: uuid, certPem, caChainPem }), { qos: 1 });
+
+          const acceptedTopic = TOPICS.accepted(uuid);
+          console.log(`[${SERVICE}] provision accepted for uuid=${uuid} -> deviceId=${deviceId}; publishing ${acceptedTopic}`);
+          client.publish(acceptedTopic, JSON.stringify({ deviceId, certPem, caChainPem }), { qos: 1 });
         })
         .catch((err) => {
-          const rej = TOPICS.rejected(uuidFromTopic);
+          const rejectedTopic = TOPICS.rejected(uuidFromTopic);
           console.error(`[${SERVICE}] provision issue_failed for uuid=${uuidFromTopic}:`, err?.message || err);
-          client.publish(rej, JSON.stringify({ error: 'issue_failed', message: String(err?.message || err) }), { qos: 1 });
+          client.publish(rejectedTopic, JSON.stringify({ error: 'issue_failed', message: String(err?.message || err) }), { qos: 1 });
         });
     } catch (e) {
       console.error(`[${SERVICE}] error handling provision request`, e);
-      const rej = TOPICS.rejected(uuidFromTopic);
-      client.publish(rej, JSON.stringify({ error: 'bad_request', message: (e as Error).message }), { qos: 1 });
+      const rejectedTopic = TOPICS.rejected(uuidFromTopic);
+      client.publish(rejectedTopic, JSON.stringify({ error: 'bad_request', message: (e as Error).message }), { qos: 1 });
     }
   });
 

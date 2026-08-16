@@ -6,7 +6,18 @@ export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA || undefi
 export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT || undefined; // e.g., ../config/certs/twin.crt
 export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY || undefined; // e.g., ../config/certs/twin.key
 export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') !== 'false';
-export const DB_PATH: string = process.env.TWIN_DB || 'twin.db';
+// Bare relative default ('twin.db') resolved to whatever the process's cwd
+// happened to be - core-service reads device status from this same file via
+// a *different*, already-absolute default (/var/lib/edgeberry/devicehub/twin.db),
+// so the two silently diverged: every status this service ever recorded was
+// going into a database core-service never looked at. Match core-service's
+// default here so they agree even if TWIN_DB is never set explicitly.
+const NODE_ENV = process.env.NODE_ENV || 'development';
+export const DB_PATH: string = process.env.TWIN_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/twin.db'
+    : 'twin.db'
+);
 // Main Device Hub database path (consolidated)
 export const DEVICEHUB_DB: string = process.env.DEVICEHUB_DB || 'devicehub.db';
 // Legacy environment variable for backward compatibility

@@ -3,6 +3,7 @@ import { Button, Modal, Tab, Tabs, Alert, Spinner } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faLocationDot, faPowerOff } from '@fortawesome/free-solid-svg-icons';
 import { getDevice, getDeviceEvents, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
+import { displayNameFor } from '../deviceDisplay';
 import StatusIndicator from './StatusIndicator';
 import ApplicationPanel from './Device/Application';
 import ConnectionPanel from './Device/Connection';
@@ -154,7 +155,10 @@ export default function DeviceDetailModal(props:{
               <FontAwesomeIcon icon={faPowerOff} />
             </Button>
           </div>
-          <Modal.Title>{device?.name || deviceId}</Modal.Title>
+          <Modal.Title>{device ? displayNameFor(device) : deviceId}</Modal.Title>
+          {device?.role && (
+            <div className="text-muted small">MQTT name: {device.name}</div>
+          )}
           {device?.uuid && device?.uuid !== deviceId && (
             <div className="text-muted small">UUID: {device.uuid}</div>
           )}

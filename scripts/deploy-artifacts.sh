@@ -41,10 +41,32 @@ configure_service_envs() {
       mv "$f.tmp" "$f"
     fi
   done
-  
+
+  # Twin-service's own default for TWIN_DB is a bare relative path that
+  # resolves to wherever its cwd happens to be, while core-service's default
+  # is already the absolute persistent path below - the two silently
+  # diverged onto different database files. Set it explicitly for both so
+  # they agree regardless of code defaults (twin-service/src/config.ts also
+  # fixes its own default, but belt and suspenders).
+  ensure_env_kv "$ETC_DIR/twin.env" "TWIN_DB" "$PERSISTENT_DIR/twin.db"
+
+  # Provisioning-service: whitelist enforcement is secure-by-default in code
+  # (provisioning-service/src/config.ts) - write it explicitly here too, so
+  # the deployed env file documents the choice instead of relying on an
+  # implicit default. Only set when absent, so an operator's own explicit
+  # ENFORCE_WHITELIST=false is never silently overwritten on redeploy/upgrade.
+  local prov_env="$ETC_DIR/provisioning.env"
+  if [[ -f "$prov_env" ]] && grep -qE '^\s*ENFORCE_WHITELIST\s*=' "$prov_env"; then
+    log "provisioning: ENFORCE_WHITELIST already set explicitly, leaving as-is"
+  else
+    echo "ENFORCE_WHITELIST=true" >> "$prov_env"
+    log "provisioning: set ENFORCE_WHITELIST=true (default)"
+  fi
+
   # Core service environment
   local core_env="$ETC_DIR/core.env"
   ensure_env_kv "$core_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
+  ensure_env_kv "$core_env" "TWIN_DB" "$PERSISTENT_DIR/twin.db"
   # JWT session timeout in seconds (default 24 hours = 86400)
   ensure_env_kv "$core_env" "JWT_TTL_SECONDS" "${JWT_TTL_SECONDS:-86400}"
   # Production port (3000 for reverse proxy setup)
@@ -548,11 +570,51 @@ EOF
         install -m 0640 "$SRC_KEY" "$ETC_KEY"
         log "installed server key: $ETC_KEY"
     fi
-    if [[ -f "$SRC_ACL" ]]; then 
+    if [[ -f "$SRC_ACL" ]]; then
         install -m 0644 "$SRC_ACL" "$ETC_ACL"
         log "installed ACL file: $ETC_ACL"
     else
         log "ERROR: ACL file not found, cannot install to $ETC_ACL"
+    fi
+
+    # mosquitto.conf references crlfile unconditionally (see config/mosquitto.conf) -
+    # if that path doesn't exist, mosquitto refuses to start. core-service normally
+    # publishes the real CRL itself (certs.ts ensureCRLExists/regenerateCRL) once it
+    # first runs, but on a fresh install mosquitto may start before that ever
+    # happens, so seed an initial empty one (nothing revoked yet, still a valid CRL)
+    # here as a safety net.
+    local ETC_CRL="/etc/mosquitto/certs/crl.pem"
+    local PERSISTENT_CRL="$PERSISTENT_CERTS_DIR/crl.pem"
+    local PERSISTENT_CA_KEY="$PERSISTENT_CERTS_DIR/ca.key"
+    if [[ -f "$PERSISTENT_CRL" ]]; then
+        install -m 0640 "$PERSISTENT_CRL" "$ETC_CRL"
+        log "installed CRL: $ETC_CRL"
+    elif [[ ! -f "$ETC_CRL" && -f "$SRC_CA" && -f "$PERSISTENT_CA_KEY" ]]; then
+        local CRL_WORK_DIR; CRL_WORK_DIR=$(mktemp -d)
+        : > "$CRL_WORK_DIR/index.txt"
+        echo 01 > "$CRL_WORK_DIR/crlnumber"
+        cat > "$CRL_WORK_DIR/openssl.cnf" <<EOF
+[ca]
+default_ca = CA_default
+[CA_default]
+database = $CRL_WORK_DIR/index.txt
+certificate = $SRC_CA
+private_key = $PERSISTENT_CA_KEY
+crlnumber = $CRL_WORK_DIR/crlnumber
+default_crl_days = 30
+default_md = sha256
+EOF
+        if openssl ca -config "$CRL_WORK_DIR/openssl.cnf" -gencrl -out "$ETC_CRL" >/dev/null 2>&1; then
+            mkdir -p "$PERSISTENT_CERTS_DIR"
+            cp "$ETC_CRL" "$PERSISTENT_CRL"
+            cp "$CRL_WORK_DIR/crlnumber" "$PERSISTENT_CERTS_DIR/crlnumber"
+            log "generated initial empty CRL: $ETC_CRL"
+        else
+            log "WARN: failed to generate initial CRL; mosquitto will fail to start until core-service publishes one"
+        fi
+        rm -rf "$CRL_WORK_DIR"
+    elif [[ ! -f "$ETC_CRL" ]]; then
+        log "WARN: no CA key available yet to seed an initial CRL; mosquitto will fail to start until core-service publishes one"
     fi
 
     mkdir -p "$ETC_CA_DIR"
@@ -571,7 +633,7 @@ EOF
     c_rehash "$ETC_CA_DIR" || openssl rehash "$ETC_CA_DIR" || true
 
     if id -u mosquitto >/dev/null 2>&1; then
-      chown root:mosquitto "$ETC_CA" "$ETC_CERT" "$ETC_KEY" 2>/dev/null || true
+      chown root:mosquitto "$ETC_CA" "$ETC_CERT" "$ETC_KEY" "$ETC_CRL" 2>/dev/null || true
       # Ensure CA directory and all contents are readable by mosquitto group
       chown -R root:mosquitto "$ETC_CA_DIR" 2>/dev/null || true
       chmod -R 640 "$ETC_CA_DIR"/* 2>/dev/null || true
@@ -617,6 +679,9 @@ use_subject_as_username true
 
 # ACLs for device listener
 acl_file $ETC_ACL
+
+# Certificate Revocation List (see config/mosquitto.conf for the full rationale)
+crlfile $ETC_CRL
 EOF
     fi
 

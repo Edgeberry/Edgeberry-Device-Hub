@@ -1,5 +1,6 @@
 import * as dbus from 'dbus-native';
 import Database from 'better-sqlite3';
+import { randomBytes } from 'crypto';
 import { DEVICEHUB_DB } from './config.js';
 import { generateDefaultDeviceName, validateDeviceName, sanitizeDeviceName } from './device-names.js';
 
@@ -7,13 +8,28 @@ const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/DevicesService';
 const IFACE_NAME = 'io.edgeberry.devicehub.DevicesService';
 
-function openDb(path: string): Database.Database | null {
+// Typed `Database.Database` here, but this project's own src/types/better-sqlite3.d.ts
+// shim + src/types/database-types.ts augmentation shadow the real @types/better-sqlite3
+// declarations with an incomplete Database interface (missing .transaction), so - matching
+// the `any`-typed openDb() already used in dbus-whitelist.ts and database-types.ts - fall
+// back to `any` rather than fighting that shim.
+function openDb(path: string): any {
   try {
     return new Database(path);
   } catch (e) {
     console.error(`Failed to open database ${path}:`, e);
     return null;
   }
+}
+
+// crypto.randomBytes rather than Math.random(): this name is a security
+// boundary now (the whole point is that it must not be predictable), so it
+// gets the same randomness source secrets/tokens elsewhere in this codebase
+// use. No "EDGB-" prefix (or any other fixed marker) - a device name should
+// not read as if it were still tied to a scheme or a brand, which is exactly
+// the kind of thing that invites false assumptions about what it encodes.
+function generateRandomDeviceName(): string {
+  return randomBytes(4).toString('hex').toUpperCase();
 }
 
 class DevicesInterface {
@@ -85,6 +101,67 @@ class DevicesInterface {
     }
   }
 
+  // The name a device is assigned during provisioning, so its UUID (a
+  // long-lived hardware identity, not a one-time secret) never becomes its
+  // ongoing MQTT/TLS identity - see documentation/alignment.md's
+  // claim-certificate provisioning flow.
+  //
+  // Every successful claim gets a *fresh* random name, replacing whatever was
+  // reserved before - reprovisioning is meant to be a genuine fresh start,
+  // not a renewal of the old identity. The old row for this uuid (if any) is
+  // deleted and a new one inserted in the same transaction, so a crash
+  // between those two steps can't leave the uuid with no row at all.
+  //
+  // Random on purpose: a name derived from the UUID would let anyone who
+  // learns the UUID predict the device's public identity ahead of time,
+  // which defeats the point of masking it. Uniqueness is a real database
+  // constraint (see the index below), not just a check-then-insert race -
+  // a collision retries with a new candidate rather than silently
+  // colliding with (or replacing) a different device's row.
+  async ClaimDeviceName(uuid: string): Promise<string> {
+    const db = openDb(DEVICEHUB_DB);
+    if (!db) {
+      return JSON.stringify({ success: false, deviceId: null, error: 'Database unavailable' });
+    }
+    try {
+      db.prepare(`CREATE TABLE IF NOT EXISTS devices (
+        uuid TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        token TEXT,
+        meta TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`).run();
+      db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_name ON devices(name)').run();
+
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const candidate = generateRandomDeviceName();
+        try {
+          const claim = db.transaction((deviceUuid: string, deviceName: string) => {
+            db.prepare('DELETE FROM devices WHERE uuid = ?').run(deviceUuid);
+            db.prepare(`INSERT INTO devices (uuid, name, token, meta, created_at) VALUES (?, ?, '', '{}', CURRENT_TIMESTAMP)`).run(deviceUuid, deviceName);
+          });
+          claim(uuid, candidate);
+          console.log(`[DevicesService] Claimed uuid=${uuid} -> deviceId=${candidate}`);
+          return JSON.stringify({ success: true, deviceId: candidate, error: null });
+        } catch (e: any) {
+          if (e?.code === 'SQLITE_CONSTRAINT_UNIQUE' || e?.code === 'SQLITE_CONSTRAINT') {
+            continue; // name collision - try another candidate
+          }
+          throw e;
+        }
+      }
+      return JSON.stringify({ success: false, deviceId: null, error: 'name_space_exhausted' });
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        deviceId: null,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      try { db.close(); } catch {}
+    }
+  }
+
   async ResolveDeviceIdByUuid(uuid: string): Promise<string> {
     const db = openDb(DEVICEHUB_DB);
     if (!db) {
@@ -110,7 +187,11 @@ class DevicesInterface {
       
       return JSON.stringify({
         success: true,
-        deviceId: row.uuid,
+        // The device's ongoing identity is its assigned name, not its UUID -
+        // this method exists specifically to resolve one to the other, so
+        // returning row.uuid here (a leftover from before that distinction
+        // existed) would just hand the caller back what they already had.
+        deviceId: row.name,
         name: row.name,
         error: null
       });
@@ -143,11 +224,37 @@ export async function startDevicesDbusServer(bus: any): Promise<any> {
 
   // Create the service object with actual method implementations
   const serviceObject = {
-    RegisterDevice: (uuid: string, name: string, token: string, metaJson: string, callback: (err: any, result?: string) => void) => {
-      console.log(`[D-Bus DevicesService] RegisterDevice called with callback pattern`);
-      devicesService.RegisterDevice(uuid, name, token, metaJson)
-        .then(result => callback(null, result))
-        .catch(error => callback(error));
+    // Single JSON string in/out, same as every other method here - the old
+    // ['ssss', 's'] + raw-callback shape was the only method in the codebase
+    // built that way, and dbus-native's reply marshalling for it crashed the
+    // whole process with "Serialisation of JS 'undefined' type is not
+    // supported by d-bus" on every successful registration.
+    RegisterDevice: async (requestJson: string) => {
+      try {
+        const request = JSON.parse(requestJson);
+        const { uuid, name, token, metaJson } = request;
+        const result = await devicesService.RegisterDevice(uuid, name, token, metaJson);
+        return result;
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    },
+    ClaimDeviceName: async (requestJson: string) => {
+      try {
+        const request = JSON.parse(requestJson);
+        const { uuid } = request;
+        const result = await devicesService.ClaimDeviceName(uuid);
+        return result;
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          deviceId: null,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     },
     ResolveDeviceIdByUuid: async (requestJson: string) => {
       try {
@@ -185,7 +292,8 @@ export async function startDevicesDbusServer(bus: any): Promise<any> {
   bus.exportInterface(serviceObject, OBJECT_PATH, {
     name: IFACE_NAME,
     methods: {
-      RegisterDevice: ['ssss', 's'],
+      RegisterDevice: ['s', 's'],
+      ClaimDeviceName: ['s', 's'],
       ResolveDeviceIdByUuid: ['s', 's'],
       GetDeviceInfo: ['s', 's'],
       ListDevices: ['', 's']

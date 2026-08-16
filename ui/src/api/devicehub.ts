@@ -165,12 +165,12 @@ export async function deleteWhitelistByDevice(deviceUuid: string){
 /**
  * Batch upload UUIDs to whitelist from array
  */
-export async function batchUploadWhitelist(uuids: string[], hardwareVersion: string, manufacturer: string){
-  const res = await fetch(base()+'/admin/uuid-whitelist/batch', { 
-    method:'POST', 
-    headers:{'content-type':'application/json'}, 
-    body: JSON.stringify({ uuids, hardware_version: hardwareVersion, manufacturer }), 
-    credentials:'include' 
+export async function batchUploadWhitelist(uuids: string[]){
+  const res = await fetch(base()+'/admin/uuid-whitelist/batch', {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify({ uuids }),
+    credentials:'include'
   });
   return jsonOrMessage(res);
 }
@@ -185,22 +185,39 @@ export async function createProvisionToken(uuid: string, hours?: number){
   const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/provision-token`+ (hours?`?hours=${encodeURIComponent(hours)}`:''), { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include' });
   return jsonOrMessage(res);
 }
+// --- Roles: a persistent, admin-chosen label pointing at a device's uuid.
+// Replaces the old device rename/replace endpoints - a role survives both
+// reprovisioning (which rotates a device's raw MQTT name) and hardware
+// swaps (by repointing the role at a different uuid), which raw device
+// identity never could.
 /**
- * Update device name
- * @param uuid device uuid
- * @param name new device name
+ * List all roles, each with its current device's name/online status
  */
-export async function updateDevice(uuid: string, name: string){
-  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}`, { method:'PUT', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ name }) });
+export async function getRoles(){ return jsonOrMessage(await fetch(base()+"/roles", { credentials:'include' })); }
+/**
+ * Create a role bound to a device
+ * @param role role name
+ * @param uuid device uuid to bind it to
+ */
+export async function createRole(role: string, uuid: string){
+  const res = await fetch(base()+"/roles", { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ role, uuid }) });
   return jsonOrMessage(res);
 }
 /**
- * Replace device with another device
- * @param uuid device uuid to replace
- * @param targetUuid uuid of device to replace with
+ * Repoint an existing role at a different device (the hardware-swap operation)
+ * @param role role name
+ * @param uuid device uuid to point the role at
  */
-export async function replaceDevice(uuid: string, targetUuid: string){
-  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/replace`, { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ targetUuid }) });
+export async function reassignRole(role: string, uuid: string){
+  const res = await fetch(base()+`/roles/${encodeURIComponent(role)}`, { method:'PUT', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ uuid }) });
+  return jsonOrMessage(res);
+}
+/**
+ * Delete a role
+ * @param role role name
+ */
+export async function deleteRole(role: string){
+  const res = await fetch(base()+`/roles/${encodeURIComponent(role)}`, { method:'DELETE', credentials:'include' });
   return jsonOrMessage(res);
 }
 

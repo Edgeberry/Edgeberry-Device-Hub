@@ -34,9 +34,9 @@ function callDbusMethod(busName: string, objectPath: string, interfaceName: stri
       }
       
       // Call the method with callback
-      const callback = (err: any, ...results: any[]) => {
-        if (err) {
-          reject(err);
+      const callback = (callErr: any, ...results: any[]) => {
+        if (callErr) {
+          reject(callErr);
           return;
         }
         resolve(results);
@@ -80,9 +80,9 @@ export async function dbusMarkUsed(uuid: string): Promise<{ ok: boolean; error?:
   }
 }
 
-export async function dbusIssueFromCSR(deviceId: string, csrPem: string, validityDays: number): Promise<{ ok: boolean; certPem?: string; caChainPem?: string; error?: string }> {
+export async function dbusIssueFromCSR(uuid: string, deviceId: string, csrPem: string, validityDays: number): Promise<{ ok: boolean; certPem?: string; caChainPem?: string; error?: string }> {
   try {
-    const requestJson = JSON.stringify({ deviceId, csrPem, days: validityDays });
+    const requestJson = JSON.stringify({ uuid, deviceId, csrPem, days: validityDays });
     const result = await callDbusMethod(CERT_BUS_NAME, CERT_OBJECT_PATH, CERT_IFACE_NAME, 'IssueFromCSR', requestJson);
     const responseJson = result[0];
     const response = JSON.parse(responseJson);
@@ -97,9 +97,48 @@ export async function dbusIssueFromCSR(deviceId: string, csrPem: string, validit
   }
 }
 
-export async function dbusRegisterDevice(deviceId: string, name: string, token: string, metaJson: string): Promise<{ ok: boolean; error?: string }> {
+export async function dbusClaimDeviceName(uuid: string): Promise<{ ok: boolean; deviceId?: string; error?: string }> {
   try {
-    const result = await callDbusMethod(DEVICES_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'RegisterDevice', deviceId, name, token, metaJson);
+    const requestJson = JSON.stringify({ uuid });
+    const result = await callDbusMethod(DEVICES_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'ClaimDeviceName', requestJson);
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
+    return {
+      ok: response.success,
+      deviceId: response.deviceId || undefined,
+      error: response.error || undefined
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+// Reads back whatever ClaimDeviceName most recently assigned for this uuid,
+// without claiming a new name - used by round 2 of provisioning, which must
+// see the exact name round 1 handed the device, not a fresh one (see the
+// comment above the dbusClaimDeviceName call in mqtt.ts).
+export async function dbusResolveDeviceIdByUuid(uuid: string): Promise<{ ok: boolean; deviceId?: string; error?: string }> {
+  try {
+    const requestJson = JSON.stringify({ uuid });
+    const result = await callDbusMethod(DEVICES_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'ResolveDeviceIdByUuid', requestJson);
+    const responseJson = result[0];
+    const response = JSON.parse(responseJson);
+    return {
+      ok: response.success,
+      deviceId: response.deviceId || undefined,
+      error: response.error || undefined
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+export async function dbusRegisterDevice(uuid: string, name: string, token: string, metaJson: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    // Single JSON string in/out, matching every other D-Bus method on Core -
+    // see the comment on RegisterDevice in core-service/src/dbus-devices.ts.
+    const requestJson = JSON.stringify({ uuid, name, token, metaJson });
+    const result = await callDbusMethod(DEVICES_BUS_NAME, DEVICES_OBJECT_PATH, DEVICES_IFACE_NAME, 'RegisterDevice', requestJson);
     const responseJson = result[0];
     const response = JSON.parse(responseJson);
     return { 

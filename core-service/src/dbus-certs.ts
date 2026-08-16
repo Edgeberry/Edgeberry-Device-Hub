@@ -7,11 +7,11 @@ const OBJECT_PATH = '/io/edgeberry/devicehub/CertificateService';
 const IFACE_NAME = 'io.edgeberry.devicehub.CertificateService';
 
 export class CertificateInterface {
-  async IssueFromCSR(deviceId: string, csrPem: string, days: number): Promise<string> {
+  async IssueFromCSR(uuid: string, deviceId: string, csrPem: string, days: number): Promise<string> {
     try {
       console.log(`[CertificateInterface] IssueFromCSR called for device: ${deviceId}`);
-      
-      const result = await issueDeviceCertFromCSR(deviceId, csrPem, days);
+
+      const result = await issueDeviceCertFromCSR(uuid, deviceId, csrPem, days);
       
       // Return JSON string with success response
       return JSON.stringify({
@@ -43,8 +43,8 @@ export async function startCertificateDbusServer(bus: any): Promise<any> {
     IssueFromCSR: async (requestJson: string) => {
       try {
         const request = JSON.parse(requestJson);
-        const { deviceId, csrPem, days } = request;
-        const result = await certificateService.IssueFromCSR(deviceId, csrPem, days);
+        const { uuid, deviceId, csrPem, days } = request;
+        const result = await certificateService.IssueFromCSR(uuid, deviceId, csrPem, days);
         return result;
       } catch (error) {
         return JSON.stringify({

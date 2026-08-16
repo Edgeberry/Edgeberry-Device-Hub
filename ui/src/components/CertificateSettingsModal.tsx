@@ -174,7 +174,7 @@ export default function CertificateSettingsModal(props:{ show:boolean; onClose:(
                     <th>Name</th>
                     <th>Created</th>
                     <th>Expires</th>
-                    <th style={{width:260}}>Actions</th>
+                    <th style={{width:260}} className='text-end'>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -185,7 +185,7 @@ export default function CertificateSettingsModal(props:{ show:boolean; onClose:(
                       <td>{c.name}</td>
                       <td>{c.createdAt || '-'}</td>
                       <td>{c.expiresAt || '-'}</td>
-                      <td>
+                      <td className='text-end'>
                         <Button size='sm' variant='secondary' onClick={()=>openInspect(c.name)} style={{marginRight:8}}>Inspect</Button>
                         <a className='btn btn-sm btn-outline-primary' style={{marginRight:8}} href={`/api/settings/certs/provisioning/${encodeURIComponent(c.name)}/download`}>
                           Download

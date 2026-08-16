@@ -300,20 +300,17 @@ function broadcastToSubscribers(topic: string, data: any) {
     console.log(`[${SERVICE}] Sending ${topic} message to client ${client.appName}`);
     
     try {
-      // Convert UUID to device name for application layer
-      let deviceName = deviceId;
-      if (db) {
-        const stmt = db.prepare('SELECT name FROM devices WHERE uuid = ?');
-        const device = stmt.get(deviceId) as any;
-        if (device && device.name) {
-          deviceName = device.name;
-        }
-      }
-      
+      // Role, if assigned, else raw MQTT name, else the uuid - never the raw
+      // uuid alone when something more stable/readable is available (see
+      // resolvePublicDeviceId). Role takes precedence so a hardware swap
+      // behind a role is invisible to subscribers: they keep seeing the same
+      // deviceId across the swap.
+      const publicDeviceId = resolvePublicDeviceId(deviceId, db);
+
       client.ws.send(JSON.stringify({
         type: 'message',
         topic,
-        deviceId: deviceName,  // Send device name, not UUID
+        deviceId: publicDeviceId,
         data
       }));
     } catch (e) {
@@ -613,22 +610,42 @@ async function handleSendMessage(client: AuthenticatedClient, msg: any) {
 // ============ HELPER FUNCTIONS ============
 
 /**
- * Resolve device name to UUID
- * Accepts either a device name (EDGB-XXXX) or UUID and returns the UUID
+ * Resolve a device identifier to its UUID. Accepts, in order: a UUID, a
+ * role (the persistent application-facing label - see device_roles in
+ * core-service), or the device's raw MQTT name (a random string reassigned
+ * on every reprovision, kept as a fallback for devices with no role yet).
  */
 function resolveDeviceIdentifier(identifier: string, db: any): string | null {
   if (!identifier) return null;
-  
+
   // Check if it's already a UUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (uuidPattern.test(identifier)) {
     return identifier;
   }
-  
-  // Otherwise, treat it as a device name and look up the UUID
+
+  const roleStmt = db.prepare('SELECT uuid FROM device_roles WHERE role = ?');
+  const role = roleStmt.get(identifier) as any;
+  if (role) return role.uuid;
+
+  // Otherwise, treat it as a device's raw MQTT name and look up the UUID
   const stmt = db.prepare('SELECT uuid FROM devices WHERE name = ?');
   const device = stmt.get(identifier) as any;
   return device ? device.uuid : null;
+}
+
+/**
+ * The identifier application clients should see for a device: its role if
+ * one is assigned (stable across reprovisioning and hardware swaps - see
+ * device_roles), else its raw MQTT name, else the uuid itself. Used both for
+ * outbound WebSocket messages and REST responses so both surfaces agree.
+ */
+function resolvePublicDeviceId(uuid: string, db: any): string {
+  if (!db) return uuid;
+  const role = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
+  if (role && role.role) return role.role;
+  const device = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(uuid) as any;
+  return device && device.name ? device.name : uuid;
 }
 
 // ============ REST API ENDPOINTS ============
@@ -737,9 +754,13 @@ app.get('/api/devices', authenticateToken, async (req: Request, res: Response) =
     const stmt = db.prepare(query);
     const devices = stmt.all(...params);
 
+    const roleRows = db.prepare('SELECT role, uuid FROM device_roles').all() as Array<{ role: string; uuid: string }>;
+    const roleByUuid = new Map(roleRows.map(r => [r.uuid, r.role]));
+
     res.json(devices.map((d: any) => ({
-      deviceId: d.name, // Use device name as the public identifier
+      deviceId: roleByUuid.get(d.uuid) ?? d.name, // role if assigned, else raw MQTT name - same precedence as the WebSocket broadcast
       deviceName: d.name,
+      role: roleByUuid.get(d.uuid) ?? null,
       uuid: d.uuid, // Include UUID for internal use only
       status: 'offline', // Default status since last_seen doesn't exist in current schema
       lastSeen: null, // Not available in current schema
@@ -782,9 +803,12 @@ app.get('/api/devices/:deviceId', authenticateToken, async (req: Request, res: R
       return;
     }
 
+    const roleRow = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
+
     res.json({
-      deviceId: device.name, // Use device name as the public identifier
+      deviceId: roleRow?.role ?? device.name, // role if assigned, else raw MQTT name - same precedence as the WebSocket broadcast
       deviceName: device.name,
+      role: roleRow?.role ?? null,
       uuid: device.uuid, // Include UUID for internal use only
       status: 'offline', // Default status since last_seen doesn't exist in current schema
       lastSeen: null, // Not available in current schema

@@ -2,8 +2,23 @@
 # Ref: https://mosquitto.org/man/mosquitto-conf-5.html#acl_file
 # Notes:
 # - For PROD (mTLS), set `use_subject_as_username true` and the cert CN becomes the username.
-# - `%u` expands to the authenticated username (CN for mTLS when configured).
-# - `%c` expands to the client id (not used here).
+# - `%u` expands to the authenticated username - but with `use_subject_as_username`, that is
+#   the client cert's full rendered Subject DN, which for these single-field "/CN=<uuid>" certs
+#   is the literal string "CN=<uuid>" (verified: `openssl x509 -noout -subject` on an issued cert
+#   prints `subject=CN=<uuid>`, and mosquitto's own connection log shows the same). Every topic in
+#   this system is built from the bare UUID, so a pattern built from %u can never match one -
+#   confirmed live: every device's twin/get and twin/update publish was being denied, silently,
+#   since %u never equals the topic's UUID segment. Do not reintroduce %u below without also
+#   stripping the "CN=" prefix somehow (mosquitto's ACL patterns have no substring support).
+# - `%c` expands to the bare client id, which devices set to their UUID - used below instead.
+#   Trade-off: MQTT client id is client-chosen and not cryptographically bound to the cert the
+#   way the Subject DN is, so a device with a *valid* cert for its own UUID could still pick a
+#   different client id and attempt to write to another device's twin topics. Bounded by two
+#   things for now: exploiting it requires an already-whitelisted, already-issued certificate
+#   (see ENFORCE_WHITELIST), and claiming an in-use client id forces mosquitto to disconnect
+#   whichever session already holds it, which is immediately visible. Tightening this properly
+#   needs a real auth plugin that can read the cert CN itself rather than relying on the ACL
+#   file's %u/%c macros - out of scope for this MVP fix.
 
 ## mTLS-only: usernames come from client cert CNs
 ## No password-based users required.
@@ -16,20 +31,24 @@
 #pattern read  devices/%u/#
 
 
-# Provisioning (do NOT rely on CN). Authorize by MQTT clientId instead.
-## We set clientId = UUID in the virtual device during provisioning, so we can
-## scope permissions per-UUID using %c (clientId expansion).
-pattern write $devicehub/devices/+/provision/request
-pattern read  $devicehub/devices/+/provision/accepted
-pattern read  $devicehub/devices/+/provision/rejected
+# Provisioning (do NOT rely on CN - the provisioning cert is shared fleet-wide,
+# so its CN doesn't identify a single device). Authorize by MQTT clientId
+# instead: the provisioning connection sets clientId = UUID, so %c scopes each
+# device to its own claim/cert exchange. Previously this used the + wildcard,
+# which let any holder of the (fleet-shared) provisioning cert subscribe to
+# every device's provision/accepted topic and observe - or race to spoof a
+# response to - another device's claim, including its issued certificate.
+pattern write $devicehub/devices/%c/provision/request
+pattern read  $devicehub/devices/%c/provision/accepted
+pattern read  $devicehub/devices/%c/provision/rejected
 
 # Twin flow (device twin interactions)
 # Devices write get/update; read accepted/rejected + delta
-pattern write $devicehub/devices/%u/twin/get
-pattern write $devicehub/devices/%u/twin/update
-pattern read  $devicehub/devices/%u/twin/update/accepted
-pattern read  $devicehub/devices/%u/twin/update/rejected
-pattern read  $devicehub/devices/%u/twin/delta
+pattern write $devicehub/devices/%c/twin/get
+pattern write $devicehub/devices/%c/twin/update
+pattern read  $devicehub/devices/%c/twin/update/accepted
+pattern read  $devicehub/devices/%c/twin/update/rejected
+pattern read  $devicehub/devices/%c/twin/delta
 
 # Device heartbeat (devices need to publish heartbeat messages)
 pattern write $devicehub/devices/+/heartbeat

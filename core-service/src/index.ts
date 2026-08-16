@@ -79,11 +79,12 @@ import {
   MQTT_TLS_KEY,
   MQTT_TLS_REJECT_UNAUTHORIZED,
 } from './config.js';
-import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert } from './certs.js';
+import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert, ensureCRLExists, revokeCertificatesForUuid, regenerateCRL } from './certs.js';
 import { buildJournalctlArgs } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 import { startWhitelistDbusServer } from './dbus-whitelist.js';
 import { startCertificateDbusServer } from './dbus-certs.js';
+import { validateDeviceName } from './device-names.js';
 import { startCoreTwinDbusServer, setBroadcastFunction } from './dbus-twin.js';
 import { startDevicesDbusServer } from './dbus-devices.js';
 import { twinGetTwin } from './dbus-twin-client.js';
@@ -1040,6 +1041,21 @@ function ensureDeviceHubSchema(){
       ).run();
     }
 
+    // Additive migration: a disabled entry is rejected by CheckUUID same as
+    // a used one, but reversibly - re-enabling clears it. A plain ADD COLUMN
+    // (nullable, no default) rather than the drop-and-recreate migration
+    // above, since existing rows are all "not disabled" by omission.
+    try {
+      const whitelistInfo = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
+      const hasDisabledAt = whitelistInfo.some((col: any) => col.name === 'disabled_at');
+      if (!hasDisabledAt) {
+        db.prepare('ALTER TABLE uuid_whitelist ADD COLUMN disabled_at TEXT').run();
+        console.log('[ensureDeviceHubSchema] Added disabled_at column to uuid_whitelist');
+      }
+    } catch (e) {
+      console.error('[ensureDeviceHubSchema] Failed to add disabled_at column:', e);
+    }
+
     // devices: device registry table
     // Columns: uuid, name, token, meta, created_at (consolidated schema)
     // Check if devices table exists with wrong schema and migrate if needed
@@ -1072,8 +1088,24 @@ function ensureDeviceHubSchema(){
       throw error;
     }
     
-    console.log(`[ensureDeviceHubSchema] Created devices table with schema:`, 
+    console.log(`[ensureDeviceHubSchema] Created devices table with schema:`,
       db.prepare('PRAGMA table_info(devices)').all().map((col: any) => col.name));
+
+    // device_roles: a persistent, admin-chosen label pointing at a device's
+    // uuid - kept in its own table (not a column on devices) because
+    // ClaimDeviceName (dbus-devices.ts) deletes and reinserts the devices
+    // row on every reprovision; anything that needs to survive that must
+    // live elsewhere. UNIQUE(uuid) keeps the role->device mapping 1:1 so
+    // uuid->role translation (application-service) never has to pick
+    // between candidates.
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS device_roles ('+
+      ' role TEXT PRIMARY KEY,'+
+      ' uuid TEXT NOT NULL UNIQUE,'+
+      ' created_at TEXT DEFAULT CURRENT_TIMESTAMP,'+
+      ' updated_at TEXT DEFAULT CURRENT_TIMESTAMP)'
+    ).run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_device_roles_uuid ON device_roles(uuid)').run();
 
     // device_events: telemetry and event data
     db.prepare(
@@ -1153,10 +1185,11 @@ app.get('/api/devices/:uuid', (req: Request, res: Response) => {
   try{
     const row = db.prepare('SELECT uuid, name, token, meta, created_at FROM devices WHERE uuid = ?').get(uuid);
     if(!row){ res.status(404).json({ error: 'not found' }); return; }
+    const roleRow = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
     const lastSeen = getLastSeenMap();
     const ls = lastSeen[uuid];
     const online = ls ? (Date.now() - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
-    res.json({ uuid: row.uuid, name: row.name, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at, last_seen: ls || null, online });
+    res.json({ uuid: row.uuid, name: row.name, role: roleRow?.role ?? null, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at, last_seen: ls || null, online });
   }catch(e){
     console.error(`[ensureDeviceHubSchema] Error creating schema:`, e);
     console.error(`[ensureDeviceHubSchema] Database path: ${DEVICEHUB_DB}`);
@@ -1400,82 +1433,99 @@ app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => 
   }
 });
 
-// PUT /api/devices/:uuid -> update device (e.g., name)
-app.put('/api/devices/:uuid', authRequired, (req: Request, res: Response) => {
-  const { uuid } = req.params;
-  const { name } = req.body || {};
-  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
-  if (!name || typeof name !== 'string' || !name.trim()) { 
-    res.status(400).json({ error: 'name_required' }); return; 
-  }
+// Roles: a persistent, admin-chosen label pointing at a device's uuid (see
+// device_roles in ensureDeviceHubSchema). This replaces both the old raw
+// rename endpoint (PUT /api/devices/:uuid, which mutated the live MQTT/TLS
+// identity via a bare SQL UPDATE with no cert/ACL sync) and "Replace Device"
+// (POST /api/devices/:uuid/replace, which grafted one device's uuid onto
+// another row, discarding the target's own identity, and never touched
+// twin.db or uuid_whitelist). A hardware swap is now: repoint the role's
+// uuid at the new device - neither device row is ever mutated or deleted.
+
+// GET /api/roles -> list roles with their current device's name/online status
+app.get('/api/roles', (req: Request, res: Response) => {
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try {
-    const info = db.prepare('UPDATE devices SET name = ? WHERE uuid = ?').run(name.trim(), uuid);
-    if (info.changes === 0) {
-      res.status(404).json({ error: 'device_not_found' });
-    } else {
-      res.json({ ok: true, updated: info.changes });
-    }
+    const rows = db.prepare(
+      'SELECT r.role, r.uuid, r.created_at, r.updated_at, d.name AS device_name '+
+      'FROM device_roles r LEFT JOIN devices d ON d.uuid = r.uuid '+
+      'ORDER BY r.role'
+    ).all() as any[];
+    const lastSeen = getLastSeenMap();
+    const roles = rows.map(r => {
+      const ls = lastSeen[r.uuid];
+      const online = ls ? (Date.now() - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
+      return { role: r.role, uuid: r.uuid, device_name: r.device_name ?? null, online, last_seen: ls || null, created_at: r.created_at, updated_at: r.updated_at };
+    });
+    res.json({ roles });
   } catch (e:any) {
-    res.status(500).json({ error: 'update_failed', message: e?.message || 'failed' });
+    res.status(500).json({ error: 'list_failed', message: e?.message || 'failed' });
   } finally {
     try{ db.close(); }catch{}
   }
 });
 
-// POST /api/devices/:uuid/replace -> replace device with another device
-app.post('/api/devices/:uuid/replace', authRequired, (req: Request, res: Response) => {
-  const { uuid } = req.params;
-  const { targetUuid } = req.body || {};
-  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
-  if (!targetUuid || typeof targetUuid !== 'string') { 
-    res.status(400).json({ error: 'target_uuid_required' }); return; 
-  }
-  if (uuid === targetUuid) {
-    res.status(400).json({ error: 'cannot_replace_with_self' }); return;
-  }
-  
+// POST /api/roles -> create a role bound to a uuid
+app.post('/api/roles', authRequired, (req: Request, res: Response) => {
+  const { role, uuid } = req.body || {};
+  if (!role || typeof role !== 'string' || !role.trim()) { res.status(400).json({ error: 'role_required' }); return; }
+  if (!uuid || typeof uuid !== 'string') { res.status(400).json({ error: 'uuid_required' }); return; }
+  const validation = validateDeviceName(role.trim());
+  if (!validation.valid) { res.status(400).json({ error: 'invalid_role_name', message: validation.error }); return; }
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try {
-    // Check both devices exist
-    const sourceDevice = db.prepare('SELECT uuid, name FROM devices WHERE uuid = ?').get(uuid);
-    const targetDevice = db.prepare('SELECT uuid, name FROM devices WHERE uuid = ?').get(targetUuid);
-    
-    if (!sourceDevice) {
-      res.status(404).json({ error: 'source_device_not_found' });
-      return;
-    }
-    if (!targetDevice) {
-      res.status(404).json({ error: 'target_device_not_found' });
-      return;
-    }
-    
-    // Begin transaction to swap device data
-    const transaction = db.transaction(() => {
-      // Store source device name (this stays with the record)
-      const sourceName = sourceDevice.name;
-      
-      // Delete source device record
-      db.prepare('DELETE FROM devices WHERE uuid = ?').run(uuid);
-      
-      // Update target device to use source UUID but keep target's name
-      db.prepare('UPDATE devices SET uuid = ?, name = ? WHERE uuid = ?').run(uuid, sourceName, targetUuid);
-      
-      // Update any related records (events, etc.)
-      db.prepare('UPDATE device_events SET device_id = ? WHERE device_id = ?').run(uuid, targetUuid);
-    });
-    
-    transaction();
-    res.json({ 
-      ok: true, 
-      message: `Device ${targetDevice.name} (${targetUuid}) replaced device ${sourceDevice.name} (${uuid})`,
-      replacedDevice: { uuid, name: sourceDevice.name },
-      withDevice: { uuid: targetUuid, name: targetDevice.name }
-    });
+    const device = db.prepare('SELECT uuid FROM devices WHERE uuid = ?').get(uuid);
+    if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
+    const existingRole = db.prepare('SELECT role FROM device_roles WHERE role = ?').get(role.trim());
+    if (existingRole) { res.status(409).json({ error: 'role_exists' }); return; }
+    const existingForUuid = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
+    if (existingForUuid) { res.status(409).json({ error: 'uuid_already_has_role', role: existingForUuid.role }); return; }
+    db.prepare('INSERT INTO device_roles (role, uuid) VALUES (?, ?)').run(role.trim(), uuid);
+    res.json({ ok: true, role: role.trim(), uuid });
   } catch (e:any) {
-    res.status(500).json({ error: 'replace_failed', message: e?.message || 'failed' });
+    res.status(500).json({ error: 'create_failed', message: e?.message || 'failed' });
+  } finally {
+    try{ db.close(); }catch{}
+  }
+});
+
+// PUT /api/roles/:role -> reassign the role to a different uuid (the hardware-swap operation)
+app.put('/api/roles/:role', authRequired, (req: Request, res: Response) => {
+  const { role } = req.params;
+  const { uuid } = req.body || {};
+  if (!role) { res.status(400).json({ error: 'invalid_role' }); return; }
+  if (!uuid || typeof uuid !== 'string') { res.status(400).json({ error: 'uuid_required' }); return; }
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try {
+    const existing = db.prepare('SELECT uuid FROM device_roles WHERE role = ?').get(role) as any;
+    if (!existing) { res.status(404).json({ error: 'role_not_found' }); return; }
+    const device = db.prepare('SELECT uuid FROM devices WHERE uuid = ?').get(uuid);
+    if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
+    const heldByOther = db.prepare('SELECT role FROM device_roles WHERE uuid = ? AND role != ?').get(uuid, role) as any;
+    if (heldByOther) { res.status(409).json({ error: 'uuid_already_has_role', role: heldByOther.role }); return; }
+    db.prepare('UPDATE device_roles SET uuid = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?').run(uuid, role);
+    res.json({ ok: true, role, uuid, previous_uuid: existing.uuid });
+  } catch (e:any) {
+    res.status(500).json({ error: 'reassign_failed', message: e?.message || 'failed' });
+  } finally {
+    try{ db.close(); }catch{}
+  }
+});
+
+// DELETE /api/roles/:role -> remove a role
+app.delete('/api/roles/:role', authRequired, (req: Request, res: Response) => {
+  const { role } = req.params;
+  if (!role) { res.status(400).json({ error: 'invalid_role' }); return; }
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try {
+    const info = db.prepare('DELETE FROM device_roles WHERE role = ?').run(role);
+    res.json({ ok: true, removed: info.changes > 0 });
+  } catch (e:any) {
+    res.status(500).json({ error: 'delete_failed', message: e?.message || 'failed' });
   } finally {
     try{ db.close(); }catch{}
   }
@@ -1573,7 +1623,7 @@ async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; 
   return { services: checks };
 }
 
-function getDevicesListSync(): { devices: Array<{ uuid: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }{
+function getDevicesListSync(): { devices: Array<{ uuid: string; name: string; role: string | null; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean; disabled: boolean }> }{
   console.log(`[getDevicesListSync] Opening database: ${DEVICEHUB_DB}`);
   const db = openDb(DEVICEHUB_DB);
   if(!db){ 
@@ -1596,20 +1646,46 @@ function getDevicesListSync(): { devices: Array<{ uuid: string; name: string; to
     
     // Get device statuses from twin-service database
     const deviceStatuses = getTwinServiceDeviceStatuses();
-    
+
+    // A device whose whitelist UUID was disabled is effectively blacklisted -
+    // it can no longer (re)provision - so its status should say so regardless
+    // of whatever the twin database last heard from it.
+    let disabledUuids = new Set<string>();
+    try {
+      const disabledRows = db.prepare('SELECT uuid FROM uuid_whitelist WHERE disabled_at IS NOT NULL').all() as Array<{ uuid: string }>;
+      disabledUuids = new Set(disabledRows.map(r => r.uuid));
+    } catch (e) {
+      console.error('[getDevicesListSync] Failed to load disabled whitelist UUIDs:', e);
+    }
+
+    let roleByUuid = new Map<string, string>();
+    try {
+      const roleRows = db.prepare('SELECT role, uuid FROM device_roles').all() as Array<{ role: string; uuid: string }>;
+      roleByUuid = new Map(roleRows.map(r => [r.uuid, r.role]));
+    } catch (e) {
+      console.error('[getDevicesListSync] Failed to load device roles:', e);
+    }
+
     const devices = rows.map((r: any) => {
-      const deviceStatus = deviceStatuses[r.uuid];
+      // Keyed by whatever MQTT identity twin-service actually observed in the
+      // topic/connection-log line - the device's assigned name (r.name),
+      // never its UUID, once it has completed the masked-identity
+      // provisioning handshake. Looking this up by r.uuid instead used to
+      // work only because identity == uuid before that handshake existed.
+      const deviceStatus = deviceStatuses[r.name] ?? deviceStatuses[r.uuid];
       const online = deviceStatus ? deviceStatus.online : false;
       const last_seen = deviceStatus ? deviceStatus.last_seen : null;
-      
-      return { 
-        uuid: r.uuid, 
-        name: r.name, 
-        token: r.token, 
-        meta: tryParseJson(r.meta), 
-        created_at: r.created_at, 
-        last_seen, 
-        online 
+
+      return {
+        uuid: r.uuid,
+        name: r.name,
+        role: roleByUuid.get(r.uuid) ?? null,
+        token: r.token,
+        meta: tryParseJson(r.meta),
+        created_at: r.created_at,
+        last_seen,
+        online,
+        disabled: disabledUuids.has(r.uuid)
       };
     });
     console.log(`[getDevicesListSync] Returning ${devices.length} devices:`, devices);
@@ -1683,7 +1759,7 @@ function getTwinServiceDeviceStatuses(): Record<string, { online: boolean; last_
   }
 }
 
-async function getDevicesList(): Promise<{ devices: Array<{ uuid: string; name: string; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean }> }> {
+async function getDevicesList(): Promise<{ devices: Array<{ uuid: string; name: string; role: string | null; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean; disabled: boolean }> }> {
   return getDevicesListSync();
 }
 
@@ -1805,7 +1881,7 @@ app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.json({ entries: [] }); return; }
   try{
-    const rows = db.prepare('SELECT uuid, hardware_version, manufacturer, created_at, used_at FROM uuid_whitelist ORDER BY created_at DESC').all();
+    const rows = db.prepare('SELECT uuid, hardware_version, manufacturer, created_at, used_at, disabled_at FROM uuid_whitelist ORDER BY created_at DESC').all();
     res.json({ entries: rows });
   }catch{
     res.json({ entries: [] });
@@ -1813,18 +1889,20 @@ app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
 });
 
 // POST /api/admin/uuid-whitelist -> add entry
+// UUID is the only thing Device Hub needs to authorize a device; hardware
+// version / manufacturer are manufacturing-side concerns, not tracked here.
+// Still accepted (and stored) if a caller supplies them, for anyone with an
+// existing integration, but neither is required.
 app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response) => {
   let { uuid, hardware_version, manufacturer } = req.body;
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   if(!uuid){ res.status(400).json({ error: 'uuid_required' }); return; }
-  if(!hardware_version){ res.status(400).json({ error: 'hardware_version_required' }); return; }
-  if(!manufacturer){ res.status(400).json({ error: 'manufacturer_required' }); return; }
   uuid = String(uuid).trim();
-  hardware_version = String(hardware_version).trim();
-  manufacturer = String(manufacturer).trim();
-  if(!uuid || !hardware_version || !manufacturer){ 
-    res.status(400).json({ error: 'all_fields_required' }); return; 
+  hardware_version = hardware_version != null ? String(hardware_version).trim() : '';
+  manufacturer = manufacturer != null ? String(manufacturer).trim() : '';
+  if(!uuid){
+    res.status(400).json({ error: 'uuid_required' }); return;
   }
   try{
     const now = new Date().toISOString();
@@ -1838,20 +1916,16 @@ app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response
 });
 
 // POST /api/admin/uuid-whitelist/batch -> batch add entries from file
+// Same as the single-entry route above: only a UUID list is required.
 app.post('/api/admin/uuid-whitelist/batch', authRequired, (req: Request, res: Response) => {
   let { uuids, hardware_version, manufacturer } = req.body;
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   if(!uuids || !Array.isArray(uuids)){ res.status(400).json({ error: 'uuids_array_required' }); return; }
-  if(!hardware_version){ res.status(400).json({ error: 'hardware_version_required' }); return; }
-  if(!manufacturer){ res.status(400).json({ error: 'manufacturer_required' }); return; }
-  
-  hardware_version = String(hardware_version).trim();
-  manufacturer = String(manufacturer).trim();
-  if(!hardware_version || !manufacturer){ 
-    res.status(400).json({ error: 'hardware_version_and_manufacturer_required' }); return; 
-  }
-  
+
+  hardware_version = hardware_version != null ? String(hardware_version).trim() : '';
+  manufacturer = manufacturer != null ? String(manufacturer).trim() : '';
+
   const results = { added: 0, skipped: 0, errors: [] as string[] };
   const now = new Date().toISOString();
   
@@ -1886,17 +1960,67 @@ app.post('/api/admin/uuid-whitelist/batch', authRequired, (req: Request, res: Re
   }finally{ try{ db.close(); }catch{} }
 });
 
+// Revokes every certificate ever issued for this UUID and republishes the CRL
+// - the actual kill switch: unlike disabled_at (which only blocks *future*
+// provisioning), this reaches a device that already holds a valid cert and is
+// live on the broker right now. Best-effort: a failure here is logged and
+// surfaced to the admin as a warning, but never rolls back the whitelist
+// change itself, since blocking future provisioning is still real protection
+// even if publishing the CRL update hiccups.
+async function revokeAndPublishCRL(uuid: string): Promise<string | undefined> {
+  try {
+    await revokeCertificatesForUuid(uuid);
+    await regenerateCRL();
+    return undefined;
+  } catch (e: any) {
+    const message = e?.message || 'revocation failed';
+    console.error(`[core-service] Failed to revoke certificates / republish CRL for ${uuid}:`, message);
+    return message;
+  }
+}
+
+// PATCH /api/admin/uuid-whitelist/:uuid -> enable/disable entry
+// A disabled entry is rejected by provisioning the same way a used one is
+// (see WhitelistInterface.CheckUUID), but reversibly - re-enabling clears it.
+// Disabling also revokes every certificate ever issued for this UUID (see
+// revokeAndPublishCRL) - re-enabling does NOT undo that: a revoked cert stays
+// revoked, matching "the board is the passport" - getting access back means
+// reprovisioning for a fresh identity, not un-revoking the old one.
+app.patch('/api/admin/uuid-whitelist/:uuid', authRequired, async (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  const { disabled } = req.body;
+  if(!uuid){ res.status(400).json({ error: 'invalid_uuid' }); return; }
+  if(typeof disabled !== 'boolean'){ res.status(400).json({ error: 'disabled_boolean_required' }); return; }
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  let changed = false;
+  try{
+    const now = disabled ? new Date().toISOString() : null;
+    const info = db.prepare('UPDATE uuid_whitelist SET disabled_at = ? WHERE uuid = ?').run(now, uuid);
+    changed = info.changes > 0;
+  }catch(e:any){ res.status(500).json({ error: 'update_failed', message: e?.message || 'failed' }); return; }
+  finally{ try{ db.close(); }catch{} }
+  if(!changed){ res.status(404).json({ error: 'not_found' }); return; }
+  const crlWarning = disabled ? await revokeAndPublishCRL(uuid) : undefined;
+  res.json({ ok: true, ...(crlWarning ? { warning: crlWarning } : {}) });
+});
+
 // DELETE /api/admin/uuid-whitelist/:uuid -> remove entry
-app.delete('/api/admin/uuid-whitelist/:uuid', authRequired, (req: Request, res: Response) => {
+// Removing the entry entirely is at least as strong a signal as disabling it,
+// so this revokes certificates the same way (see revokeAndPublishCRL above).
+app.delete('/api/admin/uuid-whitelist/:uuid', authRequired, async (req: Request, res: Response) => {
   const { uuid } = req.params;
   if(!uuid){ res.status(400).json({ error: 'invalid_uuid' }); return; }
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  let deleted = false;
   try{
     const info = db.prepare('DELETE FROM uuid_whitelist WHERE uuid = ?').run(uuid);
-    res.json({ deleted: info.changes > 0 });
-  }catch{ res.status(500).json({ error: 'delete_failed' }); }
+    deleted = info.changes > 0;
+  }catch{ res.status(500).json({ error: 'delete_failed' }); return; }
   finally{ try{ db.close(); }catch{} }
+  const crlWarning = deleted ? await revokeAndPublishCRL(uuid) : undefined;
+  res.json({ deleted, ...(crlWarning ? { warning: crlWarning } : {}) });
 });
 
 // DELETE /api/admin/uuid-whitelist/by-device/:deviceId -> remove all whitelist entries for a device
@@ -2940,6 +3064,15 @@ async function startDbusServices() {
       console.log(`[core-service] Provisioning certificates ensured`);
     } catch (error) {
       console.warn(`[core-service] Failed to generate provisioning certificates:`, error);
+    }
+
+    // Mosquitto's crlfile must point at something loadable from the moment it
+    // starts - an empty CRL (nothing revoked yet) satisfies that on first boot.
+    try {
+      await ensureCRLExists();
+      console.log(`[core-service] Certificate revocation list ensured`);
+    } catch (error) {
+      console.warn(`[core-service] Failed to ensure CRL exists:`, error);
     }
   } catch (error) {
     console.error(`[core-service] Failed to start D-Bus services:`, error);

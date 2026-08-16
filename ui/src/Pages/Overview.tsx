@@ -17,15 +17,17 @@ import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
 import SystemWidget from '../components/SystemWidget';
 import ApplicationsWidget from '../components/ApplicationsWidget';
-import { getDevices, decommissionDevice, deleteWhitelistByDevice, updateDevice, replaceDevice } from '../api/devicehub';
+import { getDevices, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
+import { displayNameFor } from '../deviceDisplay';
 import { direct_identifySystem } from '../api/directMethods';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
 import DeviceDetailModal from '../components/DeviceDetailModal';
 import CertificateSettingsModal from '../components/CertificateSettingsModal';
 import WhitelistModal from '../components/WhitelistModal';
+import RolesModal from '../components/RolesModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTrash, faRightLeft, faLocationDot, faEye, faExchange, faEdit, faList, faTh, faSearch } from '@fortawesome/free-solid-svg-icons';
+import { faTrash, faLocationDot, faEye, faSearch, faUserTag } from '@fortawesome/free-solid-svg-icons';
 
 export default function Overview(props:{user:any}){
   const [devices, setDevices] = useState<any[]>([]);
@@ -34,13 +36,8 @@ export default function Overview(props:{user:any}){
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [showCerts, setShowCerts] = useState(false);
   const [showWhitelist, setShowWhitelist] = useState(false);
-  const [viewMode, setViewMode] = useState<'list' | 'tile'>('list');
+  const [showRoles, setShowRoles] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [editingDevice, setEditingDevice] = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
-  const [showReplaceModal, setShowReplaceModal] = useState(false);
-  const [replaceSourceUuid, setReplaceSourceUuid] = useState<string | null>(null);
-  const [replaceTargetUuid, setReplaceTargetUuid] = useState<string | null>(null);
   // Re-render every second to update relative offline timers
   const [now, setNow] = useState<number>(()=> Date.now());
   useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
@@ -146,54 +143,6 @@ export default function Overview(props:{user:any}){
     } catch {}
   };
 
-  const handleEditDevice = (uuid: string, currentName: string) => {
-    setEditingDevice(uuid);
-    setEditName(currentName);
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editingDevice || !editName.trim()) return;
-    try {
-      setActionBusy(editingDevice);
-      await updateDevice(editingDevice, editName.trim());
-      await refreshDevices();
-      setEditingDevice(null);
-      setEditName('');
-    } catch (error) {
-      // Failed to update device - error handled by UI state
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditingDevice(null);
-    setEditName('');
-  };
-
-  const handleReplaceDevice = (uuid: string) => {
-    setReplaceSourceUuid(uuid);
-    setShowReplaceModal(true);
-  };
-
-  const handleConfirmReplace = async () => {
-    if (!replaceSourceUuid || !replaceTargetUuid) return;
-    try {
-      setActionBusy(replaceSourceUuid);
-      const result = await replaceDevice(replaceSourceUuid, replaceTargetUuid);
-      if (result.ok) {
-        await refreshDevices();
-        setShowReplaceModal(false);
-        setReplaceSourceUuid(null);
-        setReplaceTargetUuid(null);
-      }
-    } catch (error) {
-      // Failed to replace device - error handled by UI state
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
   const handleDeleteDevice = async (uuid: string, name: string) => {
     if (!confirm(`Delete device "${name || uuid}"? This removes it from the registry only.`)) return;
     try {
@@ -244,6 +193,9 @@ export default function Overview(props:{user:any}){
             Devices
           </div>
           <div className="d-flex gap-2">
+            <Button size="sm" variant="outline-secondary" onClick={()=> setShowRoles(true)} disabled={!props.user}>
+              Roles
+            </Button>
             <Button size="sm" variant="outline-secondary" onClick={()=> setShowWhitelist(true)} disabled={!props.user}>
               Whitelist
             </Button>
@@ -253,130 +205,88 @@ export default function Overview(props:{user:any}){
           </div>
         </Card.Header>
         <Card.Body>
-          {/* Search and View Controls */}
-          <div className="d-flex justify-content-between align-items-center mb-3">
-            <div className="d-flex align-items-center gap-2">
-              <FontAwesomeIcon icon={faSearch} className="text-muted" />
-              <input
-                type="text"
-                className="form-control form-control-sm"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ width: '300px' }}
-              />
-            </div>
-            <div className="btn-group" role="group">
-              <button
-                type="button"
-                className={`btn btn-sm ${viewMode === 'list' ? 'btn-primary' : 'btn-outline-primary'}`}
-                onClick={() => setViewMode('list')}
-              >
-                <FontAwesomeIcon icon={faList} /> List
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${viewMode === 'tile' ? 'btn-primary' : 'btn-outline-primary'}`}
-                onClick={() => setViewMode('tile')}
-              >
-                <FontAwesomeIcon icon={faTh} /> Tiles
-              </button>
-            </div>
+          {/* Search */}
+          <div className="d-flex align-items-center gap-2 mb-3">
+            <FontAwesomeIcon icon={faSearch} className="text-muted" />
+            <input
+              type="text"
+              className="form-control form-control-sm"
+              placeholder="Search..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ width: '300px' }}
+            />
           </div>
 
-          {/* Device Display */}
-          {viewMode === 'list' ? (
-            <Table size="sm" responsive className="device-list-table">
+          <Table size="sm" responsive className="device-list-table">
               <thead>
                 <tr>
                   <th>Name</th>
                   {props.user ? (<th>UUID</th>) : null}
                   <th>Status</th>
-                  <th>Actions</th>
+                  <th className="text-end">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {(filteredDevices||[]).map((d:any)=> {
                   const uuid = d.uuid;
-                  const name = d.name;
-                  const status = d.online ? 'online' : 'offline';
+                  // Whitelist-disabled overrides connectivity: an admin blacklisted
+                  // this device, so that takes precedence over whatever it last
+                  // reported, same as the Disabled badge on the whitelist entry itself.
+                  const status = d.disabled ? 'disabled' : (d.online ? 'online' : 'offline');
                   const open = () => setSelected(String(uuid));
-                  const displayName = name || `EDGB-${uuid.substring(0, 4).toUpperCase()}`;
-                  const isEditing = editingDevice === uuid;
+                  const displayName = displayNameFor(d);
                   const isBusy = actionBusy === uuid;
 
                   return (
                     <tr key={uuid} className="device-row" onClick={open} style={{cursor: 'pointer'}}>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        {isEditing ? (
-                          <div className="d-flex gap-1">
-                            <input
-                              type="text"
-                              className="form-control form-control-sm"
-                              value={editName}
-                              onChange={(e) => setEditName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveEdit();
-                                if (e.key === 'Escape') handleCancelEdit();
-                              }}
-                              autoFocus
-                            />
-                            <button className="btn btn-sm btn-success" onClick={handleSaveEdit} disabled={isBusy}>
-                              ✓
-                            </button>
-                            <button className="btn btn-sm btn-secondary" onClick={handleCancelEdit} disabled={isBusy}>
-                              ✗
-                            </button>
-                          </div>
-                        ) : (
-                          <span>{displayName}</span>
+                      <td>
+                        <span>{displayName}</span>
+                        {/* A role-labeled device's raw MQTT name is still worth
+                            showing, in small print - it's the actual wire
+                            identity, and rotates independently of the role. */}
+                        {d.role && d.name && (
+                          <div className="text-muted small">{d.name}</div>
                         )}
                       </td>
                       {props.user ? (<td>{uuid || '-'}</td>) : null}
                       <td>
-                        <Badge bg={status === 'online' ? 'success' : 'secondary'}>
+                        <Badge bg={status === 'online' ? 'success' : status === 'disabled' ? 'danger' : 'secondary'}>
                           {status || 'unknown'}
                         </Badge>
                       </td>
-                      <td onClick={(e) => e.stopPropagation()}>
+                      <td onClick={(e) => e.stopPropagation()} className="text-end">
                         <div className="btn-group device-actions" role="group">
                           <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
                             <FontAwesomeIcon icon={faEye} />
                           </button>
                           {props.user ? (
                             <>
-                              <button 
-                                type="button" 
-                                className="btn btn-sm btn-edgeberry" 
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-edgeberry"
                                 onClick={() => handleIdentifyDevice(uuid, displayName)}
                                 disabled={isBusy}
                                 title="Identify Device"
                               >
                                 <FontAwesomeIcon icon={faLocationDot} />
                               </button>
-                              <button 
-                                type="button" 
-                                className="btn btn-sm btn-edgeberry" 
-                                onClick={() => handleEditDevice(uuid, displayName)}
-                                disabled={isBusy || isEditing}
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-edgeberry"
+                                onClick={() => setShowRoles(true)}
+                                disabled={isBusy}
+                                title="Manage Role"
                               >
-                                <FontAwesomeIcon icon={faEdit} />
+                                <FontAwesomeIcon icon={faUserTag} />
                               </button>
-                              <button 
-                                type="button" 
-                                className="btn btn-sm btn-edgeberry" 
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-edgeberry"
                                 onClick={() => handleDeleteDevice(uuid, displayName)}
                                 disabled={isBusy}
                               >
                                 {isBusy ? <Spinner animation="border" size="sm" /> : <FontAwesomeIcon icon={faTrash} />}
-                              </button>
-                              <button 
-                                type="button" 
-                                className="btn btn-sm btn-edgeberry" 
-                                onClick={() => handleReplaceDevice(uuid)}
-                                disabled={isBusy}
-                              >
-                                <FontAwesomeIcon icon={faExchange} />
                               </button>
                             </>
                           ) : null}
@@ -387,106 +297,6 @@ export default function Overview(props:{user:any}){
                 })}
               </tbody>
             </Table>
-          ) : (
-            /* Tile View */
-            <div className="row">
-              {(filteredDevices||[]).map((d:any)=> {
-                const uuid = d.uuid;
-                const name = d.name;
-                const status = d.online ? 'online' : 'offline';
-                const open = () => setSelected(String(uuid));
-                const displayName = name || `EDGB-${uuid.substring(0, 4).toUpperCase()}`;
-                const isEditing = editingDevice === uuid;
-                const isBusy = actionBusy === uuid;
-
-                return (
-                  <div key={uuid} className="col-md-6 col-lg-4 mb-3">
-                    <Card className={`h-100 device-tile ${status === 'online' ? 'border-success' : 'border-secondary'}`}>
-                      <Card.Body>
-                        <div className="d-flex justify-content-between align-items-start mb-2">
-                          <Badge bg={status === 'online' ? 'success' : 'secondary'}>
-                            {status || 'unknown'}
-                          </Badge>
-                          <div className="btn-group device-actions" role="group">
-                            <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
-                              <FontAwesomeIcon icon={faEye} />
-                            </button>
-                            {props.user ? (
-                              <>
-                                <button 
-                                  type="button" 
-                                  className="btn btn-sm btn-edgeberry" 
-                                  onClick={() => handleIdentifyDevice(uuid, displayName)}
-                                  disabled={isBusy}
-                                  title="Identify Device"
-                                >
-                                  <FontAwesomeIcon icon={faLocationDot} />
-                                </button>
-                                <button 
-                                  type="button" 
-                                  className="btn btn-sm btn-edgeberry" 
-                                  onClick={() => handleEditDevice(uuid, displayName)}
-                                  disabled={isBusy || isEditing}
-                                >
-                                  <FontAwesomeIcon icon={faEdit} />
-                                </button>
-                                <button 
-                                  type="button" 
-                                  className="btn btn-sm btn-edgeberry" 
-                                  onClick={() => handleDeleteDevice(uuid, displayName)}
-                                  disabled={isBusy}
-                                >
-                                  {isBusy ? <Spinner animation="border" size="sm" /> : <FontAwesomeIcon icon={faTrash} />}
-                                </button>
-                                <button 
-                                  type="button" 
-                                  className="btn btn-sm btn-edgeberry" 
-                                  onClick={() => handleReplaceDevice(uuid)}
-                                  disabled={isBusy}
-                                >
-                                  <FontAwesomeIcon icon={faExchange} />
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
-                        </div>
-                        <Card.Title className="h6">
-                          {isEditing ? (
-                            <div className="d-flex gap-1">
-                              <input
-                                type="text"
-                                className="form-control form-control-sm"
-                                value={editName}
-                                onChange={(e) => setEditName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleSaveEdit();
-                                  if (e.key === 'Escape') handleCancelEdit();
-                                }}
-                                autoFocus
-                              />
-                              <button className="btn btn-sm btn-success" onClick={handleSaveEdit} disabled={isBusy}>
-                                ✓
-                              </button>
-                              <button className="btn btn-sm btn-secondary" onClick={handleCancelEdit} disabled={isBusy}>
-                                ✗
-                              </button>
-                            </div>
-                          ) : (
-                            <span>{displayName}</span>
-                          )}
-                        </Card.Title>
-                        {props.user && (
-                          <Card.Text className="small text-muted">
-                            {uuid}
-                          </Card.Text>
-                        )}
-                      </Card.Body>
-                    </Card>
-                  </div>
-                );
-              })}
-            </div>
-          )}
 
           {filteredDevices.length === 0 && (
             <div className="text-center text-muted py-4">
@@ -503,69 +313,7 @@ export default function Overview(props:{user:any}){
       <DeviceDetailModal deviceId={selected||''} show={!!selected} onClose={()=> setSelected(null)} />
       <CertificateSettingsModal show={showCerts} onClose={()=> setShowCerts(false)} user={props.user} />
       <WhitelistModal show={showWhitelist} onClose={()=> setShowWhitelist(false)} user={props.user} />
-      
-      {/* Replace Device Modal */}
-      {showReplaceModal && (
-        <div className="modal show d-block" tabIndex={-1} style={{backgroundColor: 'rgba(0,0,0,0.5)'}}>
-          <div className="modal-dialog">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Replace Device</h5>
-                <button type="button" className="btn-close" onClick={() => setShowReplaceModal(false)}></button>
-              </div>
-              <div className="modal-body">
-                <p>Select a device to replace <strong>{devices.find(d => d.uuid === replaceSourceUuid)?.name || 'the selected device'}</strong> with:</p>
-                <div className="list-group">
-                  {devices.filter(d => d.uuid !== replaceSourceUuid).map(device => (
-                    <button
-                      key={device.uuid}
-                      type="button"
-                      className={`list-group-item list-group-item-action ${replaceTargetUuid === device.uuid ? 'active' : ''}`}
-                      onClick={() => setReplaceTargetUuid(device.uuid)}
-                    >
-                      <div className="d-flex justify-content-between align-items-center">
-                        <div>
-                          <strong>{device.name || `EDGB-${device.uuid.substring(0, 4).toUpperCase()}`}</strong>
-                          <br />
-                          <small className="text-muted" style={{fontFamily:'monospace'}}>{device.uuid}</small>
-                        </div>
-                        <Badge bg={device.online ? 'success' : 'secondary'}>
-                          {device.online ? 'online' : 'offline'}
-                        </Badge>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-                {devices.filter(d => d.uuid !== replaceSourceUuid).length === 0 && (
-                  <div className="text-center text-muted py-3">
-                    No other devices available for replacement.
-                  </div>
-                )}
-              </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowReplaceModal(false)}>
-                  Cancel
-                </button>
-                <button 
-                  type="button" 
-                  className="btn btn-primary" 
-                  onClick={handleConfirmReplace}
-                  disabled={!replaceTargetUuid || actionBusy === replaceSourceUuid}
-                >
-                  {actionBusy === replaceSourceUuid ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="me-2" />
-                      Replacing...
-                    </>
-                  ) : (
-                    'Replace Device'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <RolesModal show={showRoles} onClose={()=> setShowRoles(false)} user={props.user} />
     </div>
   );
 }

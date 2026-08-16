@@ -385,7 +385,7 @@ export default function Settings(_props:{user:any}){
                       <th>Note</th>
                       <th>Created</th>
                       <th>Used</th>
-                      <th style={{width:220}}>Actions</th>
+                      <th style={{width:220}} className='text-end'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -400,7 +400,7 @@ export default function Settings(_props:{user:any}){
                           {w.used_at ? <Badge bg='secondary'>Used</Badge> : <Badge bg='success'>Unused</Badge>}
                           <div style={{fontSize:12, opacity:.8}}>{w.used_at ? fmtDate(w.used_at) : ''}</div>
                         </td>
-                        <td>
+                        <td className='text-end'>
                           <Button size='sm' variant='outline-primary' style={{marginRight:8}}
                             onClick={()=>{ navigator.clipboard?.writeText(w.uuid).catch(()=>{}); }}>
                             Copy UUID
@@ -495,7 +495,7 @@ export default function Settings(_props:{user:any}){
                       <th>Name</th>
                       <th>Created</th>
                       <th>Expires</th>
-                      <th style={{width:260}}>Actions</th>
+                      <th style={{width:260}} className='text-end'>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -506,7 +506,7 @@ export default function Settings(_props:{user:any}){
                         <td>{c.name}</td>
                         <td>{c.createdAt || '-'}</td>
                         <td>{c.expiresAt || '-'}</td>
-                        <td>
+                        <td className='text-end'>
                           <Button size='sm' variant='secondary' onClick={()=>openInspect(c.name)} style={{marginRight:8}}>Inspect</Button>
                           <a className='btn btn-sm btn-outline-primary' style={{marginRight:8}} href={`/api/settings/certs/provisioning/${encodeURIComponent(c.name)}/download`}>
                             Download
@@ -559,7 +559,7 @@ export default function Settings(_props:{user:any}){
                     <th>Created</th>
                     <th>Expires</th>
                     <th>Last Used</th>
-                    <th>Actions</th>
+                    <th className="text-end">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -584,7 +584,7 @@ export default function Settings(_props:{user:any}){
                         )}
                       </td>
                       <td>{token.last_used ? new Date(token.last_used).toLocaleDateString() : 'Never'}</td>
-                      <td>
+                      <td className="text-end">
                         <Button
                           size="sm"
                           variant={token.active ? 'warning' : 'success'}

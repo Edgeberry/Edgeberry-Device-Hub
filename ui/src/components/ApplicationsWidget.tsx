@@ -254,7 +254,7 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                     <th>Connection</th>
                     <th>Created</th>
                     <th>Last Used</th>
-                    {isAdmin && <th>Actions</th>}
+                    {isAdmin && <th className="text-end">Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -301,7 +301,7 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                           <small>{token.last_used ? new Date(token.last_used).toLocaleDateString() : 'Never'}</small>
                         </td>
                         {isAdmin && (
-                          <td className="align-middle">
+                          <td className="align-middle text-end">
                             <div className="btn-group" role="group">
                               <button 
                                 type="button" 

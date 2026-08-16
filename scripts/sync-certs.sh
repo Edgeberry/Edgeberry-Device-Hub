@@ -24,9 +24,15 @@ if [[ -f "$PERSISTENT_DIR/server.key" ]]; then
   echo "Synced server key"
 fi
 
+if [[ -f "$PERSISTENT_DIR/crl.pem" ]]; then
+  cp "$PERSISTENT_DIR/crl.pem" "$MQTT_CERTS_DIR/crl.pem"
+  echo "Synced certificate revocation list"
+fi
+
 # Set proper ownership
 if id -u mosquitto >/dev/null 2>&1; then
   chown root:mosquitto "$MQTT_CERTS_DIR"/*.{crt,key} 2>/dev/null || true
+  chown root:mosquitto "$MQTT_CERTS_DIR/crl.pem" 2>/dev/null || true
 fi
 
 # Rehash CA directory

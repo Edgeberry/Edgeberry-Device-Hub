@@ -80,33 +80,26 @@ function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean): void
   }
 }
 
+// Filters $SYS connect/disconnect log clientIds down to "this is plausibly a
+// device's assigned identity". Two things are deliberately excluded, not
+// just unmatched by accident: a device's *provisioning* connection uses the
+// bare UUID as its clientId (a one-time claim token, not its ongoing
+// identity - see core-service/src/dbus-devices.ts), so recording "online"
+// under it would misattribute status to an identity nothing else uses; and
+// backend services connect on the anonymous loopback listener with
+// mqtt.js's auto-generated `mqttjs_*` clientIds, which are not devices at
+// all. This used to just be a UUID-shape check, back when a device's clientId
+// *was* its UUID - now that provisioning masks the UUID behind an assigned
+// name (see ClaimDeviceName), every real device's clientId fails a UUID
+// check, so this must instead recognize the assigned-name shape.
 function isValidDeviceId(clientId: string): boolean {
-  // Check if clientId looks like a UUID (device ID)
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(clientId);
-}
-
-function recordDeviceHeartbeat(deviceId: string): void {
-  try {
-    const db = new Database(DB_PATH);
-    
-    // Ensure device_events table exists
-    db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      topic TEXT NOT NULL,
-      payload BLOB,
-      ts TEXT NOT NULL DEFAULT (datetime('now'))
-    )`).run();
-    
-    // Record heartbeat as device event for online status tracking
-    db.prepare(`INSERT INTO device_events (device_id, topic, payload, ts) VALUES (?, ?, ?, datetime('now'))`)
-      .run(deviceId, `$devicehub/devices/${deviceId}/heartbeat`, 'heartbeat');
-    
-    db.close();
-  } catch (error) {
-    console.error(`[${SERVICE}] Failed to record heartbeat for device ${deviceId}:`, error);
-  }
+  if (uuidRegex.test(clientId)) return false;
+  if (/^mqttjs_/i.test(clientId)) return false;
+  // Matches core-service's device-name validation rule (device-names.ts):
+  // alphanumeric/hyphen/underscore, 4-32 chars, starting alphanumeric. Covers
+  // both the random 8-char hex default and any admin-assigned custom name.
+  return /^[a-zA-Z0-9][a-zA-Z0-9\-_]{3,31}$/.test(clientId);
 }
 
 function shallowDelta(desired: Json, reported: Json): Json {
@@ -151,6 +144,14 @@ export function startMqtt(db: any): MqttClient {
     });
     client.subscribe(TOPICS.update, { qos: 1 }, (err: Error | null) => {
       if (err) console.error(`[${SERVICE}] subscribe update error`, err);
+    });
+    // Devices publish a heartbeat every 30s specifically so online status
+    // stays fresh between connect/disconnect events - the $SYS/broker/log/N
+    // connect line only fires once, so without this a device shows whatever
+    // it showed at that one moment forever, regardless of how long it then
+    // stays connected.
+    client.subscribe(TOPICS.heartbeat, { qos: 0 }, (err: Error | null) => {
+      if (err) console.error(`[${SERVICE}] subscribe heartbeat error`, err);
     });
     // Subscribe to Mosquitto client connection events for device tracking
     client.subscribe('$SYS/broker/log/N', { qos: 1 }, (err) => {
@@ -212,6 +213,11 @@ export function startMqtt(db: any): MqttClient {
             console.log(`[${SERVICE}] Invalid device ID format: ${clientId}`);
           }
         }
+        return;
+      }
+      const heartbeatDeviceId = parseHeartbeatDeviceId(topic);
+      if (heartbeatDeviceId) {
+        recordDeviceConnectionStatus(heartbeatDeviceId, true);
         return;
       }
       if (topic.startsWith('$devicehub/devices/') && topic.endsWith('/twin/get')) {
