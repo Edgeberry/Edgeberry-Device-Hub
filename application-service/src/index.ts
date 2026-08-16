@@ -261,62 +261,75 @@ function handleMqttMessage(topic: string, payload: string) {
 
 // Broadcast to WebSocket subscribers
 function broadcastToSubscribers(topic: string, data: any) {
-  const deviceId = data.deviceId || data.device_id;
+  // As parsed from the MQTT topic segment - for a claimed device this is
+  // always its raw MQTT name (topic segment %c), never its uuid, since
+  // devices publish under their own assigned name (see the masked-identity
+  // provisioning design in core-service/src/dbus-devices.ts). Resolving it
+  // to a uuid once here, up front, means every subscription comparison below
+  // compares uuid-to-uuid instead of accidentally comparing a uuid against a
+  // raw name - the two used to be compared directly and could never match.
+  const rawDeviceId = data.deviceId || data.device_id;
   const db = openDb(DEVICEHUB_DB);
-  
-  console.log(`[${SERVICE}] Broadcasting ${topic} for device ${deviceId} to ${clients.size} clients`);
-  
-  clients.forEach(client => {
-    console.log(`[${SERVICE}] Checking client ${client.appName}: topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}`);
-    
-    // Check if client is subscribed to this topic
-    if (!client.subscriptions.topics.has(topic) && !client.subscriptions.topics.has('*')) {
-      console.log(`[${SERVICE}] Client ${client.appName} not subscribed to topic ${topic}`);
-      return;
-    }
-    
-    // Check if client is subscribed to this device
-    if (deviceId && !client.subscriptions.devices.has('*')) {
-      // Check if client subscribed with UUID
-      let isSubscribed = client.subscriptions.devices.has(deviceId);
-      
-      // If not, check if any of the subscribed device names resolve to this UUID
-      if (!isSubscribed && db) {
-        for (const subscribedDevice of client.subscriptions.devices) {
-          const resolvedUuid = resolveDeviceIdentifier(subscribedDevice, db);
-          if (resolvedUuid === deviceId) {
-            isSubscribed = true;
-            break;
-          }
-        }
-      }
-      
-      if (!isSubscribed) {
-        console.log(`[${SERVICE}] Client ${client.appName} not subscribed to device ${deviceId}`);
+  try {
+    const deviceUuid = rawDeviceId && db ? resolveDeviceIdentifier(rawDeviceId, db) : null;
+
+    console.log(`[${SERVICE}] Broadcasting ${topic} for device ${rawDeviceId} (uuid=${deviceUuid}) to ${clients.size} clients`);
+
+    clients.forEach(client => {
+      console.log(`[${SERVICE}] Checking client ${client.appName}: topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}`);
+
+      // Check if client is subscribed to this topic
+      if (!client.subscriptions.topics.has(topic) && !client.subscriptions.topics.has('*')) {
+        console.log(`[${SERVICE}] Client ${client.appName} not subscribed to topic ${topic}`);
         return;
       }
-    }
-    
-    console.log(`[${SERVICE}] Sending ${topic} message to client ${client.appName}`);
-    
-    try {
-      // Role, if assigned, else raw MQTT name, else the uuid - never the raw
-      // uuid alone when something more stable/readable is available (see
-      // resolvePublicDeviceId). Role takes precedence so a hardware swap
-      // behind a role is invisible to subscribers: they keep seeing the same
-      // deviceId across the swap.
-      const publicDeviceId = resolvePublicDeviceId(deviceId, db);
 
-      client.ws.send(JSON.stringify({
-        type: 'message',
-        topic,
-        deviceId: publicDeviceId,
-        data
-      }));
-    } catch (e) {
-      console.error(`[${SERVICE}] Failed to send to WebSocket client:`, e);
-    }
-  });
+      // Check if client is subscribed to this device
+      if (rawDeviceId && !client.subscriptions.devices.has('*')) {
+        // Cheap fast-path: client subscribed with the exact raw identifier.
+        let isSubscribed = client.subscriptions.devices.has(rawDeviceId);
+
+        // Otherwise, resolve each subscribed identifier (uuid, role, or raw
+        // name) to a uuid and compare against this message's device uuid.
+        if (!isSubscribed && db && deviceUuid) {
+          for (const subscribedDevice of client.subscriptions.devices) {
+            const resolvedUuid = resolveDeviceIdentifier(subscribedDevice, db);
+            if (resolvedUuid === deviceUuid) {
+              isSubscribed = true;
+              break;
+            }
+          }
+        }
+
+        if (!isSubscribed) {
+          console.log(`[${SERVICE}] Client ${client.appName} not subscribed to device ${rawDeviceId}`);
+          return;
+        }
+      }
+
+      console.log(`[${SERVICE}] Sending ${topic} message to client ${client.appName}`);
+
+      try {
+        // Role, if assigned, else raw MQTT name, else the uuid - never the raw
+        // uuid alone when something more stable/readable is available (see
+        // resolvePublicDeviceId). Role takes precedence so a hardware swap
+        // behind a role is invisible to subscribers: they keep seeing the same
+        // deviceId across the swap.
+        const publicDeviceId = deviceUuid ? resolvePublicDeviceId(deviceUuid, db) : rawDeviceId;
+
+        client.ws.send(JSON.stringify({
+          type: 'message',
+          topic,
+          deviceId: publicDeviceId,
+          data
+        }));
+      } catch (e) {
+        console.error(`[${SERVICE}] Failed to send to WebSocket client:`, e);
+      }
+    });
+  } finally {
+    try{ db?.close(); }catch{}
+  }
 }
 
 // WebSocket connection handler

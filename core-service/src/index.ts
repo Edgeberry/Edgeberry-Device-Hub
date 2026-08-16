@@ -1769,15 +1769,28 @@ async function getDevicesList(): Promise<{ devices: Array<{ uuid: string; name: 
 app.post('/api/devices/:uuid/actions/identify', authRequired, async (req: Request, res: Response) => {
   const { uuid } = req.params;
   console.log(`[${SERVICE}] Identify button pressed for device: ${uuid}`);
-  
-  if (!uuid) { 
-    res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); 
-    return; 
+
+  if (!uuid) {
+    res.status(400).json({ ok: false, message: 'invalid_device_uuid' });
+    return;
   }
-  
+
   try {
-    console.log(`[${SERVICE}] Sending identify direct method to device ${uuid}`);
-    const result = await sendDirectMethod(uuid, 'identify');
+    // sendDirectMethod builds the MQTT topic directly from whatever identifier
+    // it's given, but a device subscribes to its methods/+/request topic
+    // under its own assigned name (masked identity - see ClaimDeviceName in
+    // dbus-devices.ts), never its uuid. Publishing straight to the uuid here
+    // would build a topic nothing is subscribed to.
+    const db = openDb(DEVICEHUB_DB);
+    let deviceId = uuid;
+    if (db) {
+      try {
+        const row = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(uuid) as any;
+        if (row?.name) deviceId = row.name;
+      } finally { try{ db.close(); }catch{} }
+    }
+    console.log(`[${SERVICE}] Sending identify direct method to device ${deviceId} (uuid=${uuid})`);
+    const result = await sendDirectMethod(deviceId, 'identify');
     console.log(`[${SERVICE}] Direct method result:`, result);
     
     if (result.success) {
