@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { ADMIN_PASSWORD, ADMIN_USER, JWT_SECRET, JWT_TTL_SECONDS, SESSION_COOKIE } from './config.js';
+import { isAuthDisabled } from './app-settings.js';
 
 export function parseCookies(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -47,15 +48,23 @@ export function clearSessionCookie(res: Response) {
 }
 
 export function authRequired(req: Request, res: Response, next: NextFunction) {
-  // Public endpoints (non-sensitive): health, metrics, service status, auth
-  if (
-    req.path === '/healthz' ||
-    req.path === '/api/health' ||
-    req.path === '/api/status' ||
-    req.path === '/api/metrics' ||
-    req.path === '/api/metrics/history' ||
-    req.path === '/api/services'
-  ) {
+  // Escape hatch for deployments where a reverse proxy in front of the Hub
+  // already handles authentication (nginx auth_basic, an oauth2-proxy, mTLS
+  // at the edge, ...) - see `devicehub --disable-login` in cli.ts. Checked
+  // first and unconditionally, since when this is set every other rule in
+  // this function becomes moot: the operator has explicitly told us access
+  // control is someone else's job now.
+  if (isAuthDisabled()) {
+    return next();
+  }
+  // Login is required for everything Device Hub data/control-related - no
+  // anonymous "peek" view. What's left public here is deliberately narrow:
+  // trivial liveness (health), the device-facing provisioning bootstrap
+  // endpoints (devices don't have a login), the auth flow itself (can't
+  // require a session to *get* a session), and the WS upgrade handshake
+  // (the connection handler itself now requires auth before accepting any
+  // subscription - see index.ts's wss.on('connection', ...)).
+  if (req.path === '/healthz' || req.path === '/api/health') {
     return next();
   }
   // Explicitly allow provisioning bootstrap endpoints to be public (device bootstrap)
@@ -66,10 +75,6 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
     req.path === '/api/provisioning/certs/provisioning.crt' ||
     req.path === '/api/provisioning/certs/provisioning.key'
   ) {
-    return next();
-  }
-  // Allow anonymous read-only access to the devices list. The handler will strip UUIDs when unauthenticated.
-  if (req.method === 'GET' && req.path === '/api/devices') {
     return next();
   }
   // Allow WebSocket upgrades to /api/ws - authentication is handled in the WebSocket connection handler

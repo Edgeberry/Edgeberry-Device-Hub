@@ -33,6 +33,17 @@ export const DEVICEHUB_DB: string = process.env.DEVICEHUB_DB || (
     : path.resolve(process.cwd(), 'data', 'devicehub.db')
 );
 
+// Device twin database (desired/reported state + connection status events).
+// core-service is the sole owner - twin-service talks to it exclusively via
+// the TwinService D-Bus interface (see dbus-twin.ts/twin-store.ts). Same
+// default twin-service's own config.ts used before it stopped opening this
+// file directly, so an operator's existing TWIN_DB override keeps working.
+export const TWIN_DB: string = process.env.TWIN_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/twin.db'
+    : path.resolve(process.cwd(), 'data', 'twin.db')
+);
+
 // Where the live Certificate Revocation List is published. Distinct from
 // CERTS_DIR (the CA's own key/cert - read-only inputs for signing): this is an
 // *output* the broker needs to pick up, so in production it points at the
@@ -66,13 +77,6 @@ export const DEFAULT_LOG_UNITS: string[] = [
   'dbus.service',
   'mosquitto.service',
 ];
-
-// Provisioning HTTP cert API (migrated to core-service)
-// Allow overriding provisioning cert/key paths via env for compatibility
-export const PROVISIONING_CERT_PATH: string = process.env.PROVISIONING_CERT_PATH || path.join(CERTS_DIR, 'provisioning.crt');
-export const PROVISIONING_KEY_PATH: string = process.env.PROVISIONING_KEY_PATH || path.join(CERTS_DIR, 'provisioning.key');
-// MVP: Always enable serving provisioning cert/key over HTTP
-export const PROVISIONING_HTTP_ENABLE_CERT_API: boolean = true;
 
 // MQTT configuration for telemetry capture
 export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';

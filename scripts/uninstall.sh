@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/services.sh
+source "$SCRIPT_DIR/lib/services.sh"
+
 echo "=== Edgeberry Device Hub Uninstaller ==="
 
 # Check root
@@ -23,31 +27,17 @@ fi
 
 echo "Stopping and disabling services..."
 # Stop and disable all Device Hub services
-systemctl stop devicehub-core.service 2>/dev/null || true
-systemctl stop devicehub-provisioning.service 2>/dev/null || true
-systemctl stop devicehub-twin.service 2>/dev/null || true
-systemctl stop edgeberry-ca-rehash.path 2>/dev/null || true
-systemctl stop edgeberry-ca-rehash.service 2>/dev/null || true
-systemctl stop edgeberry-cert-sync.path 2>/dev/null || true
-systemctl stop edgeberry-cert-sync.service 2>/dev/null || true
-
-systemctl disable devicehub-core.service 2>/dev/null || true
-systemctl disable devicehub-provisioning.service 2>/dev/null || true
-systemctl disable devicehub-twin.service 2>/dev/null || true
-systemctl disable edgeberry-ca-rehash.path 2>/dev/null || true
-systemctl disable edgeberry-ca-rehash.service 2>/dev/null || true
-systemctl disable edgeberry-cert-sync.path 2>/dev/null || true
-systemctl disable edgeberry-cert-sync.service 2>/dev/null || true
+for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+    systemctl stop "$unit" 2>/dev/null || true
+done
+for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+    systemctl disable "$unit" 2>/dev/null || true
+done
 
 echo "Removing systemd unit files..."
-# Remove systemd unit files
-rm -f /etc/systemd/system/devicehub-core.service
-rm -f /etc/systemd/system/devicehub-provisioning.service
-rm -f /etc/systemd/system/devicehub-twin.service
-rm -f /etc/systemd/system/edgeberry-ca-rehash.service
-rm -f /etc/systemd/system/edgeberry-ca-rehash.path
-rm -f /etc/systemd/system/edgeberry-cert-sync.service
-rm -f /etc/systemd/system/edgeberry-cert-sync.path
+for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+    rm -f "/etc/systemd/system/$unit"
+done
 
 # Reload systemd
 systemctl daemon-reload 2>/dev/null || true
@@ -60,6 +50,9 @@ rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.ApplicationServic
 rm -f /etc/dbus-1/system.d/io.edgeberry.devicehub.Core.conf
 rm -f /etc/dbus-1/system.d/io.edgeberry.devicehub.Twin.conf
 rm -f /etc/dbus-1/system.d/io.edgeberry.devicehub.ApplicationService.conf
+
+echo "Removing admin CLI..."
+rm -f /usr/local/bin/devicehub
 
 echo "Removing application files..."
 # Remove application installation directory
@@ -81,8 +74,8 @@ rm -rf /etc/mosquitto/certs/edgeberry-ca.d
 rm -f /etc/mosquitto/certs/ca.crt
 rm -f /etc/mosquitto/certs/server.crt
 rm -f /etc/mosquitto/certs/server.key
+rm -f /etc/mosquitto/certs/crl.pem
 rm -f /etc/mosquitto/acl.d/edgeberry.acl
-rm -f /etc/mosquitto/acl.d/edgeberry-local.acl
 
 # Restart Mosquitto to reload config (if it's running)
 if systemctl is-active --quiet mosquitto 2>/dev/null; then

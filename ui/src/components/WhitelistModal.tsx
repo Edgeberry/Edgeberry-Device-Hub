@@ -6,10 +6,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Alert, Badge, Button, Col, Form, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faToggleOn, faToggleOff, faTrash } from '@fortawesome/free-solid-svg-icons';
+import { faToggleOn, faToggleOff, faTrash, faListCheck } from '@fortawesome/free-solid-svg-icons';
 import { batchUploadWhitelist } from '../api/devicehub';
 
-export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; user:any|null }){
+export default function WhitelistModal(props:{ show:boolean; onClose:()=>void }){
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string|undefined>();
   const [entries, setEntries] = useState<any[]>([]);
@@ -48,7 +48,6 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   }
 
   async function createEntry(){
-    if (!props.user) return;
     if (!wlUuid) { setError('UUID is required'); return; }
     setWlBusy(true);
     try{
@@ -61,7 +60,6 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   }
 
   async function deleteEntry(uuid:string){
-    if (!props.user) return;
     if (!confirm('Delete whitelist entry? This cannot be undone.')) return;
     const res = await fetch(`/api/admin/uuid-whitelist/${encodeURIComponent(uuid)}`, { method:'DELETE' });
     if (res.ok){ await refresh(); }
@@ -69,7 +67,6 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
   }
 
   async function toggleDisabled(uuid:string, disabled:boolean){
-    if (!props.user) return;
     const res = await fetch(`/api/admin/uuid-whitelist/${encodeURIComponent(uuid)}`, {
       method:'PATCH',
       headers:{'content-type':'application/json'},
@@ -119,8 +116,8 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
 
   return (
     <Modal show={props.show} onHide={props.onClose} size='xl' scrollable contentClassName="eb-modal-content">
-      <Modal.Header closeButton>
-        <Modal.Title>Whitelist</Modal.Title>
+      <Modal.Header closeButton closeVariant="white">
+        <Modal.Title><FontAwesomeIcon icon={faListCheck} />Whitelist</Modal.Title>
       </Modal.Header>
       <Modal.Body>
         {error && <Alert variant='danger'>{error}</Alert>}
@@ -131,9 +128,9 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
               <Form onSubmit={(e)=>{e.preventDefault(); createEntry();}}>
                 <Row className='g-2'>
                   <Col md={12}><Form.Label>UUID <span className="text-danger">*</span></Form.Label>
-                    <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' disabled={!props.user} /></Col>
+                    <Form.Control value={wlUuid} onChange={e=>setWlUuid(e.target.value)} placeholder='Device UUID (required)' /></Col>
                 </Row>
-                <Button className='mt-3' disabled={!props.user || wlBusy} onClick={createEntry} variant='success'>
+                <Button className='mt-3' disabled={wlBusy} onClick={createEntry} variant='success'>
                   {wlBusy? <Spinner animation='border' size='sm'/> : 'Add Entry'}
                 </Button>
               </Form>
@@ -150,7 +147,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
                     type="file"
                     accept=".txt,.csv"
                     onChange={handleBatchUpload}
-                    disabled={!props.user || batchBusy}
+                    disabled={batchBusy}
                   />
                 </Col>
               </Row>
@@ -215,7 +212,6 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
                             type="button"
                             className="btn btn-sm btn-edgeberry"
                             onClick={()=>toggleDisabled(entry.uuid, !entry.disabled_at)}
-                            disabled={!props.user}
                             title={entry.disabled_at ? 'Enable' : 'Disable'}
                           >
                             <FontAwesomeIcon icon={entry.disabled_at ? faToggleOff : faToggleOn} />
@@ -224,7 +220,6 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void; u
                             type="button"
                             className="btn btn-sm btn-edgeberry"
                             onClick={()=>deleteEntry(entry.uuid)}
-                            disabled={!props.user}
                             title="Delete"
                           >
                             <FontAwesomeIcon icon={faTrash} />

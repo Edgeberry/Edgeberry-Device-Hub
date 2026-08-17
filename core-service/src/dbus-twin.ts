@@ -1,4 +1,5 @@
 import * as dbus from 'dbus-native';
+import { getTwin, setTwinDoc, recordDeviceConnectionStatus } from './twin-store.js';
 
 const OBJECT_PATH = '/io/edgeberry/devicehub/TwinService';
 const IFACE_NAME = 'io.edgeberry.devicehub.TwinService';
@@ -11,35 +12,64 @@ export function setBroadcastFunction(fn: (topic: string, payload: any) => void) 
 }
 
 class CoreTwinInterface {
-  async GetTwin(deviceId: string): Promise<string> {
-    return JSON.stringify({ desired: {}, reported: {}, version: 0, error: '' });
+  // Single JSON-string request/response, matching every other D-Bus method
+  // on Core (Whitelist/Devices/Certificate) - see the comment on
+  // dbus-whitelist.ts. Returns both desired and reported so a caller never
+  // needs a second round trip to compute a delta.
+  async GetTwin(requestJson: string): Promise<string> {
+    try {
+      const { deviceId } = JSON.parse(requestJson);
+      if (!deviceId) return JSON.stringify({ success: false, error: 'deviceId required' });
+      const { desired, reported } = getTwin(deviceId);
+      return JSON.stringify({ success: true, desired, reported, error: null });
+    } catch (error) {
+      return JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    }
   }
 
-  async SetDesired(deviceId: string, patchJson: string): Promise<string> {
-    return JSON.stringify({ success: true, newVersion: 1, error: '' });
+  async SetDesired(requestJson: string): Promise<string> {
+    try {
+      const { deviceId, patchJson } = JSON.parse(requestJson);
+      if (!deviceId) return JSON.stringify({ success: false, error: 'deviceId required' });
+      const patch = patchJson ? JSON.parse(patchJson) : {};
+      setTwinDoc('twin_desired', deviceId, patch);
+      const { desired, reported } = getTwin(deviceId);
+      return JSON.stringify({ success: true, desired, reported, error: null });
+    } catch (error) {
+      return JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    }
   }
 
-  async SetReported(deviceId: string, patchJson: string): Promise<string> {
-    return JSON.stringify({ success: true, newVersion: 1, error: '' });
-  }
-
-  async ListDevices(): Promise<string> {
-    return JSON.stringify([]);
-  }
-
-  async GetDeviceStatuses(): Promise<string> {
-    // This is a stub - the actual implementation should be in twin-service
-    // For now, return empty object until proper D-Bus client call is implemented
-    return JSON.stringify({});
+  async SetReported(requestJson: string): Promise<string> {
+    try {
+      const { deviceId, patchJson } = JSON.parse(requestJson);
+      if (!deviceId) return JSON.stringify({ success: false, error: 'deviceId required' });
+      const patch = patchJson ? JSON.parse(patchJson) : {};
+      setTwinDoc('twin_reported', deviceId, patch);
+      const { desired, reported } = getTwin(deviceId);
+      return JSON.stringify({ success: true, desired, reported, error: null });
+    } catch (error) {
+      return JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    }
   }
 
   async UpdateDeviceStatus(deviceId: string, status: string, timestamp: string): Promise<string> {
     const timestampNum = parseInt(timestamp);
     const isOnline = status === 'online';
     const timestampIso = new Date(timestampNum).toISOString();
-    
-    console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${timestampIso} - broadcasting immediately`);
-    
+
+    console.log(`[core-service] Device status update: ${deviceId} is ${status} at ${timestampIso}`);
+
+    // Persist - this is now the only place a connection-status event for
+    // this device gets recorded (twin-service used to write this itself
+    // directly to twin.db; it now only calls this D-Bus method).
+    try {
+      recordDeviceConnectionStatus(deviceId, isOnline, timestampIso);
+    } catch (error) {
+      console.error(`[core-service] Failed to persist device status for ${deviceId}:`, error);
+      return JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+
     // Broadcast device status update via WebSocket immediately
     if (broadcastFunction) {
       const statusUpdate = {
@@ -48,76 +78,49 @@ class CoreTwinInterface {
         timestamp: timestampIso,
         last_seen: isOnline ? null : timestampIso
       };
-      
-      // Use setImmediate to ensure immediate broadcast
+
       setImmediate(() => {
-        broadcastFunction('device.status', { type: 'device.status', data: statusUpdate });
-        broadcastFunction('device.status.public', { type: 'device.status.public', data: { 
-          deviceId, 
-          status: isOnline,
-          timestamp: timestampIso
-        }});
+        broadcastFunction!('device.status', { type: 'device.status', data: statusUpdate });
         console.log(`[core-service] Broadcasted ${deviceId} status (${status}) via WebSocket`);
       });
     } else {
       console.warn(`[core-service] No broadcast function available for device status update`);
     }
-    
+
     return JSON.stringify({ success: true });
   }
 }
 
 export async function startCoreTwinDbusServer(bus: any): Promise<any> {
   const twinService = new CoreTwinInterface();
-  
+
   console.log('Starting Twin D-Bus server with dbus-native');
 
-  // Create the service object with actual method implementations
   const serviceObject = {
-    GetTwin: async (deviceId: string) => {
+    GetTwin: async (requestJson: string) => {
       try {
-        const result = await twinService.GetTwin(deviceId);
-        return result;
+        return await twinService.GetTwin(requestJson);
       } catch (error) {
         throw error;
       }
     },
-    SetDesired: async (deviceId: string, patchJson: string) => {
+    SetDesired: async (requestJson: string) => {
       try {
-        const result = await twinService.SetDesired(deviceId, patchJson);
-        return result;
+        return await twinService.SetDesired(requestJson);
       } catch (error) {
         throw error;
       }
     },
-    SetReported: async (deviceId: string, patchJson: string) => {
+    SetReported: async (requestJson: string) => {
       try {
-        const result = await twinService.SetReported(deviceId, patchJson);
-        return result;
-      } catch (error) {
-        throw error;
-      }
-    },
-    ListDevices: async () => {
-      try {
-        const result = await twinService.ListDevices();
-        return result;
-      } catch (error) {
-        throw error;
-      }
-    },
-    GetDeviceStatuses: async () => {
-      try {
-        const result = await twinService.GetDeviceStatuses();
-        return result;
+        return await twinService.SetReported(requestJson);
       } catch (error) {
         throw error;
       }
     },
     UpdateDeviceStatus: async (deviceId: string, status: string, timestamp: string) => {
       try {
-        const result = await twinService.UpdateDeviceStatus(deviceId, status, timestamp);
-        return result;
+        return await twinService.UpdateDeviceStatus(deviceId, status, timestamp);
       } catch (error) {
         throw error;
       }
@@ -129,15 +132,13 @@ export async function startCoreTwinDbusServer(bus: any): Promise<any> {
     name: IFACE_NAME,
     methods: {
       GetTwin: ['s', 's'],
-      SetDesired: ['ss', 's'],
-      SetReported: ['ss', 's'],
-      ListDevices: ['', 's'],
-      GetDeviceStatuses: ['', 's'],
+      SetDesired: ['s', 's'],
+      SetReported: ['s', 's'],
       UpdateDeviceStatus: ['sss', 's']
     },
     signals: {}
   });
-  
+
   console.log(`Twin D-Bus server started on io.edgeberry.devicehub.Core at ${OBJECT_PATH}`);
   return bus;
 }

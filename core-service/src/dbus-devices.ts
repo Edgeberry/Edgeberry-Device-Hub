@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { randomBytes } from 'crypto';
 import { DEVICEHUB_DB } from './config.js';
 import { generateDefaultDeviceName, validateDeviceName, sanitizeDeviceName } from './device-names.js';
+import { getDevicesListSync, getDeviceByUuid, resolveIdentifierToUuid, resolvePublicIdFromUuid } from './devices-store.js';
 
 const BUS_NAME = 'io.edgeberry.devicehub.Core';
 const OBJECT_PATH = '/io/edgeberry/devicehub/DevicesService';
@@ -103,8 +104,7 @@ class DevicesInterface {
 
   // The name a device is assigned during provisioning, so its UUID (a
   // long-lived hardware identity, not a one-time secret) never becomes its
-  // ongoing MQTT/TLS identity - see documentation/alignment.md's
-  // claim-certificate provisioning flow.
+  // ongoing MQTT/TLS identity.
   //
   // Every successful claim gets a *fresh* random name, replacing whatever was
   // reserved before - reprovisioning is meant to be a genuine fresh start,
@@ -206,14 +206,31 @@ class DevicesInterface {
     }
   }
 
-  async GetDeviceInfo(deviceId: string): Promise<string> {
-    // Placeholder implementation
-    return JSON.stringify({ success: false, name: '', error: 'Device not found' });
+  async GetDeviceInfo(uuid: string): Promise<string> {
+    const device = getDeviceByUuid(uuid);
+    if (!device) return JSON.stringify({ success: false, device: null, error: 'Device not found' });
+    return JSON.stringify({ success: true, device, error: null });
   }
 
   async ListDevices(): Promise<string> {
-    // Placeholder implementation
-    return JSON.stringify([]);
+    const { devices } = getDevicesListSync();
+    return JSON.stringify({ success: true, devices, error: null });
+  }
+
+  // Role -> devices.name -> treat as a raw uuid. Used by application-service
+  // (which never opens devicehub.db itself) wherever it needs to turn a
+  // user-supplied identifier into a uuid.
+  async ResolveIdentifier(identifier: string): Promise<string> {
+    const uuid = resolveIdentifierToUuid(identifier);
+    if (!uuid) return JSON.stringify({ success: false, uuid: null, error: 'Device not found' });
+    return JSON.stringify({ success: true, uuid, error: null });
+  }
+
+  // uuid -> role if assigned, else raw MQTT name, else the uuid itself - the
+  // identifier application clients and the UI should display.
+  async ResolvePublicId(uuid: string): Promise<string> {
+    const publicId = resolvePublicIdFromUuid(uuid);
+    return JSON.stringify({ success: true, publicId, error: null });
   }
 }
 
@@ -285,6 +302,20 @@ export async function startDevicesDbusServer(bus: any): Promise<any> {
       } catch (error) {
         throw error;
       }
+    },
+    ResolveIdentifier: async (identifier: string) => {
+      try {
+        return await devicesService.ResolveIdentifier(identifier);
+      } catch (error) {
+        return JSON.stringify({ success: false, uuid: null, error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    },
+    ResolvePublicId: async (uuid: string) => {
+      try {
+        return await devicesService.ResolvePublicId(uuid);
+      } catch (error) {
+        return JSON.stringify({ success: false, publicId: uuid, error: error instanceof Error ? error.message : 'Unknown error' });
+      }
     }
   };
 
@@ -296,7 +327,9 @@ export async function startDevicesDbusServer(bus: any): Promise<any> {
       ClaimDeviceName: ['s', 's'],
       ResolveDeviceIdByUuid: ['s', 's'],
       GetDeviceInfo: ['s', 's'],
-      ListDevices: ['', 's']
+      ListDevices: ['', 's'],
+      ResolveIdentifier: ['s', 's'],
+      ResolvePublicId: ['s', 's']
     },
     signals: {}
   });

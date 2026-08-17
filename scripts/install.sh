@@ -27,9 +27,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "Usage: $0 [-y|--yes] [--force-clean]"
-            echo "  -y, --yes         Skip confirmation prompts"
+            echo "  -y, --yes         Skip confirmation prompts (also skips the admin"
+            echo "                    password/domain prompts - set ADMIN_PASSWORD and/or"
+            echo "                    DEVICEHUB_DOMAIN env vars beforehand for unattended runs,"
+            echo "                    otherwise a random admin password is generated and printed"
+            echo "                    at the end of installation)"
             echo "  --force-clean     Remove all persistent data for clean install"
             echo "  -h, --help        Show this help message"
+            echo ""
+            echo "Env vars: GITHUB_TOKEN, ADMIN_PASSWORD, DEVICEHUB_DOMAIN"
             exit 0
             ;;
         *)
@@ -47,6 +53,62 @@ if [ "$EUID" -ne 0 ]; then
     echo "ERROR: Must run as root"
     exit 1
 fi
+
+# --- Admin password & domain ---
+# core.env already having ADMIN_PASSWORD means this is a redeploy/upgrade of
+# an existing install - keep whatever admin password is already configured
+# (it's write-once in deploy-artifacts.sh for the same reason) rather than
+# prompting again or generating a new one out from under the operator.
+CORE_ENV="/etc/Edgeberry/devicehub/core.env"
+EXISTING_ADMIN_PASSWORD=0
+if [ -f "$CORE_ENV" ] && grep -qE '^\s*ADMIN_PASSWORD\s*=' "$CORE_ENV"; then
+    EXISTING_ADMIN_PASSWORD=1
+fi
+
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+DEVICEHUB_DOMAIN="${DEVICEHUB_DOMAIN:-}"
+GENERATED_ADMIN_PASSWORD=0
+
+if [ "$EXISTING_ADMIN_PASSWORD" -eq 1 ]; then
+    echo "Existing admin credentials found - keeping the current admin password."
+elif [ -z "$ADMIN_PASSWORD" ]; then
+    if [ "$AUTO_YES" -eq 1 ]; then
+        # Unattended install with no ADMIN_PASSWORD provided: generate a
+        # random one rather than falling back to the admin/admin dev default.
+        ADMIN_PASSWORD="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 24)"
+        GENERATED_ADMIN_PASSWORD=1
+    else
+        echo ""
+        echo "--- Admin account ---"
+        while true; do
+            read -r -s -p "Set the admin password (min 8 characters): " ADMIN_PASSWORD_1
+            echo ""
+            if [ "${#ADMIN_PASSWORD_1}" -lt 8 ]; then
+                echo "Password must be at least 8 characters."
+                continue
+            fi
+            read -r -s -p "Confirm admin password: " ADMIN_PASSWORD_2
+            echo ""
+            if [ "$ADMIN_PASSWORD_1" != "$ADMIN_PASSWORD_2" ]; then
+                echo "Passwords do not match, try again."
+                continue
+            fi
+            ADMIN_PASSWORD="$ADMIN_PASSWORD_1"
+            break
+        done
+    fi
+fi
+
+if [ -z "$DEVICEHUB_DOMAIN" ] && [ "$AUTO_YES" -eq 0 ]; then
+    echo ""
+    echo "--- Domain ---"
+    echo "Public domain this Hub will be reachable at (e.g. devicehub.edgeberry.io)."
+    echo "Included as a SAN entry in the MQTT/TLS server certificate. Leave blank if none."
+    read -r -p "Domain: " DEVICEHUB_DOMAIN
+fi
+
+export ADMIN_PASSWORD
+export DEVICEHUB_DOMAIN
 
 # Check system
 echo "Checking system requirements..."
@@ -203,3 +265,11 @@ echo ""
 echo "=== Installation Complete ==="
 echo "Web Interface: http://$(hostname -I | awk '{print $1}')"
 echo "MQTT Broker: $(hostname -I | awk '{print $1}'):8883 (TLS)"
+
+if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
+    echo ""
+    echo "=== Generated admin password (save this now - it will not be shown again) ==="
+    echo "  Username: admin"
+    echo "  Password: $ADMIN_PASSWORD"
+    echo "=============================================================================="
+fi

@@ -10,34 +10,34 @@
  *  - Widgets fetch their own data from the backend (`/api/health`, `/api/services`, `/api/metrics`).
  *
  * Auth:
- *  - This route is protected by `RequireAuth` in `App.tsx`. `props.user` is the authenticated admin.
+ *  - Login is required to reach this page at all (see Dashboard's auth gate).
  */
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
 import SystemWidget from '../components/SystemWidget';
 import ApplicationsWidget from '../components/ApplicationsWidget';
-import { getDevices, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
-import { displayNameFor } from '../deviceDisplay';
+import { getDevices, decommissionDevice, deleteWhitelistByDevice, setDeviceRole } from '../api/devicehub';
+import { roleLabelFor } from '../deviceDisplay';
 import { direct_identifySystem } from '../api/directMethods';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 import { Link } from 'react-router-dom';
 import DeviceDetailModal from '../components/DeviceDetailModal';
 import CertificateSettingsModal from '../components/CertificateSettingsModal';
 import WhitelistModal from '../components/WhitelistModal';
-import RolesModal from '../components/RolesModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTrash, faLocationDot, faEye, faSearch, faUserTag } from '@fortawesome/free-solid-svg-icons';
+import { faTrash, faLocationDot, faEye, faSearch, faPen, faListCheck, faCloudArrowDown } from '@fortawesome/free-solid-svg-icons';
 
-export default function Overview(props:{user:any}){
+export default function Overview(){
   const [devices, setDevices] = useState<any[]>([]);
   const [filteredDevices, setFilteredDevices] = useState<any[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [showCerts, setShowCerts] = useState(false);
   const [showWhitelist, setShowWhitelist] = useState(false);
-  const [showRoles, setShowRoles] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [editingRole, setEditingRole] = useState<string | null>(null);
+  const [roleInput, setRoleInput] = useState('');
   // Re-render every second to update relative offline timers
   const [now, setNow] = useState<number>(()=> Date.now());
   useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
@@ -102,19 +102,16 @@ export default function Overview(props:{user:any}){
       }catch{}
     };
     
-    const devicesTopic = props.user ? 'devices.list' : 'devices.list.public';
-    const statusTopic = props.user ? 'device.status' : 'device.status.public';
-    
-    wsSubscribe(devicesTopic, onDevices);
-    wsSubscribe(statusTopic, onDeviceStatus);
-    
+    wsSubscribe('devices.list', onDevices);
+    wsSubscribe('device.status', onDeviceStatus);
+
     (async()=>{ if(!wsIsConnected()){ try{ const d = await getDevices(); const list = Array.isArray(d?.devices) ? d.devices : (Array.isArray(d) ? d : []); if(mounted) { setDevices(list); setFilteredDevices(list); } }catch{ if(mounted) { setDevices([]); setFilteredDevices([]); } } } })();
-    return ()=>{ 
-      mounted = false; 
-      wsUnsubscribe(devicesTopic, onDevices); 
-      wsUnsubscribe(statusTopic, onDeviceStatus);
+    return ()=>{
+      mounted = false;
+      wsUnsubscribe('devices.list', onDevices);
+      wsUnsubscribe('device.status', onDeviceStatus);
     };
-  },[props.user]);
+  },[]);
 
   // Search functionality
   useEffect(() => {
@@ -125,10 +122,9 @@ export default function Overview(props:{user:any}){
     
     const query = searchQuery.toLowerCase();
     const filtered = devices.filter((device: any) => {
-      const name = (device.name || '').toLowerCase();
+      const role = (device.role || '').toLowerCase();
       const uuid = (device.uuid || '').toLowerCase();
-      const group = (device.group || '').toLowerCase();
-      return name.includes(query) || uuid.includes(query) || group.includes(query);
+      return role.includes(query) || uuid.includes(query);
     });
     setFilteredDevices(filtered);
   }, [devices, searchQuery]);
@@ -164,6 +160,31 @@ export default function Overview(props:{user:any}){
     }
   };
 
+  const handleEditRole = (uuid: string, currentRole: string|null) => {
+    setEditingRole(uuid);
+    setRoleInput(currentRole || '');
+  };
+
+  const handleCancelEditRole = () => {
+    setEditingRole(null);
+    setRoleInput('');
+  };
+
+  const handleSaveRole = async (uuid: string, previousRole: string|null) => {
+    const nextRole = roleInput.trim();
+    if (nextRole === (previousRole || '')) { handleCancelEditRole(); return; }
+    try {
+      setActionBusy(uuid);
+      await setDeviceRole(uuid, nextRole || null);
+      await refreshDevices();
+      handleCancelEditRole();
+    } catch (error) {
+      // Failed to update role - error handled by UI state
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   const handleIdentifyDevice = async (uuid: string, name: string) => {
     try {
       setActionBusy(uuid);
@@ -183,24 +204,24 @@ export default function Overview(props:{user:any}){
 
   return (
     <div>
-      {/* Devices and connected Applications are what Device Hub is for - they
-          lead the page. System is diagnostics, not the headline, so it comes
-          last and starts collapsed (see SystemWidget). */}
-      <Card>
+      {/* System is diagnostics, not the headline, so it starts collapsed (see
+          SystemWidget) - but its collapsed bar sits at the very top of the
+          page, out of the way of Devices/Applications below without needing
+          a scroll past everything else to reach it. */}
+      <SystemWidget />
+
+      <Card className="mb-4">
         <Card.Header className="d-flex justify-content-between align-items-center">
           <div>
             <i className="fa-solid fa-microchip me-2"></i>
             Devices
           </div>
           <div className="d-flex gap-2">
-            <Button size="sm" variant="outline-secondary" onClick={()=> setShowRoles(true)} disabled={!props.user}>
-              Roles
+            <Button size="sm" variant="outline-secondary" onClick={()=> setShowWhitelist(true)} title="Whitelist">
+              <FontAwesomeIcon icon={faListCheck} />
             </Button>
-            <Button size="sm" variant="outline-secondary" onClick={()=> setShowWhitelist(true)} disabled={!props.user}>
-              Whitelist
-            </Button>
-            <Button size="sm" variant="outline-primary" onClick={()=> setShowCerts(true)} disabled={!props.user}>
-              Certificates
+            <Button size="sm" variant="outline-secondary" onClick={()=> setShowCerts(true)} title="Provisioning">
+              <FontAwesomeIcon icon={faCloudArrowDown} />
             </Button>
           </div>
         </Card.Header>
@@ -221,8 +242,8 @@ export default function Overview(props:{user:any}){
           <Table size="sm" responsive className="device-list-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  {props.user ? (<th>UUID</th>) : null}
+                  <th>Role</th>
+                  <th>Device ID</th>
                   <th>Status</th>
                   <th className="text-end">Actions</th>
                 </tr>
@@ -235,21 +256,50 @@ export default function Overview(props:{user:any}){
                   // reported, same as the Disabled badge on the whitelist entry itself.
                   const status = d.disabled ? 'disabled' : (d.online ? 'online' : 'offline');
                   const open = () => setSelected(String(uuid));
-                  const displayName = displayNameFor(d);
+                  const roleLabel = roleLabelFor(d);
                   const isBusy = actionBusy === uuid;
+                  const isEditingRole = editingRole === uuid;
 
                   return (
                     <tr key={uuid} className="device-row" onClick={open} style={{cursor: 'pointer'}}>
-                      <td>
-                        <span>{displayName}</span>
-                        {/* A role-labeled device's raw MQTT name is still worth
-                            showing, in small print - it's the actual wire
-                            identity, and rotates independently of the role. */}
-                        {d.role && d.name && (
-                          <div className="text-muted small">{d.name}</div>
+                      <td onClick={isEditingRole ? (e) => e.stopPropagation() : undefined}>
+                        {isEditingRole ? (
+                          <div className="d-flex gap-1" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              className="form-control form-control-sm"
+                              placeholder="role name"
+                              value={roleInput}
+                              onChange={(e) => setRoleInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveRole(uuid, d.role);
+                                if (e.key === 'Escape') handleCancelEditRole();
+                              }}
+                              autoFocus
+                            />
+                            <button className="btn btn-sm btn-success" onClick={() => handleSaveRole(uuid, d.role)} disabled={isBusy}>
+                              ✓
+                            </button>
+                            <button className="btn btn-sm btn-secondary" onClick={handleCancelEditRole} disabled={isBusy}>
+                              ✗
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className={d.role ? undefined : 'text-muted'}>{roleLabel}</span>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-edgeberry device-actions ms-1"
+                              style={{padding:'0 6px'}}
+                              onClick={(e) => { e.stopPropagation(); handleEditRole(uuid, d.role); }}
+                              title="Edit role"
+                            >
+                              <FontAwesomeIcon icon={faPen} size="xs" />
+                            </button>
+                          </>
                         )}
                       </td>
-                      {props.user ? (<td>{uuid || '-'}</td>) : null}
+                      <td>{uuid || '-'}</td>
                       <td>
                         <Badge bg={status === 'online' ? 'success' : status === 'disabled' ? 'danger' : 'secondary'}>
                           {status || 'unknown'}
@@ -260,36 +310,23 @@ export default function Overview(props:{user:any}){
                           <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
                             <FontAwesomeIcon icon={faEye} />
                           </button>
-                          {props.user ? (
-                            <>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-edgeberry"
-                                onClick={() => handleIdentifyDevice(uuid, displayName)}
-                                disabled={isBusy}
-                                title="Identify Device"
-                              >
-                                <FontAwesomeIcon icon={faLocationDot} />
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-edgeberry"
-                                onClick={() => setShowRoles(true)}
-                                disabled={isBusy}
-                                title="Manage Role"
-                              >
-                                <FontAwesomeIcon icon={faUserTag} />
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-edgeberry"
-                                onClick={() => handleDeleteDevice(uuid, displayName)}
-                                disabled={isBusy}
-                              >
-                                {isBusy ? <Spinner animation="border" size="sm" /> : <FontAwesomeIcon icon={faTrash} />}
-                              </button>
-                            </>
-                          ) : null}
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-edgeberry"
+                            onClick={() => handleIdentifyDevice(uuid, roleLabel)}
+                            disabled={isBusy}
+                            title="Identify Device"
+                          >
+                            <FontAwesomeIcon icon={faLocationDot} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-edgeberry"
+                            onClick={() => handleDeleteDevice(uuid, roleLabel)}
+                            disabled={isBusy}
+                          >
+                            {isBusy ? <Spinner animation="border" size="sm" /> : <FontAwesomeIcon icon={faTrash} />}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -306,14 +343,11 @@ export default function Overview(props:{user:any}){
         </Card.Body>
       </Card>
 
-      <ApplicationsWidget user={props.user} />
-
-      <SystemWidget user={props.user} />
+      <ApplicationsWidget />
 
       <DeviceDetailModal deviceId={selected||''} show={!!selected} onClose={()=> setSelected(null)} />
-      <CertificateSettingsModal show={showCerts} onClose={()=> setShowCerts(false)} user={props.user} />
-      <WhitelistModal show={showWhitelist} onClose={()=> setShowWhitelist(false)} user={props.user} />
-      <RolesModal show={showRoles} onClose={()=> setShowRoles(false)} user={props.user} />
+      <CertificateSettingsModal show={showCerts} onClose={()=> setShowCerts(false)} />
+      <WhitelistModal show={showWhitelist} onClose={()=> setShowWhitelist(false)} />
     </div>
   );
 }

@@ -219,38 +219,31 @@ sudo journalctl -u devicehub-core.service --since "5 minutes ago" | grep -i "tru
 
 **Web Interface:** `https://devicehub.edgeberry.io`
 
-**Default Credentials:**
-- Username: `admin`
-- Password: `admin`
+**Username:** `admin`
 
-**⚠️ IMPORTANT:** Change the default password immediately:
-1. Log in to the web interface
-2. Click the Settings icon (⚙️) in the top right
-3. Go to Account & Security
-4. Click "Change Password"
+**Password:** set during installation - `install.sh` prompts for it interactively (or reads `ADMIN_PASSWORD` from the environment for unattended `-y` installs, generating and printing a random one if that's also unset). It is never `admin`/`admin` by default.
 
 ## 8. Post-Installation Security
 
 ### Change Admin Password
 
-Access Settings → Account & Security → Change Password
+Run this directly on the Hub (admin password changes are a server-CLI operation, not a web UI one):
+
+```bash
+sudo devicehub --update-password "yourNewPassword"
+```
 
 Passwords are stored as bcrypt hashes in the database at `/var/lib/edgeberry/devicehub/devicehub.db`
 
-### Set JWT Secret
+### JWT Secret
 
-For production, set a strong JWT secret:
+`install.sh` generates a random `JWT_SECRET` and seeds it into `/etc/Edgeberry/devicehub/core.env` on first install - no manual step needed. To rotate it yourself:
 
 ```bash
-# Generate random secret
-openssl rand -base64 32
-
-# Set in service environment
-sudo mkdir -p /etc/Edgeberry/devicehub
 sudo nano /etc/Edgeberry/devicehub/core.env
 ```
 
-Add:
+Update:
 ```
 JWT_SECRET=your-generated-secret-here
 JWT_TTL_SECONDS=86400
@@ -260,6 +253,8 @@ Restart service:
 ```bash
 sudo systemctl restart devicehub-core.service
 ```
+
+Rotating it invalidates every existing login session.
 
 ### Certificate Auto-Renewal
 
@@ -525,7 +520,7 @@ Built-in dashboard shows:
 - System metrics
 - Active connections
 
-Access: Settings → Server section
+Access: the System widget on the main dashboard
 
 ## Additional Security
 
@@ -600,6 +595,5 @@ Devices (external)
 
 ## Support
 
-- **Documentation:** `/documentation/alignment.md`
 - **Issues:** https://github.com/Edgeberry/Edgeberry-Device-Hub/issues
 - **License:** GNU GPLv3

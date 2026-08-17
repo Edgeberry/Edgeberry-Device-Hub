@@ -100,29 +100,6 @@ export async function restartService(unit: string){
   return jsonOrMessage(res);
 }
 
-// --- Diagnostics ---
-/**
- * Run device-side MQTT sanity test via core-service
- * Body fields are optional; defaults are used by backend when omitted.
- */
-export async function runMqttSanityTest(body?: {
-  deviceId?: string;
-  mqttUrl?: string;
-  ca?: string;
-  cert?: string;
-  key?: string;
-  rejectUnauthorized?: boolean;
-  timeoutSec?: number;
-}){
-  const res = await fetch(base()+"/diagnostics/mqtt-test", {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body || {})
-  });
-  return jsonOrMessage(res);
-}
-
 // --- Devices registry (future expansion) ---
 /**
  * List devices
@@ -195,39 +172,29 @@ export async function createProvisionToken(uuid: string, hours?: number){
  */
 export async function getRoles(){ return jsonOrMessage(await fetch(base()+"/roles", { credentials:'include' })); }
 /**
- * Create a role bound to a device
- * @param role role name
- * @param uuid device uuid to bind it to
+ * Set (or clear) a device's role. A device holds at most one role, so this
+ * is the only operation needed: pass a name to label the device with it
+ * (unplugging it from whatever device held that name before, if any), or
+ * an empty string/null to clear it.
+ * @param uuid device uuid
+ * @param role role name, or null/empty to clear
  */
-export async function createRole(role: string, uuid: string){
-  const res = await fetch(base()+"/roles", { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ role, uuid }) });
-  return jsonOrMessage(res);
-}
-/**
- * Repoint an existing role at a different device (the hardware-swap operation)
- * @param role role name
- * @param uuid device uuid to point the role at
- */
-export async function reassignRole(role: string, uuid: string){
-  const res = await fetch(base()+`/roles/${encodeURIComponent(role)}`, { method:'PUT', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ uuid }) });
-  return jsonOrMessage(res);
-}
-/**
- * Delete a role
- * @param role role name
- */
-export async function deleteRole(role: string){
-  const res = await fetch(base()+`/roles/${encodeURIComponent(role)}`, { method:'DELETE', credentials:'include' });
+export async function setDeviceRole(uuid: string, role: string|null){
+  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/role`, { method:'PUT', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ role: role || '' }) });
   return jsonOrMessage(res);
 }
 
-/**
- * Run comprehensive system sanity check
- */
-export async function runSystemSanityCheck(){
-  const res = await fetch(base()+'/system/sanity-check', { method:'POST', credentials:'include' });
+// --- Provisioning claim-certificate HTTP fetch switch. Off is an opt-in
+// hardening step for operators who install the claim cert on devices
+// out-of-band instead of letting them download it over HTTP.
+export async function getProvisioningCertFetchEnabled(){
+  return jsonOrMessage(await fetch(base()+"/settings/provisioning/cert-fetch", { credentials:'include' }));
+}
+export async function setProvisioningCertFetchEnabled(enabled: boolean){
+  const res = await fetch(base()+"/settings/provisioning/cert-fetch", { method:'PUT', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ enabled }) });
   return jsonOrMessage(res);
 }
+
 
 /**
  * Reboot the system

@@ -68,9 +68,6 @@ import {
   PROVISIONING_DB,
   ONLINE_THRESHOLD_SECONDS,
   DEFAULT_LOG_UNITS,
-  PROVISIONING_CERT_PATH,
-  PROVISIONING_KEY_PATH,
-  PROVISIONING_HTTP_ENABLE_CERT_API,
   MQTT_URL,
   MQTT_USERNAME,
   MQTT_PASSWORD,
@@ -87,7 +84,11 @@ import { startCertificateDbusServer } from './dbus-certs.js';
 import { validateDeviceName } from './device-names.js';
 import { startCoreTwinDbusServer, setBroadcastFunction } from './dbus-twin.js';
 import { startDevicesDbusServer } from './dbus-devices.js';
-import { twinGetTwin } from './dbus-twin-client.js';
+import { startTokenDbusServer } from './dbus-tokens.js';
+import { startEventsDbusServer } from './dbus-events.js';
+import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents } from './twin-store.js';
+import { getDevicesListSync, tryParseJson } from './devices-store.js';
+import { getAppSetting, setAppSetting, isAuthDisabled } from './app-settings.js';
 
 // dbus-native has a known bug where introspection requests from another
 // process (e.g. provisioning-service or twin-service calling into the
@@ -296,9 +297,17 @@ app.get('/api/provisioning/certs/ca.crt', async (_req: Request, res: Response) =
   }
 });
 
-// GET /api/provisioning/certs/provisioning.crt -> serve provisioning client cert (MVP: public)
+// GET /api/provisioning/certs/provisioning.crt -> serve provisioning (claim) client cert.
+// Gated by the provisioning_cert_fetch_enabled app setting - see
+// isProvisioningCertFetchEnabled(). Off by admin choice, not by default: this
+// stays public until an operator opts into installing the claim cert on
+// devices some other way and closes this endpoint.
 app.get('/api/provisioning/certs/provisioning.crt', async (_req: Request, res: Response) => {
   try {
+    if (!isProvisioningCertFetchEnabled()) {
+      res.status(403).json({ error: 'cert_fetch_disabled', message: 'Fetching the claim certificate over HTTP is disabled. Provision this device out-of-band.' });
+      return;
+    }
     console.log('[core-service] HIT /api/provisioning/certs/provisioning.crt');
     const provisioningCertPath = path.join(PROV_DIR, 'provisioning.crt');
     if (!fs.existsSync(provisioningCertPath)) { res.status(404).end('not found'); return; }
@@ -314,9 +323,15 @@ app.get('/api/provisioning/certs/provisioning.crt', async (_req: Request, res: R
 
 // NOTE: Public alias without /api removed (policy: all API under /api)
 
-// GET /api/provisioning/certs/provisioning.key -> serve provisioning client key (MVP: public)
+// GET /api/provisioning/certs/provisioning.key -> serve provisioning (claim) client key.
+// Same gate as provisioning.crt above - the two are one credential and are
+// switched together.
 app.get('/api/provisioning/certs/provisioning.key', async (_req: Request, res: Response) => {
   try {
+    if (!isProvisioningCertFetchEnabled()) {
+      res.status(403).json({ error: 'cert_fetch_disabled', message: 'Fetching the claim certificate over HTTP is disabled. Provision this device out-of-band.' });
+      return;
+    }
     console.log('[core-service] HIT /api/provisioning/certs/provisioning.key');
     const provisioningKeyPath = path.join(PROV_DIR, 'provisioning.key');
     if (!fs.existsSync(provisioningKeyPath)) { res.status(404).end('not found'); return; }
@@ -447,18 +462,23 @@ app.get('/healthz', (_req: Request, res: Response) => res.json({ status: 'ok' })
 // GET /api/health
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
-// GET /api/devices/:uuid/twin -> fetch twin from Twin service via D-Bus
+// GET /api/devices/:uuid/twin -> fetch twin state (desired/reported)
 app.get('/api/devices/:uuid/twin', authRequired, async (req: Request, res: Response) => {
   try {
     const deviceUuid = String(req.params.uuid || '').trim();
     if (!deviceUuid) { res.status(400).json({ error: 'invalid device uuid' }); return; }
-    const [desiredJson, desiredVersion, reportedJson, err] = await twinGetTwin(deviceUuid);
-    if (err) { res.status(502).json({ error: 'twin_error', detail: err }); return; }
-    res.json({
-      deviceUuid,
-      desired: { version: desiredVersion >>> 0, doc: desiredJson ? JSON.parse(desiredJson) : {} },
-      reported: { doc: reportedJson ? JSON.parse(reportedJson) : {} }
-    });
+    // Twin docs are keyed by the device's assigned MQTT name, not its uuid -
+    // same resolution as the identify direct-method handler above.
+    const db = openDb(DEVICEHUB_DB);
+    let deviceId = deviceUuid;
+    if (db) {
+      try {
+        const row = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(deviceUuid) as any;
+        if (row?.name) deviceId = row.name;
+      } finally { try { db.close(); } catch {} }
+    }
+    const { desired, reported } = getDeviceTwin(deviceId);
+    res.json({ deviceUuid, desired, reported });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'failed to fetch twin' });
   }
@@ -549,7 +569,7 @@ app.get('/api/config/public', async (_req: Request, res: Response) => {
 });
 
 // GET /api/status -> system status info  
-app.get('/api/status', (_req: Request, res: Response) => {
+app.get('/api/status', authRequired, (_req: Request, res: Response) => {
   try {
     const status = {
       uptime: `${Math.floor(os.uptime() / 3600)}h ${Math.floor((os.uptime() % 3600) / 60)}m`,
@@ -638,154 +658,6 @@ app.get('/api/version', async (_req: Request, res: Response) => {
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'failed to get version' });
   }
-});
-
-// === Diagnostics: device-side MQTT sanity test ===
-// POST /api/diagnostics/mqtt-test
-// Body: { deviceId?, mqttUrl?, ca?, cert?, key?, rejectUnauthorized?, timeoutSec? }
-// Runs scripts/device_mqtt_test.sh and returns stdout/stderr and exit code
-app.post('/api/diagnostics/mqtt-test', authRequired, async (req: Request, res: Response) => {
-  try {
-    const body = req.body || {};
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    if (body.deviceId) env.DEVICE_ID = String(body.deviceId);
-    if (body.mqttUrl) env.MQTT_URL = String(body.mqttUrl);
-    if (body.ca) env.MQTT_TLS_CA = String(body.ca);
-    if (body.cert) env.MQTT_TLS_CERT = String(body.cert);
-    if (body.key) env.MQTT_TLS_KEY = String(body.key);
-    if (typeof body.rejectUnauthorized === 'boolean') env.MQTT_TLS_REJECT_UNAUTHORIZED = body.rejectUnauthorized ? 'true' : 'false';
-    if (body.timeoutSec) env.TIMEOUT_SEC = String(body.timeoutSec);
-
-    // Resolve diagnostics script path robustly.
-    // Priority:
-    // 1) DIAG_SCRIPT_PATH env
-    // 2) Repo dev path: ../scripts/device_mqtt_test.sh (relative to core-service cwd)
-    // 3) Repo dev alt: ../../scripts/device_mqtt_test.sh (in case cwd differs)
-    // 4) Installed path: /opt/Edgeberry/devicehub/scripts/device_mqtt_test.sh
-    const candidates: string[] = [];
-    if (process.env.DIAG_SCRIPT_PATH) candidates.push(String(process.env.DIAG_SCRIPT_PATH));
-    candidates.push(
-      path.resolve(process.cwd(), '..', 'scripts', 'device_mqtt_test.sh'),
-      path.resolve(process.cwd(), '..', '..', 'scripts', 'device_mqtt_test.sh'),
-      '/opt/Edgeberry/devicehub/scripts/device_mqtt_test.sh',
-    );
-    const scriptPath = candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } });
-    if (!scriptPath) {
-      return res.status(500).json({ ok: false, error: 'device_mqtt_test.sh not found', tried: candidates });
-    }
-    const startedAt = Date.now();
-    const proc = spawn('bash', [scriptPath], { env });
-    let stdout = '';
-    let stderr = '';
-    let responded = false;
-    const TIMEOUT_MS = Math.max(5_000, Math.min(120_000, Number((body && body.timeoutSec ? body.timeoutSec : 30)) * 1000));
-    const killTimer = setTimeout(() => {
-      if (responded) return;
-      responded = true;
-      try { proc.kill('SIGKILL'); } catch {}
-      res.status(504).json({ ok: false, error: 'diagnostics timed out', startedAt, durationMs: Date.now() - startedAt, stdout, stderr });
-    }, TIMEOUT_MS);
-
-    proc.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
-    proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
-    proc.on('error', (e) => {
-      if (responded) return;
-      responded = true;
-      clearTimeout(killTimer);
-      res.status(500).json({ ok: false, error: String(e), startedAt, durationMs: Date.now() - startedAt });
-    });
-    proc.on('close', (code) => {
-      if (responded) return;
-      responded = true;
-      clearTimeout(killTimer);
-      const ok = code === 0;
-      res.status(ok ? 200 : 500).json({ ok, exitCode: code, startedAt, durationMs: Date.now() - startedAt, stdout, stderr });
-    });
-  } catch (e: any) {
-    res.status(500).json({ ok: false, error: e?.message || 'failed to run diagnostics' });
-  }
-});
-
-// Minimal diagnostics UI (independent of SPA) at /diagnostics
-app.get('/diagnostics', (_req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.end(`<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Edgeberry Device Hub — Diagnostics</title>
-    <style>
-      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:24px;}
-      input,button{font-size:14px;padding:6px 8px;margin:4px 0}
-      label{display:block;margin-top:8px}
-      .row{display:flex;gap:8px;flex-wrap:wrap}
-      textarea{width:100%;height:280px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace}
-      .muted{color:#666}
-      .ok{color:#0a0}
-      .fail{color:#a00}
-    </style>
-  </head>
-  <body>
-    <h2>Diagnostics: MQTT Sanity Test</h2>
-    <div class="muted">Runs device-side MQTT tests via mTLS (provisioning, twin, telemetry).</div>
-    <div>
-      <label>Device ID (CN) <input id="deviceId" placeholder="leave empty to infer from cert" /></label>
-      <label>MQTT URL <input id="mqttUrl" value="mqtts://localhost:8883" /></label>
-      <div class="row">
-        <label>CA <input id="ca" value="/etc/mosquitto/certs/ca.crt" size="40"/></label>
-        <label>Cert <input id="cert" value="/opt/Edgeberry/devicehub/config/certs/my-device.crt" size="40"/></label>
-        <label>Key <input id="key" value="/opt/Edgeberry/devicehub/config/certs/my-device.key" size="40"/></label>
-      </div>
-      <div class="row">
-        <label>Reject unauthorized
-          <select id="reject">
-            <option value="true" selected>true</option>
-            <option value="false">false</option>
-          </select>
-        </label>
-        <label>Timeout (sec) <input id="timeout" type="number" value="10" style="width:80px"/></label>
-      </div>
-      <button id="run">Run Test</button>
-      <span id="status" class="muted"></span>
-    </div>
-    <h3>Result</h3>
-    <div id="summary"></div>
-    <textarea id="output" readonly></textarea>
-    <script>
-      const el = (id) => document.getElementById(id);
-      el('run').onclick = async () => {
-        el('status').textContent = 'Running...';
-        el('summary').innerHTML = '';
-        el('output').value = '';
-        const body = {
-          deviceId: el('deviceId').value || undefined,
-          mqttUrl: el('mqttUrl').value || undefined,
-          ca: el('ca').value || undefined,
-          cert: el('cert').value || undefined,
-          key: el('key').value || undefined,
-          rejectUnauthorized: el('reject').value === 'true',
-          timeoutSec: Number(el('timeout').value || '10')
-        };
-        try{
-          const r = await fetch('/api/diagnostics/mqtt-test', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-          const data = await r.json();
-          el('status').textContent = '';
-          const ok = !!data.ok;
-          const cls = ok ? 'ok' : 'fail';
-          const exitCode = (data.exitCode ?? 'n/a');
-          const dur = (data.durationMs ?? '?');
-          el('summary').innerHTML = '<div class="' + cls + '">' + (ok ? 'OK' : 'FAIL') + ' — exit ' + exitCode + ' — ' + dur + ' ms</div>';
-          el('output').value = 'STDOUT\n' + (data.stdout || '') + '\n\nSTDERR\n' + (data.stderr || '');
-        }catch(e){
-          el('status').textContent = '';
-          el('summary').innerHTML = '<div class="fail">Request failed</div>';
-          el('output').value = String(e);
-        }
-      };
-    </script>
-  </body>
-</html>`);
 });
 
 // Log a startup hello from core-service
@@ -883,6 +755,10 @@ app.post('/api/auth/refresh', (req: Request, res: Response) => {
 
 // GET /api/auth/me -> verify cookie and report authentication status
 app.get('/api/auth/me', (req: Request, res: Response) => {
+  if (isAuthDisabled()) {
+    res.json({ authenticated: true, user: ADMIN_USER, authDisabled: true });
+    return;
+  }
   const s = getSession(req);
   if (!s) { res.status(401).json({ authenticated: false }); return; }
   res.json({ authenticated: true, user: s.user, exp: s.exp });
@@ -976,6 +852,17 @@ function openDb(file: string){
   }catch(e){
     return null;
   }
+}
+
+// Default true: preserves today's behaviour (any device can fetch the claim
+// cert over HTTP to bootstrap itself) for existing deployments. Turning it
+// off is an opt-in hardening step for operators who provision the claim
+// cert into devices out-of-band instead (at manufacture time, over a
+// physical connection, etc.) and want to close the open HTTP endpoint that
+// would otherwise let anyone who can reach the Hub download it too.
+const PROVISIONING_CERT_FETCH_KEY = 'provisioning_cert_fetch_enabled';
+function isProvisioningCertFetchEnabled(): boolean {
+  return getAppSetting(PROVISIONING_CERT_FETCH_KEY, '1') !== '0';
 }
 
 // Ensure main devicehub database schema exists (whitelist, registry, events)
@@ -1107,6 +994,16 @@ function ensureDeviceHubSchema(){
     ).run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_device_roles_uuid ON device_roles(uuid)').run();
 
+    // app_settings: small generic key/value store for admin-toggleable
+    // settings that need to persist and be flippable at runtime from the UI
+    // (as opposed to env vars, which are deploy-time only). First user: the
+    // claim-certificate HTTP fetch switch (see PROVISIONING_CERT_FETCH_KEY).
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS app_settings ('+
+      ' key TEXT PRIMARY KEY,'+
+      ' value TEXT NOT NULL)'
+    ).run();
+
     // device_events: telemetry and event data
     db.prepare(
       'CREATE TABLE IF NOT EXISTS device_events ('+
@@ -1155,30 +1052,13 @@ function getLastSeenMap(): Record<string,string> {
 }
 
 // GET /api/devices -> list known devices from provisioning DB
-app.get('/api/devices', (req: Request, res: Response) => {
+app.get('/api/devices', authRequired, (req: Request, res: Response) => {
   const list = getDevicesListSync();
-  // If unauthenticated (anonymous mode), strip UUIDs from payload
-  const s = getSession(req);
-  if (!s) {
-    const scrubbed = {
-      devices: (list.devices || []).map((d: any) => {
-        const copy: any = { ...d };
-        // Remove top-level uuid if present
-        if ('uuid' in copy) delete copy.uuid;
-        // Remove uuid keys recursively inside meta
-        if (copy.meta && typeof copy.meta === 'object') {
-          copy.meta = stripUuidsDeep(copy.meta);
-        }
-        return copy;
-      })
-    };
-    return res.json(scrubbed);
-  }
   res.json(list);
 });
 
 // GET /api/devices/:uuid -> single device
-app.get('/api/devices/:uuid', (req: Request, res: Response) => {
+app.get('/api/devices/:uuid', authRequired, (req: Request, res: Response) => {
   const { uuid } = req.params;
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(404).json({ error: 'not found' }); return; }
@@ -1410,19 +1290,18 @@ app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => 
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try {
+    // Twin connection-status events are keyed by the device's assigned MQTT
+    // name (see twin-store.ts), not its uuid - resolve before deleting the
+    // devices row out from under that lookup.
+    const deviceRow = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(uuid) as any;
     const info = db.prepare('DELETE FROM devices WHERE uuid = ?').run(uuid);
     // Return also how many whitelist entries exist for this device so UI can prompt follow-up removal.
     const wlCount = db.prepare('SELECT COUNT(1) as c FROM uuid_whitelist WHERE device_id = ?').get(uuid)?.c || 0;
-    // Remove device from twin-service database
-    const twinDbPath = '/opt/Edgeberry/devicehub/twin-service/twin.db';
-    const twinDb = openDb(twinDbPath);
-    if (twinDb) {
+    if (deviceRow?.name) {
       try {
-        twinDb.prepare('DELETE FROM device_events WHERE device_id = ?').run(uuid);
+        deleteTwinDeviceEvents(deviceRow.name);
       } catch (e) {
-        console.error('[core-service] Failed to remove device from twin-service database:', e);
-      } finally {
-        try { twinDb.close(); } catch {}
+        console.error('[core-service] Failed to remove device connection-status history:', e);
       }
     }
     res.json({ ok: true, removed: info.changes || 0, whitelist_entries: Number(wlCount) });
@@ -1443,7 +1322,7 @@ app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => 
 // uuid at the new device - neither device row is ever mutated or deleted.
 
 // GET /api/roles -> list roles with their current device's name/online status
-app.get('/api/roles', (req: Request, res: Response) => {
+app.get('/api/roles', authRequired, (req: Request, res: Response) => {
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try {
@@ -1466,73 +1345,50 @@ app.get('/api/roles', (req: Request, res: Response) => {
   }
 });
 
-// POST /api/roles -> create a role bound to a uuid
-app.post('/api/roles', authRequired, (req: Request, res: Response) => {
-  const { role, uuid } = req.body || {};
-  if (!role || typeof role !== 'string' || !role.trim()) { res.status(400).json({ error: 'role_required' }); return; }
-  if (!uuid || typeof uuid !== 'string') { res.status(400).json({ error: 'uuid_required' }); return; }
-  const validation = validateDeviceName(role.trim());
-  if (!validation.valid) { res.status(400).json({ error: 'invalid_role_name', message: validation.error }); return; }
+// PUT /api/devices/:uuid/role -> set (or clear) this device's role
+//
+// A device holds at most one role at a time (device_roles.uuid is UNIQUE),
+// so from the device's side this is really just one action: "this jack is
+// now labeled X" - like plugging a phone line into a labeled jack on a
+// switchboard. Whatever label this device wore before is unplugged first;
+// if the new label was already plugged into a different device, that
+// device silently loses it (the hardware-swap case - the label follows
+// wherever it's plugged in, it can't be in two places at once). No
+// create/rename/reassign split, no conflict responses to branch on - one
+// endpoint, one outcome.
+app.put('/api/devices/:uuid/role', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  const role = typeof req.body?.role === 'string' ? req.body.role.trim() : '';
+  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
+  if (role) {
+    const validation = validateDeviceName(role);
+    if (!validation.valid) { res.status(400).json({ error: 'invalid_role_name', message: validation.error }); return; }
+  }
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try {
     const device = db.prepare('SELECT uuid FROM devices WHERE uuid = ?').get(uuid);
     if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
-    const existingRole = db.prepare('SELECT role FROM device_roles WHERE role = ?').get(role.trim());
-    if (existingRole) { res.status(409).json({ error: 'role_exists' }); return; }
-    const existingForUuid = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
-    if (existingForUuid) { res.status(409).json({ error: 'uuid_already_has_role', role: existingForUuid.role }); return; }
-    db.prepare('INSERT INTO device_roles (role, uuid) VALUES (?, ?)').run(role.trim(), uuid);
-    res.json({ ok: true, role: role.trim(), uuid });
+    const setRole = db.transaction(() => {
+      db.prepare('DELETE FROM device_roles WHERE uuid = ?').run(uuid);
+      if (role) {
+        db.prepare(
+          'INSERT INTO device_roles (role, uuid) VALUES (?, ?) '+
+          'ON CONFLICT(role) DO UPDATE SET uuid = excluded.uuid, updated_at = CURRENT_TIMESTAMP'
+        ).run(role, uuid);
+      }
+    });
+    setRole();
+    res.json({ ok: true, uuid, role: role || null });
   } catch (e:any) {
-    res.status(500).json({ error: 'create_failed', message: e?.message || 'failed' });
-  } finally {
-    try{ db.close(); }catch{}
-  }
-});
-
-// PUT /api/roles/:role -> reassign the role to a different uuid (the hardware-swap operation)
-app.put('/api/roles/:role', authRequired, (req: Request, res: Response) => {
-  const { role } = req.params;
-  const { uuid } = req.body || {};
-  if (!role) { res.status(400).json({ error: 'invalid_role' }); return; }
-  if (!uuid || typeof uuid !== 'string') { res.status(400).json({ error: 'uuid_required' }); return; }
-  const db = openDb(DEVICEHUB_DB);
-  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
-  try {
-    const existing = db.prepare('SELECT uuid FROM device_roles WHERE role = ?').get(role) as any;
-    if (!existing) { res.status(404).json({ error: 'role_not_found' }); return; }
-    const device = db.prepare('SELECT uuid FROM devices WHERE uuid = ?').get(uuid);
-    if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
-    const heldByOther = db.prepare('SELECT role FROM device_roles WHERE uuid = ? AND role != ?').get(uuid, role) as any;
-    if (heldByOther) { res.status(409).json({ error: 'uuid_already_has_role', role: heldByOther.role }); return; }
-    db.prepare('UPDATE device_roles SET uuid = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?').run(uuid, role);
-    res.json({ ok: true, role, uuid, previous_uuid: existing.uuid });
-  } catch (e:any) {
-    res.status(500).json({ error: 'reassign_failed', message: e?.message || 'failed' });
-  } finally {
-    try{ db.close(); }catch{}
-  }
-});
-
-// DELETE /api/roles/:role -> remove a role
-app.delete('/api/roles/:role', authRequired, (req: Request, res: Response) => {
-  const { role } = req.params;
-  if (!role) { res.status(400).json({ error: 'invalid_role' }); return; }
-  const db = openDb(DEVICEHUB_DB);
-  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
-  try {
-    const info = db.prepare('DELETE FROM device_roles WHERE role = ?').run(role);
-    res.json({ ok: true, removed: info.changes > 0 });
-  } catch (e:any) {
-    res.status(500).json({ error: 'delete_failed', message: e?.message || 'failed' });
+    res.status(500).json({ error: 'set_role_failed', message: e?.message || 'failed' });
   } finally {
     try{ db.close(); }catch{}
   }
 });
 
 // GET /api/devices/:uuid/events -> recent events from registry DB
-app.get('/api/devices/:uuid/events', (req: Request, res: Response) => {
+app.get('/api/devices/:uuid/events', authRequired, (req: Request, res: Response) => {
   const { uuid } = req.params;
   const limit = Math.max(1, Math.min(500, Number(req.query.limit || 200)));
   const db = openDb(DEVICEHUB_DB);
@@ -1548,29 +1404,11 @@ app.get('/api/devices/:uuid/events', (req: Request, res: Response) => {
   }
 });
 
-function tryParseJson(txt: any){
-  if (typeof txt !== 'string') return txt;
-  try{ return JSON.parse(txt); }catch{ return txt; }
-}
 function bufferToMaybeJson(b: any){
   try{
     const s = Buffer.isBuffer(b) ? b.toString('utf8') : (typeof b === 'string' ? b : String(b));
     try{ return JSON.parse(s); }catch{ return s; }
   }catch{ return b; }
-}
-
-// Remove any property named 'uuid' recursively from objects/arrays
-function stripUuidsDeep(input: any): any {
-  if (Array.isArray(input)) return input.map(stripUuidsDeep);
-  if (input && typeof input === 'object') {
-    const out: any = {};
-    for (const [k, v] of Object.entries(input)) {
-      if (k === 'uuid') continue;
-      out[k] = stripUuidsDeep(v as any);
-    }
-    return out;
-  }
-  return input;
 }
 
 // ===== Helpers reused by REST and WS =====
@@ -1621,142 +1459,6 @@ async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; 
     }
   }));
   return { services: checks };
-}
-
-function getDevicesListSync(): { devices: Array<{ uuid: string; name: string; role: string | null; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean; disabled: boolean }> }{
-  console.log(`[getDevicesListSync] Opening database: ${DEVICEHUB_DB}`);
-  const db = openDb(DEVICEHUB_DB);
-  if(!db){ 
-    console.error(`[getDevicesListSync] Failed to open database: ${DEVICEHUB_DB}`);
-    return { devices: [] }; 
-  }
-  try{
-    // Validate database schema before querying
-    const tableInfo = db.prepare('PRAGMA table_info(devices)').all() as Array<{ name: string; type: string; pk: number }>;
-    console.log(`[getDevicesListSync] Database schema validation - devices table columns:`, tableInfo.map(col => col.name));
-    
-    const hasUuidColumn = tableInfo.some(col => col.name === 'uuid');
-    if (!hasUuidColumn) {
-      console.error(`[getDevicesListSync] SCHEMA ERROR: devices table missing uuid column. Available columns:`, tableInfo.map(col => col.name));
-      return { devices: [] };
-    }
-    
-    const rows = db.prepare('SELECT uuid, name, token, meta, created_at FROM devices ORDER BY created_at DESC').all();
-    console.log(`[getDevicesListSync] Query returned ${rows.length} rows:`, rows);
-    
-    // Get device statuses from twin-service database
-    const deviceStatuses = getTwinServiceDeviceStatuses();
-
-    // A device whose whitelist UUID was disabled is effectively blacklisted -
-    // it can no longer (re)provision - so its status should say so regardless
-    // of whatever the twin database last heard from it.
-    let disabledUuids = new Set<string>();
-    try {
-      const disabledRows = db.prepare('SELECT uuid FROM uuid_whitelist WHERE disabled_at IS NOT NULL').all() as Array<{ uuid: string }>;
-      disabledUuids = new Set(disabledRows.map(r => r.uuid));
-    } catch (e) {
-      console.error('[getDevicesListSync] Failed to load disabled whitelist UUIDs:', e);
-    }
-
-    let roleByUuid = new Map<string, string>();
-    try {
-      const roleRows = db.prepare('SELECT role, uuid FROM device_roles').all() as Array<{ role: string; uuid: string }>;
-      roleByUuid = new Map(roleRows.map(r => [r.uuid, r.role]));
-    } catch (e) {
-      console.error('[getDevicesListSync] Failed to load device roles:', e);
-    }
-
-    const devices = rows.map((r: any) => {
-      // Keyed by whatever MQTT identity twin-service actually observed in the
-      // topic/connection-log line - the device's assigned name (r.name),
-      // never its UUID, once it has completed the masked-identity
-      // provisioning handshake. Looking this up by r.uuid instead used to
-      // work only because identity == uuid before that handshake existed.
-      const deviceStatus = deviceStatuses[r.name] ?? deviceStatuses[r.uuid];
-      const online = deviceStatus ? deviceStatus.online : false;
-      const last_seen = deviceStatus ? deviceStatus.last_seen : null;
-
-      return {
-        uuid: r.uuid,
-        name: r.name,
-        role: roleByUuid.get(r.uuid) ?? null,
-        token: r.token,
-        meta: tryParseJson(r.meta),
-        created_at: r.created_at,
-        last_seen,
-        online,
-        disabled: disabledUuids.has(r.uuid)
-      };
-    });
-    console.log(`[getDevicesListSync] Returning ${devices.length} devices:`, devices);
-    return { devices };
-  }catch(error){
-    console.error(`[getDevicesListSync] Error querying devices:`, error);
-    console.error(`[getDevicesListSync] Database path: ${DEVICEHUB_DB}`);
-    console.error(`[getDevicesListSync] Error details:`, {
-      name: (error as Error).name,
-      message: (error as Error).message,
-      code: (error as any).code
-    });
-    return { devices: [] };
-  }finally{
-    try{ db.close(); }catch{}
-  }
-}
-
-function getTwinServiceDeviceStatuses(): Record<string, { online: boolean; last_seen: string | null }> {
-  // Get device statuses from twin-service database directly
-  // This is a temporary solution until proper async D-Bus calls are implemented
-  try {
-    const twinDbPath = process.env.TWIN_DB || '/var/lib/edgeberry/devicehub/twin.db';
-    const db = openDb(twinDbPath);
-    if (!db) {
-      console.error('[core-service] Failed to open twin database:', twinDbPath);
-      return {};
-    }
-    
-    // Ensure device_events table exists
-    db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      topic TEXT NOT NULL,
-      payload BLOB,
-      ts TEXT NOT NULL DEFAULT (datetime('now'))
-    )`).run();
-
-    // Get latest status for each device
-    const stmt = db.prepare(`
-      SELECT device_id, payload, ts FROM device_events e1
-      WHERE e1.topic LIKE '%clients/%' 
-      AND e1.id = (
-        SELECT MAX(e2.id) FROM device_events e2 
-        WHERE e2.device_id = e1.device_id AND e2.topic LIKE '%clients/%'
-      )
-    `);
-    
-    const rows = stmt.all() as { device_id: string; payload: string; ts: string }[];
-    const result: Record<string, { online: boolean; last_seen: string | null }> = {};
-    
-    for (const row of rows) {
-      try {
-        const payload = JSON.parse(row.payload);
-        const isOnline = payload.status === 'online';
-        result[row.device_id] = {
-          online: isOnline,
-          last_seen: isOnline ? null : row.ts
-        };
-      } catch {
-        result[row.device_id] = { online: false, last_seen: null };
-      }
-    }
-    
-    db.close();
-    console.log(`[core-service] Retrieved device statuses:`, result);
-    return result;
-  } catch (error) {
-    console.error('[core-service] Failed to get device statuses from twin-service database:', error);
-    return {};
-  }
 }
 
 async function getDevicesList(): Promise<{ devices: Array<{ uuid: string; name: string; role: string | null; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean; disabled: boolean }> }> {
@@ -1813,75 +1515,6 @@ app.post('/api/devices/:uuid/actions/identify', authRequired, async (req: Reques
   }
 });
 
-app.post('/api/devices/:uuid/actions/reboot', authRequired, (req: Request, res: Response) => {
-  const { uuid } = req.params;
-  if (!uuid) { res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); return; }
-  res.json({ ok: true, message: `Reboot requested for device ${uuid}` });
-});
-
-// Shutdown device (stub)
-app.post('/api/devices/:uuid/actions/shutdown', (req: Request, res: Response) => {
-  const { uuid } = req.params;
-  if (!uuid) { res.status(400).json({ ok: false, message: 'invalid_device_uuid' }); return; }
-  res.json({ ok: true, message: `Shutdown requested for device ${uuid}` });
-});
-
-// Application controls
-app.post('/api/devices/:uuid/actions/application/restart', (req: Request, res: Response) => {
-  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
-  res.json({ ok:true, message:`Application restart requested for ${uuid}` });
-});
-app.post('/api/devices/:uuid/actions/application/stop', (req: Request, res: Response) => {
-  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
-  res.json({ ok:true, message:`Application stop requested for ${uuid}` });
-});
-app.post('/api/devices/:uuid/actions/application/start', (req: Request, res: Response) => {
-  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
-  res.json({ ok:true, message:`Application start requested for ${uuid}` });
-});
-app.post('/api/devices/:uuid/actions/application/update', (req: Request, res: Response) => {
-  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
-  res.json({ ok:true, message:`Application update requested for ${uuid}` });
-});
-
-// System info/network
-app.post('/api/devices/:uuid/actions/system/info', (req: Request, res: Response) => {
-  const { uuid } = req.params; if (!uuid) { res.status(400).json({ ok:false, message:'invalid_device_uuid' }); return; }
-  res.json({ ok:true, payload:{ platform:'unknown', state:'unknown' } });
-});
-app.post('/api/devices/:id/actions/system/network', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, payload:{ interfaces:{} } });
-});
-
-// Connection parameters
-app.post('/api/devices/:id/actions/connection/get-params', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, payload:{ broker:'', clientId:id } });
-});
-app.post('/api/devices/:id/actions/connection/update-params', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, message:`Connection parameters updated for ${id}` });
-});
-app.post('/api/devices/:id/actions/connection/reconnect', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, message:`Reconnect requested for ${id}` });
-});
-
-// Provisioning
-app.post('/api/devices/:id/actions/provisioning/get-params', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, payload:{ endpoint:'', thingName:id } });
-});
-app.post('/api/devices/:id/actions/provisioning/update-params', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, message:`Provisioning parameters updated for ${id}` });
-});
-app.post('/api/devices/:id/actions/provisioning/reprovision', (req: Request, res: Response) => {
-  const { id } = req.params; if (!id) { res.status(400).json({ ok:false, message:'invalid_device_id' }); return; }
-  res.json({ ok:true, message:`Reprovision requested for ${id}` });
-});
-
 // ===== Admin: UUID Whitelist Management =====
 // Table lives in provisioning.db as `uuid_whitelist` with columns
 // (uuid PRIMARY KEY, device_id TEXT, name TEXT, note TEXT, created_at TEXT, used_at TEXT)
@@ -1890,7 +1523,7 @@ app.post('/api/devices/:id/actions/provisioning/reprovision', (req: Request, res
 ensureDeviceHubSchema();
 
 // GET /api/admin/uuid-whitelist -> list entries
-app.get('/api/admin/uuid-whitelist', (_req: Request, res: Response) => {
+app.get('/api/admin/uuid-whitelist', authRequired, (_req: Request, res: Response) => {
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.json({ entries: [] }); return; }
   try{
@@ -2059,7 +1692,7 @@ app.delete('/api/admin/uuid-whitelist/by-device/:deviceId', authRequired, (req: 
 // Cert helpers moved to src/certs.ts
 
 // GET /api/settings/server -> snapshot of server-level settings (used by UI)
-app.get('/api/settings/server', async (_req: Request, res: Response) => {
+app.get('/api/settings/server', authRequired, async (_req: Request, res: Response) => {
   try {
     ensureDirs();
     const rootPresent = await caExists();
@@ -2077,7 +1710,7 @@ app.get('/api/settings/server', async (_req: Request, res: Response) => {
 });
 
 // GET /api/settings/certs/root -> PEM + meta (if present)
-app.get('/api/settings/certs/root', async (_req: Request, res: Response) => {
+app.get('/api/settings/certs/root', authRequired, async (_req: Request, res: Response) => {
   try {
     if (!(await caExists())) { res.status(404).json({ error: 'root CA not found' }); return; }
     const pem = fs.readFileSync(CA_CRT, 'utf8');
@@ -2089,7 +1722,7 @@ app.get('/api/settings/certs/root', async (_req: Request, res: Response) => {
 });
 
 // POST /api/settings/certs/root { cn?, days?, keyBits? } -> create Root CA if absent
-app.post('/api/settings/certs/root', async (req: Request, res: Response) => {
+app.post('/api/settings/certs/root', authRequired, async (req: Request, res: Response) => {
   try {
     if (await caExists()) { res.status(409).json({ error: 'root CA already exists' }); return; }
     const { cn, days, keyBits } = req.body || {};
@@ -2102,7 +1735,7 @@ app.post('/api/settings/certs/root', async (req: Request, res: Response) => {
 });
 
 // GET /api/settings/certs/provisioning -> list issued provisioning certs (metadata)
-app.get('/api/settings/certs/provisioning', async (_req: Request, res: Response) => {
+app.get('/api/settings/certs/provisioning', authRequired, async (_req: Request, res: Response) => {
   try {
     ensureDirs();
     if (!fs.existsSync(PROV_DIR)) { res.json({ certs: [] }); return; }
@@ -2120,7 +1753,7 @@ app.get('/api/settings/certs/provisioning', async (_req: Request, res: Response)
 });
 
 // POST /api/settings/certs/provisioning -> generate provisioning cert
-app.post('/api/settings/certs/provisioning', async (req: Request, res: Response) => {
+app.post('/api/settings/certs/provisioning', authRequired, async (req: Request, res: Response) => {
   try {
     await generateProvisioningCert();
     res.json({ ok: true, message: 'Provisioning certificate generated' });
@@ -2129,8 +1762,27 @@ app.post('/api/settings/certs/provisioning', async (req: Request, res: Response)
   }
 });
 
+// POST /api/settings/certs/provisioning/renew -> force-regenerate the claim
+// certificate, replacing whatever was there. A provisioning cert has no
+// fixed expiry that matters day to day - it's valid until this is called.
+// Any device that hasn't completed its first claim yet and is still holding
+// the *old* claim cert will no longer be trusted by the broker once this
+// runs, since Mosquitto only trusts the current root-CA-signed chain for
+// whichever provisioning cert is live - so this is destructive to an
+// unprovisioned fleet, by design (matches "renew" semantics: the old one
+// stops being valid the moment the new one exists).
+app.post('/api/settings/certs/provisioning/renew', authRequired, async (_req: Request, res: Response) => {
+  try {
+    await generateProvisioningCert({ force: true });
+    const meta = await readCertMeta(path.join(PROV_DIR, 'provisioning.crt'));
+    res.json({ ok: true, meta });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'failed to renew provisioning cert' });
+  }
+});
+
 // GET /api/settings/certs/provisioning/:name -> inspect a provisioning cert (PEM + meta)
-app.get('/api/settings/certs/provisioning/:name', async (req: Request, res: Response) => {
+app.get('/api/settings/certs/provisioning/:name', authRequired, async (req: Request, res: Response) => {
   try {
     const { name } = req.params;
     if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) { res.status(400).json({ error: 'invalid name' }); return; }
@@ -2145,7 +1797,7 @@ app.get('/api/settings/certs/provisioning/:name', async (req: Request, res: Resp
 });
 
 // DELETE /api/settings/certs/provisioning/:name -> remove cert and corresponding key
-app.delete('/api/settings/certs/provisioning/:name', async (req: Request, res: Response) => {
+app.delete('/api/settings/certs/provisioning/:name', authRequired, async (req: Request, res: Response) => {
   try {
     const { name } = req.params;
     if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) { res.status(400).json({ error: 'invalid name' }); return; }
@@ -2160,9 +1812,27 @@ app.delete('/api/settings/certs/provisioning/:name', async (req: Request, res: R
   }
 });
 
+// GET/PUT /api/settings/provisioning/cert-fetch -> whether devices can fetch
+// the claim certificate (provisioning.crt/.key) over the public HTTP
+// endpoints above. See isProvisioningCertFetchEnabled() for the reasoning.
+app.get('/api/settings/provisioning/cert-fetch', authRequired, (_req: Request, res: Response) => {
+  res.json({ enabled: isProvisioningCertFetchEnabled() });
+});
+
+app.put('/api/settings/provisioning/cert-fetch', authRequired, (req: Request, res: Response) => {
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') { res.status(400).json({ error: 'enabled_boolean_required' }); return; }
+  try {
+    setAppSetting(PROVISIONING_CERT_FETCH_KEY, enabled ? '1' : '0');
+    res.json({ ok: true, enabled });
+  } catch (e:any) {
+    res.status(500).json({ error: e?.message || 'failed to update setting' });
+  }
+});
+
 // ===== Services & Logs =====
 // GET /api/services -> systemd unit status snapshot consumed by ServiceStatusWidget
-app.get('/api/services', async (_req: Request, res: Response) => {
+app.get('/api/services', authRequired, async (_req: Request, res: Response) => {
   const data = await getServicesSnapshot();
   res.json(data);
 });
@@ -2264,7 +1934,7 @@ async function sampleMetrics(){
 // seed first sample soon after start; recurring interval is managed by WS wrapper below
 setTimeout(sampleMetrics, 1000);
 
-app.get('/api/metrics', async (_req: Request, res: Response) => {
+app.get('/api/metrics', authRequired, async (_req: Request, res: Response) => {
   try{
     const snap = await readMetricsSnapshot();
     res.json(snap);
@@ -2274,7 +1944,7 @@ app.get('/api/metrics', async (_req: Request, res: Response) => {
 });
 
 // GET /api/metrics/history?hours=24 -> array of snapshots (oldest -> newest)
-app.get('/api/metrics/history', (req: Request, res: Response) => {
+app.get('/api/metrics/history', authRequired, (req: Request, res: Response) => {
   const hours = Math.min(48, Math.max(1, Number(req.query.hours || 24)));
   const cutoff = Date.now() - hours * 3600 * 1000;
   const data = METRICS_HISTORY.filter(s => s.timestamp >= cutoff);
@@ -2282,7 +1952,7 @@ app.get('/api/metrics/history', (req: Request, res: Response) => {
 });
 // GET /api/logs -> recent logs snapshot
 // Query: units=comma,separated (optional), lines=number (default 200), since=systemd-time (optional)
-app.get('/api/logs', (req: Request, res: Response) => {
+app.get('/api/logs', authRequired, (req: Request, res: Response) => {
   // Support either `units` (comma-separated) or a single `unit` alias
   let units: string[] | undefined = undefined;
   if (typeof req.query.units === 'string' && req.query.units) {
@@ -2361,9 +2031,9 @@ function actionHandler(action: 'start'|'stop'|'restart') {
   };
 }
 
-app.post('/api/services/:unit/start', actionHandler('start'));
-app.post('/api/services/:unit/stop', actionHandler('stop'));
-app.post('/api/services/:unit/restart', actionHandler('restart'));
+app.post('/api/services/:unit/start', authRequired, actionHandler('start'));
+app.post('/api/services/:unit/stop', authRequired, actionHandler('stop'));
+app.post('/api/services/:unit/restart', authRequired, actionHandler('restart'));
 
 // System power management endpoints (admin-only)
 // POST /api/system/reboot -> reboot the server
@@ -2460,142 +2130,9 @@ app.post('/api/system/shutdown', authRequired, async (req: Request, res: Respons
   }
 });
 
-// POST /api/system/sanity-check -> comprehensive system sanity check
-app.post('/api/system/sanity-check', authRequired, async (req: Request, res: Response) => {
-  try {
-    console.log('[core-service] System sanity check requested by admin');
-    
-    const results: any = {
-      timestamp: new Date().toISOString(),
-      checks: {},
-      summary: { passed: 0, failed: 0, warnings: 0 }
-    };
-
-    // Check system services
-    try {
-      const servicesRes = await getServicesSnapshot();
-      const services = Array.isArray(servicesRes?.services) ? servicesRes.services : [];
-      const activeServices = services.filter(s => s.status === 'active').length;
-      const failedServices = services.filter(s => s.status === 'failed').length;
-      
-      results.checks.services = {
-        status: failedServices === 0 ? 'pass' : 'fail',
-        message: `${activeServices} active, ${failedServices} failed services`,
-        details: { active: activeServices, failed: failedServices, total: services.length }
-      };
-      
-      if (failedServices === 0) results.summary.passed++;
-      else results.summary.failed++;
-    } catch (e: any) {
-      results.checks.services = {
-        status: 'fail',
-        message: 'Failed to check services',
-        error: e?.message
-      };
-      results.summary.failed++;
-    }
-
-    // Check system metrics
-    try {
-      const metricsRes = await fetch('http://localhost:3001/api/metrics');
-      const metrics = await metricsRes.json();
-      const cpuUsage = metrics?.cpu?.approxUsagePercent || 0;
-      const memUsage = metrics?.memory?.usedPercent || 0;
-      const diskUsage = metrics?.disk?.mounts?.[0]?.usedPercent || 0;
-      
-      let status = 'pass';
-      let warnings = [];
-      
-      if (cpuUsage > 90) { status = 'fail'; warnings.push('CPU usage critical'); }
-      else if (cpuUsage > 80) { status = 'warning'; warnings.push('CPU usage high'); }
-      
-      if (memUsage > 95) { status = 'fail'; warnings.push('Memory usage critical'); }
-      else if (memUsage > 85) { status = 'warning'; warnings.push('Memory usage high'); }
-      
-      if (diskUsage > 95) { status = 'fail'; warnings.push('Disk usage critical'); }
-      else if (diskUsage > 85) { status = 'warning'; warnings.push('Disk usage high'); }
-      
-      results.checks.metrics = {
-        status,
-        message: warnings.length ? warnings.join(', ') : 'System metrics healthy',
-        details: { cpu: cpuUsage, memory: memUsage, disk: diskUsage }
-      };
-      
-      if (status === 'pass') results.summary.passed++;
-      else if (status === 'warning') results.summary.warnings++;
-      else results.summary.failed++;
-    } catch (e: any) {
-      results.checks.metrics = {
-        status: 'fail',
-        message: 'Failed to check system metrics',
-        error: e?.message
-      };
-      results.summary.failed++;
-    }
-
-    // Check database connectivity
-    try {
-      const testDb = openDb(DEVICEHUB_DB);
-      if (!testDb) throw new Error('Database connection failed');
-      
-      const stmt = testDb.prepare('SELECT 1 as test');
-      const result = stmt.get();
-      testDb.close();
-      
-      results.checks.database = {
-        status: result?.test === 1 ? 'pass' : 'fail',
-        message: result?.test === 1 ? 'Database connectivity OK' : 'Database query failed'
-      };
-      
-      if (result?.test === 1) results.summary.passed++;
-      else results.summary.failed++;
-    } catch (e: any) {
-      results.checks.database = {
-        status: 'fail',
-        message: 'Database connectivity failed',
-        error: e?.message
-      };
-      results.summary.failed++;
-    }
-
-    // Check MQTT configuration (basic check)
-    try {
-      const mqttUrl = process.env.MQTT_URL || 'mqtt://localhost:1883';
-      results.checks.mqtt = {
-        status: 'pass',
-        message: `MQTT configured: ${mqttUrl}`,
-        details: { url: mqttUrl }
-      };
-      results.summary.passed++;
-    } catch (e: any) {
-      results.checks.mqtt = {
-        status: 'fail',
-        message: 'MQTT check failed',
-        error: e?.message
-      };
-      results.summary.failed++;
-    }
-
-    // Overall health determination
-    results.overall = results.summary.failed > 0 ? 'unhealthy' : 
-                     results.summary.warnings > 0 ? 'degraded' : 'healthy';
-
-    console.log(`[core-service] Sanity check completed: ${results.overall}`);
-    res.json(results);
-    
-  } catch (e: any) {
-    console.error('[core-service] Error during sanity check:', e);
-    res.status(500).json({ 
-      ok: false, 
-      error: e?.message || 'Sanity check failed',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
 // GET /api/logs/stream -> SSE stream of logs
 // Query: units=comma,separated (optional), since=systemd-time (optional)
-app.get('/api/logs/stream', (req: Request, res: Response) => {
+app.get('/api/logs/stream', authRequired, (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -2834,23 +2371,27 @@ const wss = new WebSocketServer({
 wss.on('connection', (ws: any, req: any) => {
   console.log(`[WS] Connection event fired, processing...`);
   
-  // Check authentication via cookies (same as HTTP requests)
-  let authed = false;
-  try {
-    const cookies = parseCookies(req.headers.cookie);
-    const token = cookies[SESSION_COOKIE];
-    if (token) {
-      const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string; iat?: number; exp?: number };
-      const user = payload.user || payload.sub;
-      if (user) {
-        authed = true;
-        console.log(`[WS] Authenticated connection for user: ${user}`);
+  // Check authentication via cookies (same as HTTP requests), unless the
+  // operator has delegated auth to a reverse proxy - see auth.ts's
+  // authRequired for the same check on the HTTP side.
+  let authed = isAuthDisabled();
+  if (!authed) {
+    try {
+      const cookies = parseCookies(req.headers.cookie);
+      const token = cookies[SESSION_COOKIE];
+      if (token) {
+        const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string; iat?: number; exp?: number };
+        const user = payload.user || payload.sub;
+        if (user) {
+          authed = true;
+          console.log(`[WS] Authenticated connection for user: ${user}`);
+        }
       }
+    } catch (error: any) {
+      console.log(`[WS] Authentication failed:`, error?.message || 'unknown error');
     }
-  } catch (error: any) {
-    console.log(`[WS] Authentication failed:`, error?.message || 'unknown error');
   }
-  
+
   if (!authed) {
     console.log(`[WS] Anonymous connection established`);
   }
@@ -2879,46 +2420,37 @@ wss.on('connection', (ws: any, req: any) => {
     try{
       const msg = JSON.parse(String(data || ''));
       if(msg?.type === 'subscribe' && Array.isArray(msg.topics)){
-        for(const raw of msg.topics){ 
-          const t = String(raw);
-          if(typeof t !== 'string') continue;
-          // Anonymous clients: allow only public metrics topics
-          if(!ctx.authed){
-            if(t === 'metrics.history' || t === 'metrics.snapshots' || t === 'services.status' || t === 'devices.list.public' || t === 'device.status.public'){
-              ctx.topics.add(t);
-              console.log(`[WS] Anonymous client subscribed to: ${t}`);
-            } else {
-              console.log(`[WS] Anonymous client denied subscription to: ${t}`);
+        // Login is required for every topic - no anonymous subset. The
+        // connection itself is still accepted (see `authed` above) so an
+        // unauthenticated client gets a clear `{authenticated:false}` welcome
+        // message rather than a bare refused connection, but it is never
+        // handed any subscription.
+        if(!ctx.authed){
+          console.log(`[WS] Anonymous client denied subscription (login required)`);
+        } else {
+          for(const raw of msg.topics){
+            const t = String(raw);
+            if(typeof t !== 'string') continue;
+            ctx.topics.add(t);
+            // Handle logs.stream:<unit>
+            if(t.startsWith('logs.stream:')){
+              const unit = t.slice('logs.stream:'.length);
+              if(isSafeUnit(unit)) startLogStream(ctx, unit, t);
             }
-            continue;
-          }  
-          // Authenticated: allow full set
-          ctx.topics.add(t);
-          // Handle logs.stream:<unit>
-          if(t.startsWith('logs.stream:')){
-            const unit = t.slice('logs.stream:'.length);
-            if(isSafeUnit(unit)) startLogStream(ctx, unit, t);
           }
-        }
-        // Send current history snapshot immediately (default 24h) for anyone subscribed
-        if (ctx.topics.has('metrics.history')){
-          const hours = 24;
-          const cutoff = Date.now() - hours * 3600 * 1000;
-          const samples = METRICS_HISTORY.filter(s => s.timestamp >= cutoff);
-          send(ws, { type: 'metrics.history', data: { hours, samples } });
-        }
-        // Send immediate snapshots for services when subscribed (public allowed)
-        if (ctx.topics.has('services.status')){
-          getServicesSnapshot().then(svcs => send(ws, { type: 'services.status', data: svcs })).catch(()=>{});
-        }
-        // Send devices list snapshot depending on topic
-        if (ctx.authed && ctx.topics.has('devices.list')){
-          getDevicesList().then(list => send(ws, { type: 'devices.list', data: list })).catch(()=>{});
-        } else if (!ctx.authed && ctx.topics.has('devices.list.public')){
-          getDevicesList().then(list => {
-            const scrubbed = stripUuidsDeep(list);
-            send(ws, { type: 'devices.list.public', data: scrubbed });
-          }).catch(()=>{});
+          // Send current history snapshot immediately (default 24h) for anyone subscribed
+          if (ctx.topics.has('metrics.history')){
+            const hours = 24;
+            const cutoff = Date.now() - hours * 3600 * 1000;
+            const samples = METRICS_HISTORY.filter(s => s.timestamp >= cutoff);
+            send(ws, { type: 'metrics.history', data: { hours, samples } });
+          }
+          if (ctx.topics.has('services.status')){
+            getServicesSnapshot().then(svcs => send(ws, { type: 'services.status', data: svcs })).catch(()=>{});
+          }
+          if (ctx.topics.has('devices.list')){
+            getDevicesList().then(list => send(ws, { type: 'devices.list', data: list })).catch(()=>{});
+          }
         }
       }else if(msg?.type === 'unsubscribe' && Array.isArray(msg.topics)){
         for(const raw of msg.topics){ 
@@ -3015,11 +2547,7 @@ setInterval(() => {
     const js = JSON.stringify(data);
     if(js !== _lastDevicesJson){
       _lastDevicesJson = js;
-      // Authenticated topic
       broadcast('devices.list', { type: 'devices.list', data });
-      // Public topic with UUIDs scrubbed
-      const publicData = stripUuidsDeep(data);
-      broadcast('devices.list.public', { type: 'devices.list.public', data: publicData });
     }
   }catch{}
 }, 10000);
@@ -3069,8 +2597,26 @@ async function startDbusServices() {
     await startCoreTwinDbusServer(bus);
     console.log(`[core-service] Starting DevicesService...`);
     await startDevicesDbusServer(bus);
+    console.log(`[core-service] Starting TokenService...`);
+    await startTokenDbusServer(bus);
+    console.log(`[core-service] Starting EventsService...`);
+    await startEventsDbusServer(bus);
     console.log(`[core-service] D-Bus services started successfully`);
     
+    // Ensure the root CA exists. This is internal PKI plumbing, not an admin
+    // decision that needs a form - nothing about a fresh install benefits
+    // from a human picking the CN/validity period before anything else can
+    // work, so it's generated with sane defaults the same way the
+    // provisioning cert already is, rather than blocking on a UI action.
+    try {
+      if (!(await caExists())) {
+        await generateRootCA();
+        console.log(`[core-service] Root CA generated`);
+      }
+    } catch (error) {
+      console.warn(`[core-service] Failed to generate root CA:`, error);
+    }
+
     // Ensure provisioning certificates exist for device bootstrap
     try {
       await generateProvisioningCert();

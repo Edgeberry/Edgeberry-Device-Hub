@@ -6,10 +6,12 @@
  */
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { Badge, Button, Card, Col, Collapse, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
-import { 
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faPowerOff, faGears, faChartLine } from '@fortawesome/free-solid-svg-icons';
+import {
   getServices, getServiceLogs, startService, stopService, restartService,
   getMetrics, getHealth, getStatus, getPublicConfig,
-  runSystemSanityCheck, rebootSystem, shutdownSystem
+  rebootSystem, shutdownSystem
 } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
@@ -99,7 +101,7 @@ function humanizedUptime(status: any, metrics: Metrics): string {
   return formatDuration(sec);
 }
 
-export default function SystemWidget(props: { user: any | null }) {
+export default function SystemWidget() {
   // Services state
   const [services, setServices] = useState<Service[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
@@ -140,17 +142,6 @@ export default function SystemWidget(props: { user: any | null }) {
   const [powerBusy, setPowerBusy] = useState<boolean>(false);
   const [powerMsg, setPowerMsg] = useState<string>('');
   const [powerErr, setPowerErr] = useState<string>('');
-  
-  // Sanity check
-  const [diagOpen, setDiagOpen] = useState<boolean>(false);
-  const [diagBusy, setDiagBusy] = useState<boolean>(false);
-  const [diagError, setDiagError] = useState<string>('');
-  const [diagData, setDiagData] = useState<any>(null);
-  
-  const canControl = !!(props?.user && (
-    (Array.isArray(props.user.roles) && props.user.roles.includes('admin')) ||
-    (!Array.isArray(props.user.roles))
-  ));
 
   // Load functions
   async function loadServices() {
@@ -622,33 +613,9 @@ export default function SystemWidget(props: { user: any | null }) {
         <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
           <Button
             size="sm"
-            variant="outline-primary"
-            onClick={async () => {
-              setDiagOpen(true);
-              if (!canControl) return;
-              setDiagBusy(true);
-              setDiagError('');
-              setDiagData(null);
-              try {
-                const res: any = await runSystemSanityCheck();
-                setDiagData(res);
-              } catch (e: any) {
-                setDiagError(e?.message || 'Sanity check failed');
-              } finally {
-                setDiagBusy(false);
-              }
-            }}
-            disabled={!canControl || diagBusy}
-            title={canControl ? 'Run system sanity check' : 'Admin only'}
-          >
-            <i className="fa-solid fa-stethoscope" aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
             variant="outline-danger"
-            disabled={!canControl}
-            title={canControl ? 'Power options' : 'Admin only'}
-            onClick={() => { if (canControl) { setPowerErr(''); setPowerMsg(''); setShowPower(true); } }}
+            title="Power options"
+            onClick={() => { setPowerErr(''); setPowerMsg(''); setShowPower(true); }}
           >
             <i className="fa-solid fa-power-off" aria-hidden="true" />
           </Button>
@@ -785,8 +752,8 @@ export default function SystemWidget(props: { user: any | null }) {
 
       {/* Power Management Modal */}
         <Modal show={showPower} onHide={() => { if (!powerBusy) setShowPower(false); }} centered>
-          <Modal.Header closeButton>
-            <Modal.Title>Power Management</Modal.Title>
+          <Modal.Header closeButton closeVariant="white">
+            <Modal.Title><FontAwesomeIcon icon={faPowerOff} />Power Management</Modal.Title>
           </Modal.Header>
           <Modal.Body>
             <div className="d-grid gap-2">
@@ -814,7 +781,7 @@ export default function SystemWidget(props: { user: any | null }) {
               </Button>
               <Button
                 variant="outline-danger"
-                disabled={!canControl || powerBusy}
+                disabled={powerBusy}
                 onClick={async () => {
                   if (!confirm('Shutdown the server now? This will power off the device.')) return;
                   setPowerBusy(true); setPowerErr(''); setPowerMsg('');
@@ -845,9 +812,9 @@ export default function SystemWidget(props: { user: any | null }) {
         </Modal>
 
         {/* Service Detail Modal */}
-        <Modal show={!!selectedService} onHide={() => setSelectedService(null)} centered size="xl" scrollable fullscreen="md-down">
-          <Modal.Header closeButton>
-            <Modal.Title>Service details</Modal.Title>
+        <Modal show={!!selectedService} onHide={() => setSelectedService(null)} centered size="xl" scrollable fullscreen="md-down" contentClassName="eb-modal-content">
+          <Modal.Header closeButton closeVariant="white">
+            <Modal.Title><FontAwesomeIcon icon={faGears} />Service details</Modal.Title>
           </Modal.Header>
           <Modal.Body>
             {selectedService && (
@@ -859,14 +826,11 @@ export default function SystemWidget(props: { user: any | null }) {
                 <div style={{ marginBottom: 6, opacity: 0.7 }}><small>Unit id: {selectedService.unit}</small></div>
                 <div style={{ marginBottom: 12 }}><strong>Status:</strong> <Badge bg={statusVariant(selectedService.status)}>{selectedService.status}</Badge></div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
-                  <Button size="sm" variant="success" disabled={!canControl || actionBusy} onClick={()=>doAction('start', selectedService.unit)}>Start</Button>
-                  <Button size="sm" variant="warning" disabled={!canControl || actionBusy} onClick={()=>doAction('restart', selectedService.unit)}>Restart</Button>
-                  <Button size="sm" variant="danger" disabled={!canControl || actionBusy} onClick={()=>doAction('stop', selectedService.unit)}>Stop</Button>
+                  <Button size="sm" variant="success" disabled={actionBusy} onClick={()=>doAction('start', selectedService.unit)}>Start</Button>
+                  <Button size="sm" variant="warning" disabled={actionBusy} onClick={()=>doAction('restart', selectedService.unit)}>Restart</Button>
+                  <Button size="sm" variant="danger" disabled={actionBusy} onClick={()=>doAction('stop', selectedService.unit)}>Stop</Button>
                   {actionBusy && <Spinner animation="border" size="sm" />}
                 </div>
-                {!canControl && (
-                  <div style={{ color:'#666', fontSize: 12, marginBottom: 8 }}>Admin permissions required to run actions</div>
-                )}
                 {actionError && <div style={{ color:'#c00', marginBottom: 8 }}>{actionError}</div>}
                 <div style={{ display:'flex', alignItems:'center', gap:8, fontWeight: 600, marginBottom: 8 }}>
                   <span>Recent logs</span>
@@ -909,9 +873,9 @@ export default function SystemWidget(props: { user: any | null }) {
 
         {/* Metrics Detail Modal */}
         <Modal show={!!selectedMetric} onHide={() => setSelectedMetric(null)} centered size="lg">
-          <Modal.Header closeButton>
+          <Modal.Header closeButton closeVariant="white">
             <Modal.Title>
-              {selectedMetric ? metricsTiles.find((t: any) => t.key === selectedMetric)?.title : 'Metrics'} Details
+              <FontAwesomeIcon icon={faChartLine} />{selectedMetric ? metricsTiles.find((t: any) => t.key === selectedMetric)?.title : 'Metrics'} Details
             </Modal.Title>
           </Modal.Header>
           <Modal.Body>
@@ -942,31 +906,6 @@ export default function SystemWidget(props: { user: any | null }) {
           </Modal.Footer>
         </Modal>
 
-        {/* Sanity Check Modal */}
-        <Modal show={diagOpen} onHide={() => setDiagOpen(false)} size="lg" centered>
-          <Modal.Header closeButton>
-            <Modal.Title>System Sanity Check</Modal.Title>
-          </Modal.Header>
-          <Modal.Body>
-            {diagBusy ? (
-              <div className="text-center">
-                <Spinner animation="border" />
-                <div className="mt-2">Running sanity check...</div>
-              </div>
-            ) : diagError ? (
-              <div style={{ color: '#c00' }}>{diagError}</div>
-            ) : diagData ? (
-              <pre style={{ fontSize: '0.85em', maxHeight: 400, overflow: 'auto' }}>
-                {JSON.stringify(diagData, null, 2)}
-              </pre>
-            ) : (
-              <div>Click the sanity check button to run diagnostics.</div>
-            )}
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="secondary" onClick={() => setDiagOpen(false)}>Close</Button>
-          </Modal.Footer>
-        </Modal>
     </Card>
   );
 }

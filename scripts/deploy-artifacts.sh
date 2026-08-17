@@ -71,7 +71,28 @@ configure_service_envs() {
   ensure_env_kv "$core_env" "JWT_TTL_SECONDS" "${JWT_TTL_SECONDS:-86400}"
   # Production port (3000 for reverse proxy setup)
   ensure_env_kv "$core_env" "PORT" "3000"
-  
+
+  # Admin password - write-once. ADMIN_PASSWORD is only ever consulted by
+  # core-service as a login fallback for before a real users-table row
+  # exists (see core-service/src/index.ts's /api/auth/login and
+  # /api/auth/change-password); once an operator changes their password
+  # in-app, that DB row takes over and this value is never read again. Only
+  # set it here when the installer (scripts/install.sh) actually prompted
+  # for/generated one and the key isn't already present, so a redeploy never
+  # silently resets an operator's still-in-use admin password.
+  if [[ -n "${ADMIN_PASSWORD:-}" ]] && ! grep -qE '^\s*ADMIN_PASSWORD\s*=' "$core_env" 2>/dev/null; then
+    echo "ADMIN_PASSWORD=${ADMIN_PASSWORD}" >> "$core_env"
+    log "core: set initial admin password from installer"
+  fi
+  # JWT signing secret - write-once, same rationale as ADMIN_PASSWORD above.
+  # Left unset, core-service falls back to a fixed 'dev-change-me' secret
+  # (core-service/src/config.ts), which would let anyone forge a valid
+  # session for any Device Hub install - always seed a real one.
+  if ! grep -qE '^\s*JWT_SECRET\s*=' "$core_env" 2>/dev/null; then
+    echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$core_env"
+    log "core: generated JWT_SECRET"
+  fi
+
   # Application service environment
   local app_env="$ETC_DIR/application.env"
   ensure_env_kv "$app_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
@@ -217,6 +238,8 @@ install_node_deps() {
 }
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/services.sh
+source "${ROOT_DIR}/scripts/lib/services.sh"
 ART_DIR="${1:-${ROOT_DIR}/dist-artifacts}"
 INSTALL_ROOT="/opt/Edgeberry/devicehub"
 SYSTEMD_DIR="/etc/systemd/system"
@@ -369,15 +392,7 @@ install_systemd_units() {
   fi
   log "installing systemd unit files"
   # Install systemd units
-  for unit in \
-    devicehub-core.service \
-    devicehub-provisioning.service \
-    devicehub-twin.service \
-    devicehub-application.service \
-    edgeberry-ca-rehash.service \
-    edgeberry-ca-rehash.path \
-    edgeberry-cert-sync.service \
-    edgeberry-cert-sync.path; do
+  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
     if [[ -f "${ROOT_DIR}/config/${unit}" ]]; then
       install -m 0644 "${ROOT_DIR}/config/${unit}" "${SYSTEMD_DIR}/${unit}"
       log "installed ${SYSTEMD_DIR}/${unit}"
@@ -446,16 +461,25 @@ install_systemd_units() {
   fi
 }
 
+install_cli() {
+  local src="${ROOT_DIR}/config/devicehub-cli.sh"
+  if [[ -f "$src" ]]; then
+    install -m 0755 "$src" /usr/local/bin/devicehub
+    log "installed CLI: /usr/local/bin/devicehub"
+  else
+    log "WARN: missing $src; devicehub CLI not installed"
+  fi
+}
+
 stop_services() {
   if ! have_systemd; then
     log "NOTE: systemd not available; skipping service stop"
     return 0
   fi
   log "stopping services prior to install"
-  systemctl_safe stop devicehub-core.service || true
-  systemctl_safe stop devicehub-provisioning.service || true
-  systemctl_safe stop devicehub-twin.service || true
-  systemctl_safe stop devicehub-application.service || true
+  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}"; do
+    systemctl_safe stop "$unit" || true
+  done
 }
 
 validate_compiled_no_decorators() {
@@ -482,15 +506,9 @@ enable_services() {
     return 0
   fi
   log "enabling services"
-  systemctl_safe enable devicehub-core.service || true
-  systemctl_safe enable devicehub-provisioning.service || true
-  systemctl_safe enable devicehub-twin.service || true
-  # Enable CA rehash path (auto-reload broker when CA dir changes)
-  systemctl_safe enable edgeberry-ca-rehash.path || true
-  systemctl_safe enable edgeberry-ca-rehash.service || true
-  # Enable certificate sync path (auto-sync persistent certs to broker)
-  systemctl_safe enable edgeberry-cert-sync.path || true
-  systemctl_safe enable edgeberry-cert-sync.service || true
+  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+    systemctl_safe enable "$unit" || true
+  done
 }
 
 start_services() {
@@ -499,19 +517,18 @@ start_services() {
     return 0
   fi
   log "starting services"
-  systemctl_safe restart devicehub-core.service || true
-  systemctl_safe restart devicehub-provisioning.service || true
-  systemctl_safe restart devicehub-twin.service || true
-  systemctl_safe restart devicehub-application.service || true
-  # Start path units to monitor certificate changes
-  if ! systemctl_safe start edgeberry-ca-rehash.path; then
-    log "WARN: failed to start edgeberry-ca-rehash.path; dumping recent logs"
-    journalctl -u edgeberry-ca-rehash.path -n 50 --no-pager 2>/dev/null | tail -n 50 || true
-  fi
-  if ! systemctl_safe start edgeberry-cert-sync.path; then
-    log "WARN: failed to start edgeberry-cert-sync.path; dumping recent logs"
-    journalctl -u edgeberry-cert-sync.path -n 50 --no-pager 2>/dev/null | tail -n 50 || true
-  fi
+  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}"; do
+    systemctl_safe restart "$unit" || true
+  done
+  # Start path units to monitor certificate changes (their .service pair is
+  # triggered by the path unit, not started directly)
+  for unit in "${DEVICEHUB_AUX_UNITS[@]}"; do
+    [[ "$unit" == *.path ]] || continue
+    if ! systemctl_safe start "$unit"; then
+      log "WARN: failed to start $unit; dumping recent logs"
+      journalctl -u "$unit" -n 50 --no-pager 2>/dev/null | tail -n 50 || true
+    fi
+  done
 }
 
 configure_mosquitto() {
@@ -951,6 +968,7 @@ main() {
   # Sanity-check compiled outputs for known hazards
   validate_compiled_no_decorators
   install_systemd_units
+  install_cli
   configure_service_envs
   enable_services
   configure_mosquitto

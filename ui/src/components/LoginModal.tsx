@@ -2,7 +2,11 @@ import React, { useState } from 'react';
 import { Modal, Button, Form, Spinner } from 'react-bootstrap';
 import logo from '../EdgeBerry_Logo_text.svg';
 
-export default function LoginModal(props: { show: boolean; onClose: () => void; onLoggedIn: () => Promise<void>; }) {
+// Login is required to see any Device Hub content (see Dashboard's auth
+// gate) - this is only ever mounted as that gate, never as a voluntary,
+// dismissible dialog, so it has no close button and a static, non-escapable
+// backdrop rather than the usual onClose/Cancel affordances.
+export default function LoginModal(props: { show: boolean; onLoggedIn: () => Promise<void>; }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string|null>(null);
@@ -20,7 +24,6 @@ export default function LoginModal(props: { show: boolean; onClose: () => void; 
       });
       if (res.ok){
         await props.onLoggedIn();
-        props.onClose();
       } else {
         const d = await res.json().catch(()=>({}));
         setError(d.error || 'Invalid credentials');
@@ -30,9 +33,9 @@ export default function LoginModal(props: { show: boolean; onClose: () => void; 
   }
 
   return (
-    <Modal show={props.show} onHide={props.onClose} centered>
+    <Modal show={props.show} backdrop='static' keyboard={false} centered>
       <Form onSubmit={submit}>
-        <Modal.Header closeButton>
+        <Modal.Header>
           <Modal.Title>
             <img src={logo} alt="Edgeberry" style={{height:24, marginRight:8}}/>
             Sign in
@@ -50,7 +53,6 @@ export default function LoginModal(props: { show: boolean; onClose: () => void; 
           <div style={{ color:'#b00020', fontSize:12, minHeight:16, marginTop:6 }}>{error}</div>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={props.onClose} disabled={loading}>Cancel</Button>
           <Button type="submit" variant="primary" disabled={loading}>
             {loading ? (<><Spinner size="sm" animation="border" className="me-2"/>Signing in...</>) : 'Sign in'}
           </Button>

@@ -115,6 +115,14 @@ export async function issueProvisioningCert(name: string, days?: number): Promis
 }
 
 
+// The fleet-wide provisioning ("claim") certificate isn't tied to a device
+// uuid the way issued device certs are, but it lives in the same
+// `certificates` table so a renewal can revoke the outgoing one through the
+// same CRL machinery. This sentinel occupies the uuid column for that one
+// row instead of a real device uuid - never matched by
+// revokeCertificatesForUuid, which only looks up real device uuids.
+const PROVISIONING_CERT_SENTINEL_UUID = '__provisioning_cert__';
+
 function openCertsDb(): Database.Database {
   const db = new Database(DEVICEHUB_DB);
   db.prepare(`CREATE TABLE IF NOT EXISTS certificates (
@@ -306,23 +314,59 @@ export async function issueDeviceCertFromCSR(uuid: string, deviceId: string, csr
   return { certPem, caChainPem };
 }
 
-// Generate provisioning client certificate for device bootstrap
-export async function generateProvisioningCert(): Promise<void> {
+// Generate the fleet-wide provisioning ("claim") certificate devices use to
+// bootstrap. Skips if one already exists, UNLESS force is set - the startup
+// call site (core-service/src/index.ts) relies on that skip so a routine
+// restart never silently replaces it out from under already-provisioned
+// devices; force:true is for the explicit admin "Renew" action, which does
+// mean to replace it (see the POST /renew route's warning about the
+// unprovisioned fleet).
+export async function generateProvisioningCert(opts?: { force?: boolean }): Promise<void> {
   if (!(await caExists())) {
     throw new Error('Root CA not found. Generate it first.');
   }
-  
+
   ensureDirs();
-  
+
   const provisioningCertPath = path.join(PROV_DIR, 'provisioning.crt');
   const provisioningKeyPath = path.join(PROV_DIR, 'provisioning.key');
-  
-  // Skip if already exists
-  if (fs.existsSync(provisioningCertPath) && fs.existsSync(provisioningKeyPath)) {
+
+  // Skip if already exists (unless a renewal was explicitly requested)
+  if (!opts?.force && fs.existsSync(provisioningCertPath) && fs.existsSync(provisioningKeyPath)) {
     console.log('[certs] Provisioning certificate already exists');
     return;
   }
-  
+
+  // A forced renewal replaces the fleet-wide claim credential - revoke the
+  // outgoing one (CRL) so this is a genuine "the old one stops working"
+  // renewal, not just a new file sitting next to a still-trusted old one
+  // (both are signed by the same root CA, so without this the old claim
+  // cert would keep authenticating fine forever). Any device that hasn't
+  // completed its first claim yet and is still holding only the old cert
+  // fails its next TLS handshake with the broker once the CRL picks this
+  // up - the "damage to the unprovisioned fleet" the /renew route warns
+  // about is this, deliberately, not a side effect to avoid.
+  if (opts?.force && fs.existsSync(provisioningCertPath)) {
+    try {
+      const serialRes = await runCmd('openssl', ['x509', '-in', provisioningCertPath, '-noout', '-serial']);
+      const serial = (serialRes.out || '').trim().split('=').pop();
+      if (serial) {
+        const meta = await readCertMeta(provisioningCertPath);
+        const db = openCertsDb();
+        try {
+          const now = new Date().toISOString();
+          db.prepare(
+            'INSERT OR REPLACE INTO certificates (serial, uuid, device_id, issued_at, expires_at, revoked_at) '+
+            'VALUES (?, ?, ?, ?, ?, ?)'
+          ).run(serial, PROVISIONING_CERT_SENTINEL_UUID, 'provisioning', now, meta.notAfter || now, now);
+        } finally { db.close(); }
+        await regenerateCRL();
+      }
+    } catch (e) {
+      console.warn('[certs] Warning: failed to revoke outgoing provisioning cert:', (e as Error).message);
+    }
+  }
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edgeberry-prov-'));
   const keyPath = path.join(tmpDir, 'provisioning.key');
   const csrPath = path.join(tmpDir, 'provisioning.csr');

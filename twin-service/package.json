@@ -11,12 +11,10 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^9.6.0",
     "dbus-native": "^0.4.0",
     "mqtt": "^5.5.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.28",
     "tsx": "^4.7.0",
     "typescript": "^5.4.5"

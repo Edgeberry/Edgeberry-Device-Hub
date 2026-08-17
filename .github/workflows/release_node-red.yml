@@ -36,7 +36,7 @@ jobs:
       - name: Publish Node-RED package to npm
         run: |
           pushd examples/app-client/examples
-          # Version is already set by sync-versions.js script
+          # Version must already be set in package.json before tagging a release
           npm publish --provenance --access public
           popd
         env:

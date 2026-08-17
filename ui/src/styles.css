@@ -88,9 +88,12 @@ body {
 }
 
 /*
- *  Modals. Dark header matching the navbar, same as every ModalShell in
- *  Edgeberry-device-software, so a settings dialog and the top bar read as
- *  one surface rather than two different products.
+ *  Modals. Dark header matching the navbar, same as every modal in
+ *  Edgeberry-device-software (ModalShell for big content, PowerModal for
+ *  small confirms), so a settings dialog and the top bar read as one surface
+ *  rather than two different products. Sizing/spacing values (header padding,
+ *  title size) are copied from that project's inline styles rather than
+ *  Bootstrap's defaults, for the same reason.
  */
 .modal-content {
   background-color: var(--eb-bg);
@@ -101,25 +104,38 @@ body {
   background-color: var(--eb-navbar-bg);
   color: var(--eb-navbar-fg);
   border-bottom: none;
+  padding: 0.5rem 1rem;
 }
 
 .modal-title {
   color: var(--eb-navbar-fg);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+}
+
+.modal-title .fa-solid,
+.modal-title .fa-regular,
+.modal-title svg {
+  color: var(--eb-primary);
+  margin-right: 0.5rem;
 }
 
 /*
  *  Fixed-shape modal, for content that varies a lot in length (device detail:
- *  a "Loading..." spinner one moment, three tabs of panels and raw JSON dumps
- *  the next). react-bootstrap's `scrollable` prop only caps height with
- *  max-height, so a short tab still shrinks the dialog - a real height keeps
- *  the window the same size regardless of which tab or loading state is
- *  showing, and the body scrolls inside it. Same convention as
- *  Edgeberry-device-software's .eb-modal-content.
+ *  a "Loading..." spinner one moment, a full JSON dump the next). react-
+ *  bootstrap's `scrollable` prop only caps height with max-height, so a short
+ *  state still shrinks the dialog - a real height keeps the window the same
+ *  size regardless of what's showing, and the body scrolls inside it. Same
+ *  convention as Edgeberry-device-software's .eb-modal-content. Borderless,
+ *  matching that project's big content modals (ModalShell) - the plain
+ *  `.modal-content` border above is for small confirm dialogs (PowerModal),
+ *  which have no surrounding page content to set themselves apart from.
  */
 .eb-modal-content {
   height: 85vh;
+  border: none;
 }
 
 @media (max-width: 575.98px) {
@@ -129,9 +145,10 @@ body {
 }
 
 /* Bootstrap's .btn-close is dark-on-transparent by default, which disappears
-   against the dark header above. Bootstrap ships an .invert() filter for this
-   exact case (.btn-close-white) - apply it to every modal close button rather
-   than remembering to add the class at each call site. */
+   against the dark header above. Edgeberry-device-software's modals use
+   Bootstrap's own .btn-close-white class for this (via react-bootstrap's
+   `closeVariant="white"` prop on every Modal.Header here) - this fallback
+   filter only matters for a close button that forgets the prop. */
 .modal-header .btn-close {
   filter: invert(1) grayscale(100%) brightness(200%);
 }

@@ -87,7 +87,7 @@ Create dashboards, monitoring tools, or integrate with existing systems using RE
 **Node-RED Integration:**
 Visual programming nodes for drag-and-drop device integration and data processing workflows.
 
-> **Documentation**: See `documentation/alignment.md` for detailed API references, architecture details, and development guides.
+> **Documentation**: See `documentation/PRODUCTION_SETUP.md` for production deployment guidance.
 
 ## License & Collaboration
 **Copyright 2025 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub project is licensed under the **[GNU GPLv3](LICENSE.txt)**. The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.

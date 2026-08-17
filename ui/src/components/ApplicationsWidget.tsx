@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Form, Modal, Spinner, Table } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faKey, faToggleOn, faToggleOff, faTrash, faCopy } from '@fortawesome/free-solid-svg-icons';
+import { faKey, faToggleOn, faToggleOff, faTrash, faCopy, faPlus } from '@fortawesome/free-solid-svg-icons';
 
 type ApiToken = {
   id: string;
@@ -39,7 +39,7 @@ type ConnectionStatus = {
   connections: ActiveConnection[];
 };
 
-export default function ApplicationsWidget(props: { user: any | null }) {
+export default function ApplicationsWidget() {
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [connections, setConnections] = useState<ConnectionStatus>({ totalConnections: 0, activeApplications: 0, connections: [] });
   const [loading, setLoading] = useState(true);
@@ -55,12 +55,6 @@ export default function ApplicationsWidget(props: { user: any | null }) {
   // View token modal state
   const [viewTokenModal, setViewTokenModal] = useState(false);
   const [viewingToken, setViewingToken] = useState<{id: string, name: string, token: string} | null>(null);
-
-  // Check if user is admin
-  const isAdmin = props.user && (
-    (Array.isArray(props.user.roles) && props.user.roles.includes('admin')) ||
-    (!Array.isArray(props.user.roles))
-  );
 
   async function loadTokens() {
     try {
@@ -100,13 +94,11 @@ export default function ApplicationsWidget(props: { user: any | null }) {
   }
 
   useEffect(() => {
-    if (props.user) {
-      loadAll();
-      // Refresh connections every 10 seconds
-      const interval = setInterval(loadConnections, 10000);
-      return () => clearInterval(interval);
-    }
-  }, [props.user]);
+    loadAll();
+    // Refresh connections every 10 seconds
+    const interval = setInterval(loadConnections, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   async function createToken() {
     try {
@@ -195,10 +187,6 @@ export default function ApplicationsWidget(props: { user: any | null }) {
     return connections.connections.find(c => c.tokenId === tokenId);
   }
 
-  if (!props.user) {
-    return null;
-  }
-
   return (
     <>
       <Card className="mb-3">
@@ -210,20 +198,19 @@ export default function ApplicationsWidget(props: { user: any | null }) {
               ({tokens.filter(t => t.active).length} configured · {connections.activeApplications} connected)
             </small>
           </div>
-          {isAdmin && (
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => {
-                setNewTokenName('');
-                setNewTokenExpiry('');
-                setGeneratedToken(null);
-                setShowCreateModal(true);
-              }}
-            >
-              <i className="fa fa-plus"></i> New Application
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            title="Add Application"
+            onClick={() => {
+              setNewTokenName('');
+              setNewTokenExpiry('');
+              setGeneratedToken(null);
+              setShowCreateModal(true);
+            }}
+          >
+            <FontAwesomeIcon icon={faPlus} />
+          </Button>
         </Card.Header>
         <Card.Body>
           {loading ? (
@@ -238,8 +225,7 @@ export default function ApplicationsWidget(props: { user: any | null }) {
           ) : tokens.length === 0 ? (
             <div className="text-muted text-center py-3">
               <i className="fa fa-info-circle me-2"></i>
-              No applications configured.
-              {isAdmin && ' Click "New Application" to create one.'}
+              No applications configured. Click "New Application" to create one.
               <div className="small mt-2">
                 Applications like Node-RED, custom dashboards, or other tools can connect via API tokens.
               </div>
@@ -254,7 +240,7 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                     <th>Connection</th>
                     <th>Created</th>
                     <th>Last Used</th>
-                    {isAdmin && <th className="text-end">Actions</th>}
+                    <th className="text-end">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -264,12 +250,9 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                     const isConnected = !!connInfo && connInfo.connectionCount > 0;
                     
                     return (
-                      <tr key={token.id}>
+                      <tr key={token.id} className="device-row">
                         <td className="align-middle">
-                          <div className="d-flex align-items-center">
-                            <i className="fa-solid fa-cube me-2 text-muted"></i>
-                            <span>{token.name}</span>
-                          </div>
+                          {token.name}
                         </td>
                         <td className="align-middle">
                           <Badge bg={!token.active ? 'secondary' : isExpired ? 'danger' : 'success'}>
@@ -280,7 +263,6 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                           {isConnected ? (
                             <div>
                               <Badge bg="success" className="me-1">
-                                <i className="fa fa-circle-dot me-1"></i>
                                 Connected
                               </Badge>
                               <small className="text-muted">
@@ -289,7 +271,6 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                             </div>
                           ) : (
                             <Badge bg="secondary">
-                              <i className="fa fa-circle me-1"></i>
                               Disconnected
                             </Badge>
                           )}
@@ -300,47 +281,39 @@ export default function ApplicationsWidget(props: { user: any | null }) {
                         <td className="align-middle">
                           <small>{token.last_used ? new Date(token.last_used).toLocaleDateString() : 'Never'}</small>
                         </td>
-                        {isAdmin && (
-                          <td className="align-middle text-end">
-                            <div className="btn-group" role="group">
-                              <button 
-                                type="button" 
-                                className="btn btn-sm btn-edgeberry"
-                                onClick={() => viewToken(token.id, token.name)}
-                                title="View Token"
-                              >
-                                <FontAwesomeIcon icon={faKey} />
-                              </button>
-                              <button 
-                                type="button" 
-                                className="btn btn-sm btn-edgeberry"
-                                onClick={() => toggleTokenStatus(token)}
-                                title={token.active ? 'Disable' : 'Enable'}
-                              >
-                                <FontAwesomeIcon icon={token.active ? faToggleOn : faToggleOff} />
-                              </button>
-                              <button 
-                                type="button" 
-                                className="btn btn-sm btn-edgeberry"
-                                onClick={() => deleteToken(token)}
-                                title="Delete"
-                              >
-                                <FontAwesomeIcon icon={faTrash} />
-                              </button>
-                            </div>
-                          </td>
-                        )}
+                        <td className="align-middle text-end">
+                          <div className="btn-group device-actions" role="group">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-edgeberry"
+                              onClick={() => viewToken(token.id, token.name)}
+                              title="View Token"
+                            >
+                              <FontAwesomeIcon icon={faKey} />
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-edgeberry"
+                              onClick={() => toggleTokenStatus(token)}
+                              title={token.active ? 'Disable' : 'Enable'}
+                            >
+                              <FontAwesomeIcon icon={token.active ? faToggleOn : faToggleOff} />
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-edgeberry"
+                              onClick={() => deleteToken(token)}
+                              title="Delete"
+                            >
+                              <FontAwesomeIcon icon={faTrash} />
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-            </div>
-          )}
-          {!isAdmin && tokens.length > 0 && (
-            <div className="text-muted small mt-2">
-              <i className="fa fa-info-circle me-1"></i>
-              Contact an administrator to manage applications.
             </div>
           )}
           {connections.totalConnections > 0 && (
@@ -357,8 +330,8 @@ export default function ApplicationsWidget(props: { user: any | null }) {
 
       {/* View Token Modal */}
       <Modal show={viewTokenModal} onHide={() => setViewTokenModal(false)} centered>
-        <Modal.Header closeButton>
-          <Modal.Title>View Token</Modal.Title>
+        <Modal.Header closeButton closeVariant="white">
+          <Modal.Title><FontAwesomeIcon icon={faKey} />View Token</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {viewingToken && (
@@ -404,8 +377,8 @@ export default function ApplicationsWidget(props: { user: any | null }) {
 
       {/* Create Application Token Modal */}
       <Modal show={showCreateModal} onHide={() => !creating && setShowCreateModal(false)}>
-        <Modal.Header closeButton>
-          <Modal.Title>Add New Application</Modal.Title>
+        <Modal.Header closeButton closeVariant="white">
+          <Modal.Title><FontAwesomeIcon icon={faPlus} />Add New Application</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {generatedToken ? (

@@ -1,10 +1,8 @@
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync, existsSync } from 'fs';
-import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED, DB_PATH } from './config.js';
+import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, SERVICE, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED } from './config.js';
 import { Json } from './types.js';
-import { getTwin, setDoc } from './db.js';
-import { dbusUpdateDeviceStatus } from './dbus.js';
-import Database from 'better-sqlite3';
+import { dbusGetTwin, dbusSetDesired, dbusSetReported, dbusUpdateDeviceStatus } from './dbus.js';
 
 // Topic helpers and constants
 const TOPICS = {
@@ -40,44 +38,25 @@ function parseStatusDeviceId(topic: string): string | null {
 }
 
 function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean): void {
-  try {
-    const db = new Database(DB_PATH);
-    
-    // Ensure device_events table exists
-    db.prepare(`CREATE TABLE IF NOT EXISTS device_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      topic TEXT NOT NULL,
-      payload BLOB,
-      ts TEXT NOT NULL DEFAULT (datetime('now'))
-    )`).run();
-    
-    // Record connection status as device event
-    const status = isOnline ? 'online' : 'offline';
-    const timestamp = Date.now();
-    const payload = JSON.stringify({ status, ts: timestamp });
-    db.prepare(`INSERT INTO device_events (device_id, topic, payload, ts) VALUES (?, ?, ?, datetime('now'))`)
-      .run(deviceId, `$SYS/broker/clients/${deviceId}`, payload);
-    
-    db.close();
-    console.log(`[${SERVICE}] Device ${deviceId} is now ${status} - reporting to core-service immediately`);
-    
-    // Report status change to core-service via D-Bus immediately
-    setImmediate(async () => {
-      try {
-        const result = await dbusUpdateDeviceStatus(deviceId, status, timestamp);
-        if (result) {
-          console.log(`[${SERVICE}] Successfully reported ${deviceId} status (${status}) to core-service`);
-        } else {
-          console.error(`[${SERVICE}] Failed to report device status to core-service for ${deviceId}`);
-        }
-      } catch (error) {
-        console.error(`[${SERVICE}] Error reporting device status to core-service for ${deviceId}:`, error);
+  // Persistence now happens inside core-service's UpdateDeviceStatus D-Bus
+  // handler (see core-service/src/dbus-twin.ts) - this used to also write
+  // directly to twin.db here before core-service owned that file.
+  const status = isOnline ? 'online' : 'offline';
+  const timestamp = Date.now();
+  console.log(`[${SERVICE}] Device ${deviceId} is now ${status} - reporting to core-service`);
+
+  setImmediate(async () => {
+    try {
+      const result = await dbusUpdateDeviceStatus(deviceId, status, timestamp);
+      if (result) {
+        console.log(`[${SERVICE}] Successfully reported ${deviceId} status (${status}) to core-service`);
+      } else {
+        console.error(`[${SERVICE}] Failed to report device status to core-service for ${deviceId}`);
       }
-    });
-  } catch (error) {
-    console.error(`[${SERVICE}] Failed to record connection status for device ${deviceId}:`, error);
-  }
+    } catch (error) {
+      console.error(`[${SERVICE}] Error reporting device status to core-service for ${deviceId}:`, error);
+    }
+  });
 }
 
 // Filters $SYS connect/disconnect log clientIds down to "this is plausibly a
@@ -113,7 +92,7 @@ function shallowDelta(desired: Json, reported: Json): Json {
   return delta;
 }
 
-export function startMqtt(db: any): MqttClient {
+export function startMqtt(): MqttClient {
   // Only consider TLS materials when using mqtts:// to avoid accidental TLS on mqtt://
   const usingTls = MQTT_URL.startsWith('mqtts://');
   const ca = usingTls && MQTT_TLS_CA && existsSync(MQTT_TLS_CA) ? readFileSync(MQTT_TLS_CA) : undefined;
@@ -181,7 +160,7 @@ export function startMqtt(db: any): MqttClient {
   });
   client.on('error', (err) => console.error(`[${SERVICE}] mqtt error`, err));
 
-  client.on('message', (topic: string, payload: Buffer) => {
+  client.on('message', async (topic: string, payload: Buffer) => {
     try {
       // Handle Mosquitto client connection events
       if (topic === '$SYS/broker/log/N') {
@@ -223,7 +202,8 @@ export function startMqtt(db: any): MqttClient {
       if (topic.startsWith('$devicehub/devices/') && topic.endsWith('/twin/get')) {
         const deviceId = parseTopicDeviceId(topic, '/twin/get');
         if (!deviceId) return;
-        const twin = getTwin(db, deviceId);
+        const twin = await dbusGetTwin(deviceId);
+        if (!twin.ok) throw new Error(twin.error || 'failed to fetch twin');
         client.publish(TOPICS.accepted(deviceId), JSON.stringify({ deviceId, desired: twin.desired, reported: twin.reported }), { qos: 1 });
         return;
       }
@@ -233,9 +213,25 @@ export function startMqtt(db: any): MqttClient {
         const body = payload.length ? (JSON.parse(payload.toString()) as Json) : {};
         let desiredUpdated: { version: number; doc: Json } | null = null;
         let reportedUpdated: { version: number; doc: Json } | null = null;
-        if (body.desired && typeof body.desired === 'object') desiredUpdated = setDoc(db, 'twin_desired', deviceId, body.desired as Json);
-        if (body.reported && typeof body.reported === 'object') reportedUpdated = setDoc(db, 'twin_reported', deviceId, body.reported as Json);
-        const { desired, reported } = getTwin(db, deviceId);
+        let desired: { version: number; doc: Json } | undefined;
+        let reported: { version: number; doc: Json } | undefined;
+        if (body.desired && typeof body.desired === 'object') {
+          const result = await dbusSetDesired(deviceId, body.desired as Json);
+          if (!result.ok) throw new Error(result.error || 'failed to set desired');
+          desiredUpdated = result.desired ?? null;
+          desired = result.desired; reported = result.reported;
+        }
+        if (body.reported && typeof body.reported === 'object') {
+          const result = await dbusSetReported(deviceId, body.reported as Json);
+          if (!result.ok) throw new Error(result.error || 'failed to set reported');
+          reportedUpdated = result.reported ?? null;
+          desired = result.desired; reported = result.reported;
+        }
+        if (!desired || !reported) {
+          const twin = await dbusGetTwin(deviceId);
+          if (!twin.ok || !twin.desired || !twin.reported) throw new Error(twin.error || 'failed to fetch twin');
+          desired = twin.desired; reported = twin.reported;
+        }
         client.publish(TOPICS.accepted(deviceId), JSON.stringify({ deviceId, desired, reported, updated: { desired: desiredUpdated, reported: reportedUpdated } }), { qos: 1 });
         const delta = shallowDelta(desired.doc, reported.doc);
         if (Object.keys(delta).length > 0) {

@@ -37,6 +37,9 @@ Environment Variables:
   DEPLOY_HOST           Default remote host
   DEPLOY_USER           Default SSH username
   DEPLOY_IDENTITY_FILE  Default SSH private key file
+  ADMIN_PASSWORD        Admin password to seed on first install (unset: falls
+                        back to the insecure admin/admin default - set this)
+  DEVICEHUB_DOMAIN      Public domain to include in the MQTT/TLS server cert
 
 Examples:
   # Using command-line arguments
@@ -148,9 +151,22 @@ log "running installer..."
 INSTALL_ARGS="'$REMOTE_STAGING'"
 [[ $FORCE_CLEAN -eq 1 ]] && INSTALL_ARGS="$INSTALL_ARGS --force-clean"
 
-# Build the command with optional DEBUG environment variable
+# Build the command with optional DEBUG/ADMIN_PASSWORD/DEVICEHUB_DOMAIN
+# environment variables. ADMIN_PASSWORD is base64-encoded and decoded on the
+# remote side (rather than inlined with shell quoting) so it survives
+# whatever the remote login shell happens to be (bash vs dash), regardless
+# of special characters in the password - base64's own alphabet has no
+# shell-metacharacters, so nothing about that step needs escaping.
 DEPLOY_CMD="cd '$REMOTE_STAGING' && $SUDO_PREFIX"
 [[ -n "${DEBUG:-}" ]] && DEPLOY_CMD="$DEPLOY_CMD DEBUG=1"
+if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+  ADMIN_PASSWORD_B64="$(printf '%s' "$ADMIN_PASSWORD" | base64 | tr -d '\n')"
+  DEPLOY_CMD="$DEPLOY_CMD ADMIN_PASSWORD=\"\$(echo $ADMIN_PASSWORD_B64 | base64 -d)\""
+fi
+if [[ -n "${DEVICEHUB_DOMAIN:-}" ]]; then
+  DEVICEHUB_DOMAIN_B64="$(printf '%s' "$DEVICEHUB_DOMAIN" | base64 | tr -d '\n')"
+  DEPLOY_CMD="$DEPLOY_CMD DEVICEHUB_DOMAIN=\"\$(echo $DEVICEHUB_DOMAIN_B64 | base64 -d)\""
+fi
 DEPLOY_CMD="$DEPLOY_CMD bash scripts/deploy-artifacts.sh $INSTALL_ARGS"
 
 ssh_run "$DEPLOY_CMD" || error "Installation failed"

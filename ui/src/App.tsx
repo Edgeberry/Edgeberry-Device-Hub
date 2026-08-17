@@ -3,10 +3,12 @@
  *
  * Auth model: single-user admin. We verify authentication via `/api/auth/me`
  * and store a minimal `user` object in state with `roles: ['admin']`.
- * All application routes are wrapped in `RequireAuth`, which redirects to `/login`
- * when unauthenticated. After login/logout the shell refreshes auth state
+ * There is no anonymous view: `Dashboard` itself gates its entire Outlet
+ * (Overview, Settings, Logout - everything) behind `user`, showing a
+ * mandatory LoginModal instead when signed out, so no per-route auth
+ * wrapper is needed here. After login/logout the shell refreshes auth state
  * using `refreshUser()` which re-queries `/api/auth/me`.
- * 
+ *
  * Session Management:
  * - JWT expiration is tracked via SessionManager component
  * - Warning modal appears 20 seconds before expiration
@@ -17,7 +19,6 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard from './Pages/Dashboard';
 import Overview from './Pages/Overview';
-import Settings from './Pages/Settings';
 import Logout from './Pages/Logout';
 import SessionManager from './components/SessionManager';
 
@@ -54,22 +55,10 @@ function App(){
     window.location.reload();
   }
 
-  async function handleLogout(){
-    setUser(null);
-    // Refresh page to clear any cached data
-    window.location.reload();
-  }
-
   function handleSessionExpired(){
     setUser(null);
     // Automatically refresh page to show login
     window.location.reload();
-  }
-
-  function RequireAuth(props:{ children: React.ReactNode }){
-    if (loading) return null; // or a spinner
-    if (!user) return <Navigate to='/login' replace />;
-    return <>{props.children}</>;
   }
 
   return (
@@ -77,14 +66,14 @@ function App(){
       <SessionManager user={user} onSessionExpired={handleSessionExpired} />
       <BrowserRouter>
         <Routes>
-          { /* Login is handled via a modal inside Dashboard */ }
+          { /* Login is handled via a mandatory modal inside Dashboard, which
+               gates its whole Outlet behind `user` - no per-route auth
+               wrapper needed here. */ }
 
           { /* One-page app: everything resolves to '/' with Overview */ }
-          <Route path='/' element={<Dashboard user={user} onLoggedIn={handleLogin} /> }>
-            <Route index element={<Overview user={user} />} />
-            <Route path='settings' element={<RequireAuth><Settings user={user} /></RequireAuth>} />
-            { /* Protected route for logout action */ }
-            <Route path='logout' element={<RequireAuth><Logout user={user} onLogout={handleLogout} /></RequireAuth>} />
+          <Route path='/' element={<Dashboard user={user} loading={loading} onLoggedIn={handleLogin} /> }>
+            <Route index element={<Overview />} />
+            <Route path='logout' element={<Logout />} />
             <Route path='*' element={<Navigate to='/' replace />} />
           </Route>
           <Route path='*' element={<Navigate to='/' replace />} />

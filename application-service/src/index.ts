@@ -18,19 +18,19 @@ import cors from 'cors';
 import { EventEmitter } from 'eventemitter3';
 import http from 'http';
 import mqtt from 'mqtt';
-import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
 import { startApplicationDbusService, stopApplicationDbusService } from './dbus.js';
+import {
+  dbusListDevices, dbusGetDeviceInfo, dbusResolveIdentifier, dbusResolvePublicId,
+  dbusVerifyToken, dbusRecordEvent, dbusQueryEvents, dbusGetTwin
+} from './dbus-client.js';
 // Load environment variables
 dotenv.config();
 
 // Configuration
 const PORT = process.env.APPLICATION_PORT || 8090;
 const SERVICE = 'application-service';
-
-// Database paths
-const DEVICEHUB_DB = process.env.DEVICEHUB_DB || '/var/lib/edgeberry/devicehub/devicehub.db';
 
 // MQTT Configuration
 const MQTT_URL = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';
@@ -84,49 +84,9 @@ let mqttClient: mqtt.MqttClient | null = null;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Database helper
-function openDb(dbPath: string): any {
-  try {
-    const db = new Database(dbPath, { readonly: false });
-    db.pragma('journal_mode = WAL');
-    return db;
-  } catch (e: any) {
-    console.error(`[${SERVICE}] Failed to open database ${dbPath}:`, e.message);
-    return null;
-  }
-}
-
-// Initialize API tokens table if not exists
-function initializeDatabase() {
-  const db = openDb(DEVICEHUB_DB);
-  if (!db) {
-    console.error(`[${SERVICE}] Failed to initialize database`);
-    process.exit(1);
-  }
-
-  try {
-    // Create API tokens table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS api_tokens (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        token TEXT UNIQUE NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        last_used TEXT,
-        expires_at TEXT,
-        scopes TEXT,
-        active INTEGER DEFAULT 1
-      )
-    `);
-    console.log(`[${SERVICE}] Database initialized`);
-  } catch (e: any) {
-    console.error(`[${SERVICE}] Database initialization failed:`, e.message);
-  } finally {
-    db.close();
-  }
-}
-
-// Token authentication middleware
+// Token authentication middleware - verifies against core-service's
+// api_tokens table via D-Bus (TokenService.VerifyToken); this service never
+// opens devicehub.db itself.
 async function authenticateToken(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
@@ -136,56 +96,16 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
     return;
   }
 
-  const db = openDb(DEVICEHUB_DB);
-  if (!db) {
-    res.status(500).json({ error: 'Database unavailable' });
+  const result = await dbusVerifyToken(token);
+  if (!result.ok || !result.token) {
+    res.status(401).json({ error: result.error || 'Invalid token' });
     return;
   }
 
-  try {
-    // Verify token exists and is active
-    const stmt = db.prepare(`
-      SELECT id, name, scopes, expires_at, active 
-      FROM api_tokens 
-      WHERE token = ?
-    `);
-    const tokenData = stmt.get(token) as any;
+  // Attach token info to request
+  (req as any).apiToken = result.token;
 
-    if (!tokenData) {
-      res.status(401).json({ error: 'Invalid token' });
-      return;
-    }
-
-    if (!tokenData.active) {
-      res.status(401).json({ error: 'Token inactive' });
-      return;
-    }
-
-    // Check expiration
-    if (tokenData.expires_at && new Date(tokenData.expires_at) < new Date()) {
-      res.status(401).json({ error: 'Token expired' });
-      return;
-    }
-
-    // Update last_used
-    const updateStmt = db.prepare('UPDATE api_tokens SET last_used = ? WHERE id = ?');
-    updateStmt.run(new Date().toISOString(), tokenData.id);
-
-    // Attach token info to request
-    (req as any).apiToken = {
-      id: tokenData.id,
-      name: tokenData.name,
-      scopes: tokenData.scopes ? JSON.parse(tokenData.scopes) : []
-    };
-
-    next();
-  } catch (e: any) {
-    console.error(`[${SERVICE}] Token authentication error:`, e.message);
-    res.status(500).json({ error: 'Authentication error' });
-    return;
-  } finally {
-    db.close();
-  }
+  next();
 }
 
 // Connect to MQTT broker
@@ -213,7 +133,9 @@ function connectMqtt() {
 
   mqttClient.on('message', (topic: string, payload: Buffer) => {
     console.log(`[${SERVICE}] MQTT message received on topic: ${topic}`);
-    handleMqttMessage(topic, payload.toString());
+    handleMqttMessage(topic, payload.toString()).catch(e =>
+      console.error(`[${SERVICE}] Failed to handle MQTT message:`, e?.message || e)
+    );
   });
 
   mqttClient.on('error', (err) => {
@@ -222,7 +144,7 @@ function connectMqtt() {
 }
 
 // Handle incoming MQTT messages
-function handleMqttMessage(topic: string, payload: string) {
+async function handleMqttMessage(topic: string, payload: string) {
   try {
     const topicParts = topic.split('/');
     const deviceId = topicParts[2];
@@ -252,15 +174,28 @@ function handleMqttMessage(topic: string, payload: string) {
     }
 
     // Broadcast to WebSocket clients based on their subscriptions
-    broadcastToSubscribers(messageType, messageData);
+    await broadcastToSubscribers(messageType, messageData);
 
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to handle MQTT message:`, e.message);
   }
 }
 
-// Broadcast to WebSocket subscribers
-function broadcastToSubscribers(topic: string, data: any) {
+// Broadcast to WebSocket subscribers. Every device identifier here is
+// resolved via D-Bus to core-service (this service never opens
+// devicehub.db itself) - `resolved` memoizes each unique identifier for
+// the lifetime of this one incoming message so a message fanning out to
+// many clients with overlapping device subscriptions doesn't repeat the
+// same D-Bus round trip; it's not a cache across messages.
+async function broadcastToSubscribers(topic: string, data: any) {
+  const resolved = new Map<string, string | null>();
+  async function resolveOnce(identifier: string): Promise<string | null> {
+    if (resolved.has(identifier)) return resolved.get(identifier)!;
+    const uuid = await dbusResolveIdentifier(identifier);
+    resolved.set(identifier, uuid);
+    return uuid;
+  }
+
   // As parsed from the MQTT topic segment - for a claimed device this is
   // always its raw MQTT name (topic segment %c), never its uuid, since
   // devices publish under their own assigned name (see the masked-identity
@@ -269,66 +204,61 @@ function broadcastToSubscribers(topic: string, data: any) {
   // compares uuid-to-uuid instead of accidentally comparing a uuid against a
   // raw name - the two used to be compared directly and could never match.
   const rawDeviceId = data.deviceId || data.device_id;
-  const db = openDb(DEVICEHUB_DB);
-  try {
-    const deviceUuid = rawDeviceId && db ? resolveDeviceIdentifier(rawDeviceId, db) : null;
+  const deviceUuid = rawDeviceId ? await resolveOnce(rawDeviceId) : null;
 
-    console.log(`[${SERVICE}] Broadcasting ${topic} for device ${rawDeviceId} (uuid=${deviceUuid}) to ${clients.size} clients`);
+  console.log(`[${SERVICE}] Broadcasting ${topic} for device ${rawDeviceId} (uuid=${deviceUuid}) to ${clients.size} clients`);
 
-    clients.forEach(client => {
-      console.log(`[${SERVICE}] Checking client ${client.appName}: topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}`);
+  const publicDeviceId = deviceUuid ? await dbusResolvePublicId(deviceUuid) : rawDeviceId;
 
-      // Check if client is subscribed to this topic
-      if (!client.subscriptions.topics.has(topic) && !client.subscriptions.topics.has('*')) {
-        console.log(`[${SERVICE}] Client ${client.appName} not subscribed to topic ${topic}`);
-        return;
-      }
+  for (const client of clients.values()) {
+    console.log(`[${SERVICE}] Checking client ${client.appName}: topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}`);
 
-      // Check if client is subscribed to this device
-      if (rawDeviceId && !client.subscriptions.devices.has('*')) {
-        // Cheap fast-path: client subscribed with the exact raw identifier.
-        let isSubscribed = client.subscriptions.devices.has(rawDeviceId);
+    // Check if client is subscribed to this topic
+    if (!client.subscriptions.topics.has(topic) && !client.subscriptions.topics.has('*')) {
+      console.log(`[${SERVICE}] Client ${client.appName} not subscribed to topic ${topic}`);
+      continue;
+    }
 
-        // Otherwise, resolve each subscribed identifier (uuid, role, or raw
-        // name) to a uuid and compare against this message's device uuid.
-        if (!isSubscribed && db && deviceUuid) {
-          for (const subscribedDevice of client.subscriptions.devices) {
-            const resolvedUuid = resolveDeviceIdentifier(subscribedDevice, db);
-            if (resolvedUuid === deviceUuid) {
-              isSubscribed = true;
-              break;
-            }
+    // Check if client is subscribed to this device
+    if (rawDeviceId && !client.subscriptions.devices.has('*')) {
+      // Cheap fast-path: client subscribed with the exact raw identifier.
+      let isSubscribed = client.subscriptions.devices.has(rawDeviceId);
+
+      // Otherwise, resolve each subscribed identifier (uuid, role, or raw
+      // name) to a uuid and compare against this message's device uuid.
+      if (!isSubscribed && deviceUuid) {
+        for (const subscribedDevice of client.subscriptions.devices) {
+          const resolvedUuid = await resolveOnce(subscribedDevice);
+          if (resolvedUuid === deviceUuid) {
+            isSubscribed = true;
+            break;
           }
         }
-
-        if (!isSubscribed) {
-          console.log(`[${SERVICE}] Client ${client.appName} not subscribed to device ${rawDeviceId}`);
-          return;
-        }
       }
 
-      console.log(`[${SERVICE}] Sending ${topic} message to client ${client.appName}`);
-
-      try {
-        // Role, if assigned, else raw MQTT name, else the uuid - never the raw
-        // uuid alone when something more stable/readable is available (see
-        // resolvePublicDeviceId). Role takes precedence so a hardware swap
-        // behind a role is invisible to subscribers: they keep seeing the same
-        // deviceId across the swap.
-        const publicDeviceId = deviceUuid ? resolvePublicDeviceId(deviceUuid, db) : rawDeviceId;
-
-        client.ws.send(JSON.stringify({
-          type: 'message',
-          topic,
-          deviceId: publicDeviceId,
-          data
-        }));
-      } catch (e) {
-        console.error(`[${SERVICE}] Failed to send to WebSocket client:`, e);
+      if (!isSubscribed) {
+        console.log(`[${SERVICE}] Client ${client.appName} not subscribed to device ${rawDeviceId}`);
+        continue;
       }
-    });
-  } finally {
-    try{ db?.close(); }catch{}
+    }
+
+    console.log(`[${SERVICE}] Sending ${topic} message to client ${client.appName}`);
+
+    try {
+      client.ws.send(JSON.stringify({
+        type: 'message',
+        topic,
+        // Role, if assigned, else raw MQTT name, else the uuid - never the
+        // raw uuid alone when something more stable/readable is available.
+        // Role takes precedence so a hardware swap behind a role is
+        // invisible to subscribers: they keep seeing the same deviceId
+        // across the swap.
+        deviceId: publicDeviceId,
+        data
+      }));
+    } catch (e) {
+      console.error(`[${SERVICE}] Failed to send to WebSocket client:`, e);
+    }
   }
 }
 
@@ -343,23 +273,25 @@ wss.on('connection', (ws: WebSocket, req) => {
     return;
   }
 
-  // Validate token
-  const db = openDb(DEVICEHUB_DB);
-  if (!db) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Database unavailable' }));
-    ws.close(1011, 'Database unavailable');
-    return;
-  }
+  // Token verification is now a D-Bus round trip rather than a synchronous
+  // local DB read, so there's a real async gap before we know whether to
+  // register this connection at all. Buffer any message a client sends
+  // during that gap (e.g. a `subscribe` fired immediately on open, a very
+  // natural client pattern) instead of losing it to an as-yet-unregistered
+  // listener, and replay it once verification finishes.
+  const pending: string[] = [];
+  const bufferMessage = (message: Buffer | string) => { pending.push(message.toString()); };
+  ws.on('message', bufferMessage);
 
-  try {
-    const stmt = db.prepare('SELECT id, name, active FROM api_tokens WHERE token = ?');
-    const tokenData = stmt.get(token) as any;
+  dbusVerifyToken(token).then((result) => {
+    ws.off('message', bufferMessage);
 
-    if (!tokenData || !tokenData.active) {
-      ws.send(JSON.stringify({ type: 'error', message: 'Invalid token' }));
+    if (!result.ok || !result.token) {
+      ws.send(JSON.stringify({ type: 'error', message: result.error || 'Invalid token' }));
       ws.close(1008, 'Invalid token');
       return;
     }
+    const tokenData = result.token;
 
     // Register authenticated client
     const client: AuthenticatedClient = {
@@ -396,9 +328,13 @@ wss.on('connection', (ws: WebSocket, req) => {
       console.error(`[${SERVICE}] WebSocket error for ${client.appName}:`, err.message);
     });
 
-  } finally {
-    db.close();
-  }
+    // Replay whatever arrived while we were still verifying the token
+    for (const message of pending) handleWebSocketMessage(client, message);
+  }).catch((e) => {
+    ws.off('message', bufferMessage);
+    console.error(`[${SERVICE}] Token verification failed:`, e?.message || e);
+    try { ws.close(1011, 'Internal error'); } catch { /* ignore */ }
+  });
 });
 
 // Handle WebSocket messages from clients
@@ -490,20 +426,9 @@ async function handleMethodCall(client: AuthenticatedClient, msg: any) {
     return;
   }
 
-  const db = openDb(DEVICEHUB_DB);
-  if (!db) {
-    client.ws.send(JSON.stringify({
-      type: 'methodResponse',
-      requestId,
-      error: 'Database unavailable'
-    }));
-    return;
-  }
-
   // Resolve device identifier to UUID
-  const uuid = resolveDeviceIdentifier(deviceId, db);
-  db.close();
-  
+  const uuid = await dbusResolveIdentifier(deviceId);
+
   if (!uuid) {
     client.ws.send(JSON.stringify({
       type: 'methodResponse',
@@ -572,20 +497,9 @@ async function handleSendMessage(client: AuthenticatedClient, msg: any) {
     return;
   }
 
-  const db = openDb(DEVICEHUB_DB);
-  if (!db) {
-    client.ws.send(JSON.stringify({
-      type: 'messageResponse',
-      messageId,
-      error: 'Database unavailable'
-    }));
-    return;
-  }
-
   // Resolve device identifier to UUID
-  const uuid = resolveDeviceIdentifier(deviceId, db);
-  db.close();
-  
+  const uuid = await dbusResolveIdentifier(deviceId);
+
   if (!uuid) {
     client.ws.send(JSON.stringify({
       type: 'messageResponse',
@@ -620,46 +534,10 @@ async function handleSendMessage(client: AuthenticatedClient, msg: any) {
   );
 }
 
-// ============ HELPER FUNCTIONS ============
-
-/**
- * Resolve a device identifier to its UUID. Accepts, in order: a UUID, a
- * role (the persistent application-facing label - see device_roles in
- * core-service), or the device's raw MQTT name (a random string reassigned
- * on every reprovision, kept as a fallback for devices with no role yet).
- */
-function resolveDeviceIdentifier(identifier: string, db: any): string | null {
-  if (!identifier) return null;
-
-  // Check if it's already a UUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidPattern.test(identifier)) {
-    return identifier;
-  }
-
-  const roleStmt = db.prepare('SELECT uuid FROM device_roles WHERE role = ?');
-  const role = roleStmt.get(identifier) as any;
-  if (role) return role.uuid;
-
-  // Otherwise, treat it as a device's raw MQTT name and look up the UUID
-  const stmt = db.prepare('SELECT uuid FROM devices WHERE name = ?');
-  const device = stmt.get(identifier) as any;
-  return device ? device.uuid : null;
-}
-
-/**
- * The identifier application clients should see for a device: its role if
- * one is assigned (stable across reprovisioning and hardware swaps - see
- * device_roles), else its raw MQTT name, else the uuid itself. Used both for
- * outbound WebSocket messages and REST responses so both surfaces agree.
- */
-function resolvePublicDeviceId(uuid: string, db: any): string {
-  if (!db) return uuid;
-  const role = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
-  if (role && role.role) return role.role;
-  const device = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(uuid) as any;
-  return device && device.name ? device.name : uuid;
-}
+// Device identifier resolution (role -> devices.name -> raw uuid, and the
+// reverse) now lives entirely behind D-Bus - see dbus-client.ts's
+// dbusResolveIdentifier/dbusResolvePublicId. This service never opens
+// devicehub.db itself.
 
 // ============ REST API ENDPOINTS ============
 
@@ -730,107 +608,61 @@ app.get('/api/connections/active', authenticateToken, async (_req: Request, res:
 });
 
 // Get all devices
+function toApiDevice(d: { uuid: string; name: string; role: string | null; meta: any; created_at: string; last_seen: string | null; online: boolean }) {
+  const meta = d.meta && typeof d.meta === 'object' ? d.meta : {};
+  return {
+    deviceId: d.role ?? d.name, // role if assigned, else raw MQTT name - same precedence as the WebSocket broadcast
+    deviceName: d.name,
+    role: d.role,
+    uuid: d.uuid, // Include UUID for internal use only
+    status: d.online ? 'online' : 'offline',
+    lastSeen: d.last_seen,
+    model: meta.model,
+    firmware: meta.firmware,
+    metadata: meta,
+    createdAt: d.created_at
+  };
+}
+
 app.get('/api/devices', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
-    }
+    const { model, lastSeenAfter, lastSeenBefore, limit = 100, offset = 0 } = req.query;
 
-    const { status, model, lastSeenAfter, lastSeenBefore, limit = 100, offset = 0 } = req.query;
-    
-    let query = 'SELECT * FROM devices WHERE 1=1';
-    const params: any[] = [];
+    let devices = await dbusListDevices();
 
-    if (status) {
-      // Status filtering not available in current schema
-    }
+    if (model) devices = devices.filter(d => (d.meta?.model) === model);
+    if (lastSeenAfter) devices = devices.filter(d => d.created_at >= String(lastSeenAfter));
+    if (lastSeenBefore) devices = devices.filter(d => d.created_at <= String(lastSeenBefore));
 
-    if (model) {
-      query += ' AND model = ?';
-      params.push(model);
-    }
+    const start = Number(offset) || 0;
+    const end = start + (Number(limit) || 100);
+    devices = devices.slice(start, end);
 
-    if (lastSeenAfter) {
-      query += ' AND created_at >= ?';
-      params.push(lastSeenAfter);
-    }
-
-    if (lastSeenBefore) {
-      query += ' AND created_at <= ?';
-      params.push(lastSeenBefore);
-    }
-
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(Number(limit), Number(offset));
-
-    const stmt = db.prepare(query);
-    const devices = stmt.all(...params);
-
-    const roleRows = db.prepare('SELECT role, uuid FROM device_roles').all() as Array<{ role: string; uuid: string }>;
-    const roleByUuid = new Map(roleRows.map(r => [r.uuid, r.role]));
-
-    res.json(devices.map((d: any) => ({
-      deviceId: roleByUuid.get(d.uuid) ?? d.name, // role if assigned, else raw MQTT name - same precedence as the WebSocket broadcast
-      deviceName: d.name,
-      role: roleByUuid.get(d.uuid) ?? null,
-      uuid: d.uuid, // Include UUID for internal use only
-      status: 'offline', // Default status since last_seen doesn't exist in current schema
-      lastSeen: null, // Not available in current schema
-      model: d.model,
-      firmware: d.firmware_version,
-      metadata: d.tags ? JSON.parse(d.tags) : {},
-      createdAt: d.created_at
-    })));
-
-    db.close();
+    res.json(devices.map(toApiDevice));
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get devices:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve devices' });
   }
 });
 
-// Get specific device (accepts device name or UUID)
+// Get specific device (accepts device name, role, or UUID)
 app.get('/api/devices/:deviceId', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
-    }
 
-    // Resolve device identifier (name or UUID) to UUID
-    const uuid = resolveDeviceIdentifier(deviceId, db);
+    const uuid = await dbusResolveIdentifier(deviceId);
     if (!uuid) {
-      db.close();
       res.status(404).json({ error: 'Device not found' });
       return;
     }
 
-    const stmt = db.prepare('SELECT * FROM devices WHERE uuid = ?');
-    const device = stmt.get(uuid) as any;
-
+    const device = await dbusGetDeviceInfo(uuid);
     if (!device) {
-      db.close();
       res.status(404).json({ error: 'Device not found' });
       return;
     }
 
-    const roleRow = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
-
-    res.json({
-      deviceId: roleRow?.role ?? device.name, // role if assigned, else raw MQTT name - same precedence as the WebSocket broadcast
-      deviceName: device.name,
-      role: roleRow?.role ?? null,
-      uuid: device.uuid, // Include UUID for internal use only
-      status: 'offline', // Default status since last_seen doesn't exist in current schema
-      lastSeen: null, // Not available in current schema
-      model: device.model,
-      firmware: device.firmware_version,
-      metadata: device.tags ? JSON.parse(device.tags) : {}
-    });
-
-    db.close();
+    res.json(toApiDevice(device));
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get device:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve device' });
@@ -841,47 +673,23 @@ app.get('/api/devices/:deviceId', authenticateToken, async (req: Request, res: R
 app.get('/api/telemetry', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId, startTime, endTime, limit = 100, offset = 0 } = req.query;
-    
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
+
+    const deviceUuid = deviceId ? await dbusResolveIdentifier(String(deviceId)) : undefined;
+    if (deviceId && !deviceUuid) {
+      res.json([]);
+      return;
     }
 
-    let query = `
-      SELECT device_id, timestamp, data 
-      FROM device_events 
-      WHERE event_type = 'telemetry'
-    `;
-    const params: any[] = [];
+    const events = await dbusQueryEvents({
+      deviceUuid: deviceUuid || undefined,
+      eventType: 'telemetry',
+      startTime: startTime ? String(startTime) : undefined,
+      endTime: endTime ? String(endTime) : undefined,
+      limit: Number(limit) || 100,
+      offset: Number(offset) || 0
+    });
 
-    if (deviceId) {
-      query += ' AND device_id = ?';
-      params.push(deviceId);
-    }
-
-    if (startTime) {
-      query += ' AND timestamp >= ?';
-      params.push(startTime);
-    }
-
-    if (endTime) {
-      query += ' AND timestamp <= ?';
-      params.push(endTime);
-    }
-
-    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-    params.push(Number(limit), Number(offset));
-
-    const stmt = db.prepare(query);
-    const telemetry = stmt.all(...params);
-
-    res.json(telemetry.map((t: any) => ({
-      deviceId: t.device_id,
-      timestamp: t.timestamp,
-      data: JSON.parse(t.data || '{}')
-    })));
-
-    db.close();
+    res.json(events.map(e => ({ deviceId: e.deviceUuid, timestamp: e.ts, data: e.data })));
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get telemetry:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve telemetry' });
@@ -892,96 +700,59 @@ app.get('/api/telemetry', authenticateToken, async (req: Request, res: Response)
 app.post('/api/telemetry', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId, data } = req.body;
-    
+
     if (!deviceId || !data) {
       res.status(400).json({ error: 'deviceId and data are required' });
       return;
     }
 
-    const timestamp = new Date().toISOString();
-    
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
+    const uuid = await dbusResolveIdentifier(deviceId);
+    if (!uuid) {
+      res.status(404).json({ error: 'Device not found' });
+      return;
     }
 
-    const stmt = db.prepare(`
-      INSERT INTO device_events (device_id, event_type, timestamp, data)
-      VALUES (?, 'telemetry', ?, ?)
-    `);
-    
-    stmt.run(deviceId, timestamp, JSON.stringify(data));
-
-    // Note: last_seen column doesn't exist in current schema
-    // Would need schema migration to add this functionality
-
-    db.close();
+    const result = await dbusRecordEvent(uuid, 'telemetry', data);
+    if (!result.ok) {
+      res.status(500).json({ error: result.error || 'Failed to store telemetry' });
+      return;
+    }
 
     // Broadcast to subscribers
-    broadcastToSubscribers('telemetry', {
-      deviceId,
-      timestamp,
+    await broadcastToSubscribers('telemetry', {
+      deviceId: uuid,
+      timestamp: result.ts,
       data
     });
 
-    res.json({ ok: true, timestamp });
+    res.json({ ok: true, timestamp: result.ts });
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to store telemetry:`, e.message);
     res.status(500).json({ error: 'Failed to store telemetry' });
   }
 });
 
-// Get device events (accepts device name or UUID)
+// Get device events (accepts device name, role, or UUID)
 app.get('/api/devices/:deviceId/events', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
     const { startTime, endTime, eventType, limit = 100 } = req.query;
-    
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
-    }
 
-    // Resolve device identifier to UUID
-    const uuid = resolveDeviceIdentifier(deviceId, db);
+    const uuid = await dbusResolveIdentifier(deviceId);
     if (!uuid) {
-      db.close();
       res.status(404).json({ error: 'Device not found' });
       return;
     }
 
-    let query = 'SELECT * FROM device_events WHERE device_id = ?';
-    const params: any[] = [uuid];
+    const events = await dbusQueryEvents({
+      deviceUuid: uuid,
+      eventType: eventType ? String(eventType) : undefined,
+      startTime: startTime ? String(startTime) : undefined,
+      endTime: endTime ? String(endTime) : undefined,
+      limit: Number(limit) || 100
+    });
 
-    if (eventType) {
-      query += ' AND event_type = ?';
-      params.push(eventType);
-    }
-
-    if (startTime) {
-      query += ' AND timestamp >= ?';
-      params.push(startTime);
-    }
-
-    if (endTime) {
-      query += ' AND timestamp <= ?';
-      params.push(endTime);
-    }
-
-    query += ' ORDER BY timestamp DESC LIMIT ?';
-    params.push(Number(limit));
-
-    const stmt = db.prepare(query);
-    const events = stmt.all(...params);
-
-    res.json(events.map((e: any) => ({
-      deviceId: e.device_id,
-      eventType: e.event_type,
-      timestamp: e.timestamp,
-      data: JSON.parse(e.data || '{}')
-    })));
-
-    db.close();
+    res.json(events.map(e => ({ deviceId: e.deviceUuid, eventType: e.eventType, timestamp: e.ts, data: e.data })));
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get device events:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve events' });
@@ -992,27 +763,31 @@ app.get('/api/devices/:deviceId/events', authenticateToken, async (req: Request,
 app.get('/api/devices/:deviceId/twin', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
-    
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
-    }
 
-    // Resolve device identifier to UUID
-    const uuid = resolveDeviceIdentifier(deviceId, db);
-    db.close();
-    
+    // Resolve device identifier to UUID, then to the device's assigned MQTT
+    // name - twin docs are keyed by that name (see core-service/src/twin-store.ts),
+    // never by uuid.
+    const uuid = await dbusResolveIdentifier(deviceId);
     if (!uuid) {
       res.status(404).json({ error: 'Device not found' });
       return;
     }
-    
-    // TODO: Call twin service via D-Bus to get twin state
-    // For now, return a mock response
+    const device = await dbusGetDeviceInfo(uuid);
+    if (!device) {
+      res.status(404).json({ error: 'Device not found' });
+      return;
+    }
+
+    const twin = await dbusGetTwin(device.name);
+    if (!twin.ok) {
+      res.status(502).json({ error: twin.error || 'Failed to fetch twin' });
+      return;
+    }
+
     res.json({
       deviceId,
-      desired: {},
-      reported: {},
+      desired: twin.desired?.doc ?? {},
+      reported: twin.reported?.doc ?? {},
       lastUpdated: new Date().toISOString()
     });
   } catch (e: any) {
@@ -1026,20 +801,14 @@ app.patch('/api/devices/:deviceId/twin', authenticateToken, async (req: Request,
   try {
     const { deviceId } = req.params;
     const { desired } = req.body;
-    
+
     if (!desired) {
       return res.status(400).json({ error: 'desired properties required' });
     }
 
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
-    }
-
     // Resolve device identifier to UUID
-    const uuid = resolveDeviceIdentifier(deviceId, db);
-    db.close();
-    
+    const uuid = await dbusResolveIdentifier(deviceId);
+
     if (!uuid) {
       res.status(404).json({ error: 'Device not found' });
       return;
@@ -1072,15 +841,9 @@ app.post('/api/devices/:deviceId/methods/:methodName', authenticateToken, async 
       return res.status(503).json({ error: 'MQTT broker not connected' });
     }
 
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
-    }
-
     // Resolve device identifier to UUID
-    const uuid = resolveDeviceIdentifier(deviceId, db);
-    db.close();
-    
+    const uuid = await dbusResolveIdentifier(deviceId);
+
     if (!uuid) {
       res.status(404).json({ error: 'Device not found' });
       return;
@@ -1174,28 +937,15 @@ app.post('/api/batch/methods', authenticateToken, async (req: Request, res: Resp
 // Get system statistics
 app.get('/api/stats/devices', authenticateToken, async (_req: Request, res: Response) => {
   try {
-    const db = openDb(DEVICEHUB_DB);
-    if (!db) {
-      return res.status(500).json({ error: 'Database unavailable' });
-    }
-
-    const totalStmt = db.prepare('SELECT COUNT(*) as total FROM devices');
-    const total = (totalStmt.get() as any).total;
-
-    // Online count not available without last_seen column
-    const online = 0;
-
-    const statusStmt = db.prepare('SELECT status, COUNT(*) as count FROM devices GROUP BY status');
-    const statusCounts = statusStmt.all();
+    const devices = await dbusListDevices();
+    const total = devices.length;
+    const online = devices.filter(d => d.online).length;
 
     res.json({
       total,
       online,
-      offline: total - online,
-      byStatus: statusCounts
+      offline: total - online
     });
-
-    db.close();
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get statistics:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve statistics' });
@@ -1205,10 +955,7 @@ app.get('/api/stats/devices', authenticateToken, async (_req: Request, res: Resp
 // Start the service
 async function start() {
   console.log(`[${SERVICE}] Starting Application Interface Service...`);
-  
-  // Initialize database
-  initializeDatabase();
-  
+
   // Initialize D-Bus service
   try {
     await startApplicationDbusService(getConnectionStatus);

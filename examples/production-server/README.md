@@ -4,29 +4,14 @@ This directory contains configuration examples and helper scripts for deploying 
 
 ## Quick Start
 
-### Option 1: Interactive Installation (Recommended)
-
 ```bash
-# Download and run the production installer
-wget https://raw.githubusercontent.com/Edgeberry/Edgeberry-Device-Hub/main/examples/production-server/scripts/install-with-domain.sh
-sudo bash install-with-domain.sh
-```
-
-This script will:
-- Prompt for your domain name
-- Install Device Hub with domain in MQTT certificate
-- Optionally configure firewall
-- Provide next steps for Nginx and SSL setup
-
-### Option 2: Manual Installation
-
-```bash
-# Set your domain
+# Set your domain (included as a SAN in the MQTT/TLS server certificate)
 export DEVICEHUB_DOMAIN=devicehub.example.com
 
-# Install Device Hub
+# Install Device Hub - install.sh prompts for an admin password
+# interactively, or set ADMIN_PASSWORD beforehand for an unattended install
 wget -O install.sh https://github.com/Edgeberry/Edgeberry-Device-Hub/releases/latest/download/install.sh
-sudo -E ./install.sh -y
+sudo -E ./install.sh
 ```
 
 ## Directory Structure
@@ -35,10 +20,6 @@ sudo -E ./install.sh -y
 examples/production-server/
 ├── nginx/
 │   └── devicehub.conf           # Nginx reverse proxy configuration
-├── scripts/
-│   ├── install-with-domain.sh   # Interactive production installer
-│   ├── setup-firewall.sh        # Firewall configuration helper
-│   └── verify-certificate.sh    # Certificate validation tool
 ├── systemd/
 │   └── core.env.example         # Environment variables template
 └── README.md                    # This file
@@ -94,78 +75,14 @@ sudo systemctl reload nginx
 
 ### 2. Environment Variables (`systemd/core.env.example`)
 
-Environment variable template for core service customization:
-- JWT secret configuration
-- Admin credentials
-- Port settings
-- Database and certificate paths
+`install.sh` already creates `/etc/Edgeberry/devicehub/core.env` and seeds it with a generated admin password and JWT secret on first install - don't overwrite that file. `systemd/core.env.example` documents the handful of settings you might want to add on top (port, JWT session TTL, online threshold, MQTT URL).
 
-**Installation:**
+**Usage:** open the real file and append/edit only what you need:
 ```bash
-# Create config directory
-sudo mkdir -p /etc/Edgeberry/devicehub
-
-# Copy and customize
-sudo cp systemd/core.env.example /etc/Edgeberry/devicehub/core.env
 sudo nano /etc/Edgeberry/devicehub/core.env
 
-# Generate secure JWT secret
-openssl rand -base64 32
-
-# Restart service
+# Restart service to pick up changes
 sudo systemctl restart devicehub-core.service
-```
-
-## Helper Scripts
-
-### 1. Production Installer (`scripts/install-with-domain.sh`)
-
-Interactive installation script that:
-- Prompts for domain name
-- Sets `DEVICEHUB_DOMAIN` environment variable
-- Installs Device Hub with proper certificate configuration
-- Offers firewall setup
-- Provides next steps
-
-**Usage:**
-```bash
-wget https://raw.githubusercontent.com/Edgeberry/Edgeberry-Device-Hub/main/examples/production-server/scripts/install-with-domain.sh
-sudo bash install-with-domain.sh
-```
-
-### 2. Firewall Setup (`scripts/setup-firewall.sh`)
-
-Configures UFW with production-ready rules:
-- Allow SSH (22), HTTP (80), HTTPS (443), MQTT (8883)
-- Block external access to port 3000
-- Allow localhost access to port 3000 (for Nginx)
-
-**Usage:**
-```bash
-sudo bash scripts/setup-firewall.sh
-```
-
-**Manual firewall configuration:**
-```bash
-sudo ufw allow 22/tcp      # SSH
-sudo ufw allow 80/tcp      # HTTP
-sudo ufw allow 443/tcp     # HTTPS
-sudo ufw allow 8883/tcp    # MQTT mTLS
-sudo ufw deny 3000         # Block external access
-sudo ufw allow from 127.0.0.1 to any port 3000  # Allow Nginx
-sudo ufw enable
-```
-
-### 3. Certificate Verification (`scripts/verify-certificate.sh`)
-
-Validates MQTT server certificate configuration:
-- Checks if certificate exists
-- Verifies domain is in Subject Alternative Names
-- Tests MQTT connection and certificate validation
-
-**Usage:**
-```bash
-bash scripts/verify-certificate.sh devicehub.example.com
 ```
 
 ## Complete Setup Guide
@@ -175,14 +92,21 @@ bash scripts/verify-certificate.sh devicehub.example.com
 ```bash
 export DEVICEHUB_DOMAIN=devicehub.example.com
 wget -O install.sh https://github.com/Edgeberry/Edgeberry-Device-Hub/releases/latest/download/install.sh
-sudo -E ./install.sh -y
+sudo -E ./install.sh
 ```
+
+`install.sh` prompts for the admin password interactively. For a fully unattended run, also `export ADMIN_PASSWORD=...` beforehand and pass `-y`.
 
 ### Step 2: Configure Firewall
 
 ```bash
-wget https://raw.githubusercontent.com/Edgeberry/Edgeberry-Device-Hub/main/examples/production-server/scripts/setup-firewall.sh
-sudo bash setup-firewall.sh
+sudo ufw allow 22/tcp      # SSH
+sudo ufw allow 80/tcp      # HTTP
+sudo ufw allow 443/tcp     # HTTPS
+sudo ufw allow 8883/tcp    # MQTT mTLS
+sudo ufw deny 3000         # Block external access
+sudo ufw allow from 127.0.0.1 to any port 3000  # Allow Nginx
+sudo ufw enable
 ```
 
 ### Step 3: Install Nginx
@@ -224,8 +148,8 @@ sudo certbot renew --dry-run
 # Check Device Hub service
 sudo systemctl status devicehub-core.service
 
-# Verify certificate
-bash examples/production-server/scripts/verify-certificate.sh devicehub.example.com
+# Verify the server certificate includes your domain
+openssl x509 -in /var/lib/edgeberry/devicehub/certs/server.crt -text -noout | grep -A1 "Subject Alternative Name"
 
 # Check Nginx
 sudo nginx -t
@@ -235,12 +159,13 @@ sudo systemctl status nginx
 curl -I https://devicehub.example.com
 ```
 
-### Step 7: Change Default Credentials
+### Step 7: Confirm Admin Access
 
-1. Access `https://devicehub.example.com`
-2. Login with default credentials (admin/admin)
-3. Click Settings (⚙️) → Account & Security
-4. Change password immediately
+Log in at `https://devicehub.example.com` with the admin password you set in Step 1. To change it later, run directly on the Hub:
+
+```bash
+sudo devicehub --update-password "yourNewPassword"
+```
 
 ## Security Checklist
 
@@ -248,8 +173,7 @@ curl -I https://devicehub.example.com
 - [ ] Firewall configured (port 3000 blocked externally)
 - [ ] Nginx installed and configured
 - [ ] SSL certificate obtained and auto-renewal working
-- [ ] Default admin password changed
-- [ ] JWT secret changed from default
+- [ ] Admin password set to something other than a generated/default value you haven't recorded
 - [ ] Environment variables secured (`/etc/Edgeberry/devicehub/core.env`)
 - [ ] Regular backups configured (`/var/lib/edgeberry/devicehub/`)
 
@@ -278,7 +202,7 @@ sudo journalctl -u devicehub-core.service -n 50
 **Solution:**
 ```bash
 # Verify domain is in certificate
-bash scripts/verify-certificate.sh devicehub.example.com
+openssl x509 -in /var/lib/edgeberry/devicehub/certs/server.crt -text -noout | grep -A1 "Subject Alternative Name"
 
 # Regenerate certificate if needed (see documentation/PRODUCTION_SETUP.md)
 ```
@@ -363,7 +287,6 @@ sudo systemctl start 'devicehub-*'
 ## Additional Resources
 
 - **Full Documentation:** [documentation/PRODUCTION_SETUP.md](../../documentation/PRODUCTION_SETUP.md)
-- **Architecture Guide:** [documentation/alignment.md](../../documentation/alignment.md)
 - **GitHub Issues:** https://github.com/Edgeberry/Edgeberry-Device-Hub/issues
 - **License:** GNU GPLv3
 

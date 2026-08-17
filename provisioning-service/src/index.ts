@@ -18,7 +18,6 @@
  * Environment & Dependencies
  * - MQTT_URL: broker URL (e.g., mqtts://host:8883). Client reconnects every 2s on failure.
  * - MQTT_USERNAME / MQTT_PASSWORD: optional; broker is expected to enforce mTLS in production.
- * - PROVISIONING_DB: path to SQLite database file (default `provisioning.db`).
  * - ENFORCE_WHITELIST: `true|false`. When true, request must include `uuid` present in `uuid_whitelist`
  *   with matching `device_id` and unused `used_at`.
  *

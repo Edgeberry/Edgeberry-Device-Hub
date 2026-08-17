@@ -40,7 +40,7 @@ jobs:
       - name: Publish ${{ matrix.client }} to npm
         run: |
           cd examples/${{ matrix.client }}
-          # Version is already set by sync-versions.js script
+          # Version must already be set in package.json before tagging a release
           npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,28 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Modal, Tab, Tabs, Alert, Spinner } from 'react-bootstrap';
+import { Button, Modal, Alert, Spinner } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faLocationDot, faPowerOff } from '@fortawesome/free-solid-svg-icons';
+import { faMicrochip } from '@fortawesome/free-solid-svg-icons';
 import { getDevice, getDeviceEvents, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
-import { displayNameFor } from '../deviceDisplay';
-import StatusIndicator from './StatusIndicator';
-import ApplicationPanel from './Device/Application';
-import ConnectionPanel from './Device/Connection';
-import SystemPanel from './Device/System';
-import {
-  direct_identifySystem,
-  direct_restartSystem,
-  direct_restartApplication,
-  direct_stopApplication,
-  direct_reconnect,
-  direct_reprovision,
-  direct_getApplicationInfo,
-  direct_getSystemApplicationInfo,
-  direct_getSystemNetworkInfo,
-  direct_getConnectionParameters,
-  direct_updateConnectionParameters,
-  direct_getProvisioningParameters,
-  direct_updateProvisioningParameters
-} from '../api/directMethods';
 
 export default function DeviceDetailModal(props:{
   deviceId: string,
@@ -34,8 +14,6 @@ export default function DeviceDetailModal(props:{
   const [events, setEvents] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{text:string,type:'success'|'danger'|''}>({text:'',type:''});
-  const [info, setInfo] = useState<any>(null);
-  const [disabled, setDisabled] = useState(false);
 
   useEffect(()=>{
     let mounted = true;
@@ -51,81 +29,10 @@ export default function DeviceDetailModal(props:{
     if(!msg.text) return; const t = setTimeout(()=> setMsg({text:'',type:''}), 3000); return ()=> clearTimeout(t);
   },[msg]);
 
-  async function onIdentify(){
-    try{
-      setBusy(true);
-      const r = await direct_identifySystem(deviceId);
-      setMsg({ text: r?.message || 'Identify requested', type: r?.ok===false ? 'danger' : 'success' });
-    }catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to identify', type:'danger'});} finally{ setBusy(false); }
-  }
-  async function onReboot(){
-    if(!window.confirm('Restart system?')) return;
-    try{
-      setBusy(true); setDisabled(true);
-      const r = await direct_restartSystem(deviceId);
-      setMsg({ text: r?.message || 'Restart requested', type: r?.ok===false ? 'danger' : 'success' });
-    }catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to restart', type:'danger'});} finally{ setBusy(false); setDisabled(false); }
-  }
-
-  // auto fetch info when opening
-  useEffect(()=>{ if(show && deviceId){ onFetchInfos(); } }, [show, deviceId]);
-
-  async function onRestartApp(){
-    try{ setBusy(true); const r = await direct_restartApplication(deviceId); setMsg({ text:r?.message||'App restart requested', type: r?.ok===false?'danger':'success' }); }
-    catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to restart app', type:'danger'});} finally{ setBusy(false); }
-  }
-  async function onStopApp(){
-    try{ setBusy(true); const r = await direct_stopApplication(deviceId); setMsg({ text:r?.message||'App stop requested', type: r?.ok===false?'danger':'success' }); }
-    catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to stop app', type:'danger'});} finally{ setBusy(false); }
-  }
-  async function onReconnect(){
-    try{ setBusy(true); const r = await direct_reconnect(deviceId); setMsg({ text:r?.message||'Reconnect requested', type: r?.ok===false?'danger':'success' }); }
-    catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to reconnect', type:'danger'});} finally{ setBusy(false); }
-  }
-  async function onReprovision(){
-    if(!window.confirm('Reprovision device?')) return;
-    try{ setBusy(true); const r = await direct_reprovision(deviceId); setMsg({ text:r?.message||'Reprovision requested', type: r?.ok===false?'danger':'success' }); }
-    catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to reprovision', type:'danger'});} finally{ setBusy(false); }
-  }
-  async function onFetchInfos(){
-    try{
-      setBusy(true);
-      const [app, sys, net, conn, prov] = await Promise.all([
-        direct_getApplicationInfo(deviceId),
-        direct_getSystemApplicationInfo(deviceId),
-        direct_getSystemNetworkInfo(deviceId),
-        direct_getConnectionParameters(deviceId),
-        direct_getProvisioningParameters(deviceId)
-      ]);
-      // Runs silently on open and after every action-triggered refresh - a
-      // success toast here would fire constantly and say nothing useful.
-      // Failures still surface, since those are actionable.
-      setInfo({ app, sys, net, conn, prov });
-    }catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to fetch info', type:'danger'});} finally{ setBusy(false); }
-  }
-
-  async function onUpdateConnection(parameters:any){
-    try{
-      setBusy(true);
-      const r = await direct_updateConnectionParameters(deviceId, parameters);
-      setMsg({ text: r?.message || 'Connection parameters updated', type: r?.ok===false?'danger':'success' });
-      await onFetchInfos();
-    }catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to update connection', type:'danger'});} finally{ setBusy(false); }
-  }
-
-  async function onUpdateProvisioning(parameters:any){
-    try{
-      setBusy(true);
-      const r = await direct_updateProvisioningParameters(deviceId, parameters);
-      setMsg({ text: r?.message || 'Provisioning parameters updated', type: r?.ok===false?'danger':'success' });
-      await onFetchInfos();
-    }catch(err:any){ setMsg({ text: err?.toString?.()||'Failed to update provisioning', type:'danger'});} finally{ setBusy(false); }
-  }
-
   async function onDecommission(){
     if(!window.confirm('Decommission this device? This will remove it from the device list.')) return;
     try{
-      setBusy(true); setDisabled(true);
+      setBusy(true);
       const res:any = await decommissionDevice(deviceId);
       const wlCount = Number(res?.whitelist_entries || 0);
       if (wlCount > 0) {
@@ -139,46 +46,30 @@ export default function DeviceDetailModal(props:{
     }catch(err:any){
       setMsg({ text: err?.toString?.() || 'Failed to decommission device', type: 'danger' });
     } finally{
-      setBusy(false); setDisabled(false);
+      setBusy(false);
     }
   }
 
   return (
-    <Modal show={show} onHide={onClose} size="xl" centered scrollable contentClassName="eb-modal-content">
-      <Modal.Header closeButton>
+    <Modal show={show} onHide={onClose} size="lg" centered scrollable contentClassName="eb-modal-content">
+      <Modal.Header closeButton closeVariant="white">
         <div style={{ width: '100%' }}>
-          <div style={{ float: 'right' }}>
-            <Button variant={'primary'} className="mb-2 me-2" onClick={onIdentify} disabled={disabled}>
-              <FontAwesomeIcon icon={faLocationDot} />
-            </Button>
-            <Button variant={'danger'} className="mb-2" onClick={onReboot} disabled={disabled}>
-              <FontAwesomeIcon icon={faPowerOff} />
-            </Button>
-          </div>
-          <Modal.Title>{device ? displayNameFor(device) : deviceId}</Modal.Title>
-          {device?.role && (
-            <div className="text-muted small">MQTT name: {device.name}</div>
+          {/* No role assigned yet: the hardware uuid is the only identity
+              there is to show, so it takes the title rather than a vague
+              "Unassigned" placeholder (that's fine in a table row of many
+              devices, but this is the one place looking at a single device). */}
+          <Modal.Title><FontAwesomeIcon icon={faMicrochip} />{device ? (device.role || device.uuid) : deviceId}</Modal.Title>
+          {device?.uuid && (
+            <div className="text-muted small">Device ID: {device.uuid}</div>
           )}
-          {device?.uuid && device?.uuid !== deviceId && (
-            <div className="text-muted small">UUID: {device.uuid}</div>
-          )}
-          <div className="text-subtitle">{info?.sys?.payload?.platform || 'No hardware platform'}</div>
         </div>
       </Modal.Header>
       <Modal.Body>
         {msg.text && (<Alert variant={msg.type==='danger'?'danger':'success'}>{msg.text}</Alert>)}
         {!device && (<div className="text-center p-4"><Spinner animation="border" size="sm"/> Loading...</div>)}
-        <Tabs defaultActiveKey="application" className="mb-3">
-          <Tab eventKey="application" title={<><StatusIndicator noText type={(info?.app?.payload?.state==='ok')?'success':'secondary'} /> Application</>}>
-            <ApplicationPanel info={info?.app} onRestart={onRestartApp} onStop={onStopApp} onRefresh={onFetchInfos} busy={busy} />
-          </Tab>
-          <Tab eventKey="connection" title={<><StatusIndicator noText type={(device?.online)?'success':'secondary'} /> Connection</>}>
-            <ConnectionPanel online={device?.online} connectionInfo={info?.conn} onReconnect={onReconnect} onRefresh={onFetchInfos} onUpdate={onUpdateConnection} busy={busy} />
-          </Tab>
-          <Tab eventKey="system" title={<><StatusIndicator noText type={'success'} /> System</>}>
-            <SystemPanel info={info?.sys} provisioning={info?.prov} onReprovision={onReprovision} onRefresh={onFetchInfos} onUpdate={onUpdateProvisioning} busy={busy} />
-            <hr/>
-            <h6>Raw Device</h6>
+        {device && (
+          <>
+            <h6>Device</h6>
             <pre style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(device, null, 2)}</pre>
             <h6>Events ({events.length||0})</h6>
             <div>
@@ -187,12 +78,12 @@ export default function DeviceDetailModal(props:{
               ))}
               {!events?.length && <div className="text-muted">No events</div>}
             </div>
-          </Tab>
-        </Tabs>
+          </>
+        )}
       </Modal.Body>
       <Modal.Footer>
-        <Button variant={'outline-danger'} onClick={onDecommission} disabled={disabled || busy}>Decommission</Button>
-        <Button variant={'secondary'} onClick={onClose} disabled={disabled}>Close</Button>
+        <Button variant={'outline-danger'} onClick={onDecommission} disabled={busy}>Decommission</Button>
+        <Button variant={'secondary'} onClick={onClose} disabled={busy}>Close</Button>
       </Modal.Footer>
     </Modal>
   );
