@@ -198,7 +198,7 @@ The Device Hub automatically detects production mode and listens on port 3000 wi
 **Check service status:**
 
 ```bash
-sudo systemctl status devicehub-core.service
+sudo systemctl status devicehub.service
 ```
 
 **Verify port binding:**
@@ -212,7 +212,7 @@ Expected: `LISTEN 0 511 *:3000 *:* users:(("node",pid=XXXX))`
 **Check trust proxy setting:**
 
 ```bash
-sudo journalctl -u devicehub-core.service --since "5 minutes ago" | grep -i "trust proxy\|production"
+sudo journalctl -u devicehub.service --since "5 minutes ago" | grep -i "trust proxy\|production"
 ```
 
 ## 7. Access Device Hub
@@ -237,10 +237,10 @@ Passwords are stored as bcrypt hashes in the database at `/var/lib/edgeberry/dev
 
 ### JWT Secret
 
-`install.sh` generates a random `JWT_SECRET` and seeds it into `/etc/Edgeberry/devicehub/core.env` on first install - no manual step needed. To rotate it yourself:
+`install.sh` generates a random `JWT_SECRET` and seeds it into `/etc/Edgeberry/devicehub/devicehub.env` on first install - no manual step needed. To rotate it yourself:
 
 ```bash
-sudo nano /etc/Edgeberry/devicehub/core.env
+sudo nano /etc/Edgeberry/devicehub/devicehub.env
 ```
 
 Update:
@@ -251,7 +251,7 @@ JWT_TTL_SECONDS=86400
 
 Restart service:
 ```bash
-sudo systemctl restart devicehub-core.service
+sudo systemctl restart devicehub.service
 ```
 
 Rotating it invalidates every existing login session.
@@ -280,22 +280,22 @@ sudo ufw allow 8090/tcp
 
 ```bash
 # Core service
-sudo systemctl start devicehub-core.service
-sudo systemctl stop devicehub-core.service
-sudo systemctl restart devicehub-core.service
+sudo systemctl start devicehub.service
+sudo systemctl stop devicehub.service
+sudo systemctl restart devicehub.service
 
 # All services
-sudo systemctl restart devicehub-*.service
+sudo systemctl restart devicehub.service
 ```
 
 ### View Logs
 
 ```bash
 # Core service logs
-sudo journalctl -u devicehub-core.service -f
+sudo journalctl -u devicehub.service -f
 
 # All Device Hub services
-sudo journalctl -u 'devicehub-*' -f
+sudo journalctl -u devicehub.service -f
 
 # Nginx logs
 sudo tail -f /var/log/nginx/devicehub_access.log
@@ -305,15 +305,12 @@ sudo tail -f /var/log/nginx/devicehub_error.log
 ### Check Service Status
 
 ```bash
-# All Device Hub services
-sudo systemctl status 'devicehub-*'
-
-# Individual services
-sudo systemctl status devicehub-core.service
-sudo systemctl status devicehub-provisioning.service
-sudo systemctl status devicehub-twin.service
-sudo systemctl status devicehub-application.service
+sudo systemctl status devicehub.service
 ```
+
+The Device Hub runs as a single service. The admin API/UI (port 3000), the
+application interface (port 8090), device provisioning, and device twins are
+all sub-systems of that one process.
 
 ## Backup & Restore
 
@@ -321,27 +318,27 @@ sudo systemctl status devicehub-application.service
 
 ```bash
 # Stop services
-sudo systemctl stop 'devicehub-*'
+sudo systemctl stop devicehub.service
 
 # Backup data directory
 sudo tar -czf devicehub-backup-$(date +%Y%m%d).tar.gz \
   /var/lib/edgeberry/devicehub/
 
 # Restart services
-sudo systemctl start 'devicehub-*'
+sudo systemctl start devicehub.service
 ```
 
 ### Restore
 
 ```bash
 # Stop services
-sudo systemctl stop 'devicehub-*'
+sudo systemctl stop devicehub.service
 
 # Restore data
 sudo tar -xzf devicehub-backup-YYYYMMDD.tar.gz -C /
 
 # Restart services
-sudo systemctl start 'devicehub-*'
+sudo systemctl start devicehub.service
 ```
 
 ## MQTT Certificate Management
@@ -433,13 +430,13 @@ Devices connecting to the MQTT broker (port 8883) validate the server certificat
 **Check:**
 ```bash
 # Verify service is running
-sudo systemctl status devicehub-core.service
+sudo systemctl status devicehub.service
 
 # Check port binding
 sudo ss -tlnp | grep :3000
 
 # Check logs
-sudo journalctl -u devicehub-core.service -n 50
+sudo journalctl -u devicehub.service -n 50
 ```
 
 **Solution:** Ensure service is running and listening on port 3000.

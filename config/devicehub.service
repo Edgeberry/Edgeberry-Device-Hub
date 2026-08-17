@@ -1,0 +1,29 @@
+[Unit]
+Description=Edgeberry Device Hub
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Edgeberry/devicehub
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=APPLICATION_PORT=8090
+EnvironmentFile=-/etc/Edgeberry/devicehub/devicehub.env
+Environment=UI_DIST=/opt/Edgeberry/devicehub/ui/build
+Environment=DEVICEHUB_DB=/var/lib/edgeberry/devicehub/devicehub.db
+Environment=TWIN_DB=/var/lib/edgeberry/devicehub/twin.db
+ExecStart=/usr/bin/node /opt/Edgeberry/devicehub/dist/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+# `true`, not `full`: the service itself now mirrors renewed certificates and
+# the CRL into /etc/mosquitto/certs (see src/certs.ts syncCertsToMosquitto,
+# which replaced the old edgeberry-cert-sync path unit), so /etc must stay
+# writable; /usr and /boot remain read-only.
+ProtectSystem=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

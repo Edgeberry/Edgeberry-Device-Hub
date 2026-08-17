@@ -55,15 +55,19 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # --- Admin password & domain ---
-# core.env already having ADMIN_PASSWORD means this is a redeploy/upgrade of
-# an existing install - keep whatever admin password is already configured
+# The env file already having ADMIN_PASSWORD means this is a redeploy/upgrade
+# of an existing install - keep whatever admin password is already configured
 # (it's write-once in deploy-artifacts.sh for the same reason) rather than
-# prompting again or generating a new one out from under the operator.
-CORE_ENV="/etc/Edgeberry/devicehub/core.env"
+# prompting again or generating a new one out from under the operator. Both
+# names are checked: releases before the single-process merge used core.env,
+# which deploy-artifacts.sh renames to devicehub.env on upgrade.
 EXISTING_ADMIN_PASSWORD=0
-if [ -f "$CORE_ENV" ] && grep -qE '^\s*ADMIN_PASSWORD\s*=' "$CORE_ENV"; then
-    EXISTING_ADMIN_PASSWORD=1
-fi
+for env_file in /etc/Edgeberry/devicehub/devicehub.env /etc/Edgeberry/devicehub/core.env; do
+    if [ -f "$env_file" ] && grep -qE '^\s*ADMIN_PASSWORD\s*=' "$env_file"; then
+        EXISTING_ADMIN_PASSWORD=1
+        break
+    fi
+done
 
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 DEVICEHUB_DOMAIN="${DEVICEHUB_DOMAIN:-}"

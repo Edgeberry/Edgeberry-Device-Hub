@@ -26,24 +26,27 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 echo "Stopping and disabling services..."
-# Stop and disable all Device Hub services
-for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+# Stop and disable all Device Hub services. Legacy units are included so
+# uninstalling after an upgrade from the old 4-process layout leaves nothing
+# behind.
+for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_LEGACY_UNITS[@]}"; do
     systemctl stop "$unit" 2>/dev/null || true
 done
-for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_LEGACY_UNITS[@]}"; do
     systemctl disable "$unit" 2>/dev/null || true
 done
 
 echo "Removing systemd unit files..."
-for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_LEGACY_UNITS[@]}"; do
     rm -f "/etc/systemd/system/$unit"
 done
 
 # Reload systemd
 systemctl daemon-reload 2>/dev/null || true
 
-echo "Removing D-Bus services and policies..."
-# Remove D-Bus system services and policies
+echo "Removing legacy D-Bus services and policies..."
+# Nothing speaks D-Bus anymore; these only exist on installs upgraded from
+# the old multi-process layout.
 rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.Core.service
 rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.Twin.service
 rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.ApplicationService.service

@@ -21,7 +21,7 @@ examples/production-server/
 ├── nginx/
 │   └── devicehub.conf           # Nginx reverse proxy configuration
 ├── systemd/
-│   └── core.env.example         # Environment variables template
+│   └── devicehub.env.example         # Environment variables template
 └── README.md                    # This file
 ```
 
@@ -73,16 +73,16 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-### 2. Environment Variables (`systemd/core.env.example`)
+### 2. Environment Variables (`systemd/devicehub.env.example`)
 
-`install.sh` already creates `/etc/Edgeberry/devicehub/core.env` and seeds it with a generated admin password and JWT secret on first install - don't overwrite that file. `systemd/core.env.example` documents the handful of settings you might want to add on top (port, JWT session TTL, online threshold, MQTT URL).
+`install.sh` already creates `/etc/Edgeberry/devicehub/devicehub.env` and seeds it with a generated admin password and JWT secret on first install - don't overwrite that file. `systemd/devicehub.env.example` documents the handful of settings you might want to add on top (port, JWT session TTL, online threshold, MQTT URL).
 
 **Usage:** open the real file and append/edit only what you need:
 ```bash
-sudo nano /etc/Edgeberry/devicehub/core.env
+sudo nano /etc/Edgeberry/devicehub/devicehub.env
 
 # Restart service to pick up changes
-sudo systemctl restart devicehub-core.service
+sudo systemctl restart devicehub.service
 ```
 
 ## Complete Setup Guide
@@ -146,7 +146,7 @@ sudo certbot renew --dry-run
 
 ```bash
 # Check Device Hub service
-sudo systemctl status devicehub-core.service
+sudo systemctl status devicehub.service
 
 # Verify the server certificate includes your domain
 openssl x509 -in /var/lib/edgeberry/devicehub/certs/server.crt -text -noout | grep -A1 "Subject Alternative Name"
@@ -174,7 +174,7 @@ sudo devicehub --update-password "yourNewPassword"
 - [ ] Nginx installed and configured
 - [ ] SSL certificate obtained and auto-renewal working
 - [ ] Admin password set to something other than a generated/default value you haven't recorded
-- [ ] Environment variables secured (`/etc/Edgeberry/devicehub/core.env`)
+- [ ] Environment variables secured (`/etc/Edgeberry/devicehub/devicehub.env`)
 - [ ] Regular backups configured (`/var/lib/edgeberry/devicehub/`)
 
 ## Troubleshooting
@@ -186,13 +186,13 @@ sudo devicehub --update-password "yourNewPassword"
 **Solution:**
 ```bash
 # Check if service is running
-sudo systemctl status devicehub-core.service
+sudo systemctl status devicehub.service
 
 # Check port binding
 sudo ss -tlnp | grep :3000
 
 # Check logs
-sudo journalctl -u devicehub-core.service -n 50
+sudo journalctl -u devicehub.service -n 50
 ```
 
 ### Certificate Validation Fails
@@ -222,20 +222,14 @@ proxy_set_header Connection 'upgrade';
 ### Service Status
 
 ```bash
-# All Device Hub services
-sudo systemctl status 'devicehub-*'
-
-# Individual services
-sudo systemctl status devicehub-core.service
-sudo systemctl status devicehub-twin.service
-sudo systemctl status devicehub-application.service
+sudo systemctl status devicehub.service
 ```
 
 ### Logs
 
 ```bash
 # Core service logs
-sudo journalctl -u devicehub-core.service -f
+sudo journalctl -u devicehub.service -f
 
 # All Device Hub services
 sudo journalctl -u 'devicehub-*' -f
@@ -261,27 +255,27 @@ openssl s_client -connect devicehub.example.com:8883
 
 ```bash
 # Stop services
-sudo systemctl stop 'devicehub-*'
+sudo systemctl stop devicehub.service
 
 # Backup persistent data
 sudo tar -czf devicehub-backup-$(date +%Y%m%d).tar.gz \
   /var/lib/edgeberry/devicehub/
 
 # Restart services
-sudo systemctl start 'devicehub-*'
+sudo systemctl start devicehub.service
 ```
 
 ### Restore
 
 ```bash
 # Stop services
-sudo systemctl stop 'devicehub-*'
+sudo systemctl stop devicehub.service
 
 # Restore data
 sudo tar -xzf devicehub-backup-YYYYMMDD.tar.gz -C /
 
 # Restart services
-sudo systemctl start 'devicehub-*'
+sudo systemctl start devicehub.service
 ```
 
 ## Additional Resources

@@ -1,0 +1,89 @@
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+export const SERVICE = 'devicehub';
+
+export const NODE_ENV = process.env.NODE_ENV || 'development';
+export const PORT: number = Number(process.env.PORT || (NODE_ENV === 'production' ? 3000 : 8080));
+
+export const ADMIN_USER: string = process.env.ADMIN_USER || 'admin';
+export const ADMIN_PASSWORD: string = process.env.ADMIN_PASSWORD || 'admin'; // change in prod
+
+export const SESSION_COOKIE = 'fh_session';
+export const JWT_SECRET: string = process.env.JWT_SECRET || 'dev-change-me';
+export const JWT_TTL_SECONDS: number = Number(process.env.JWT_TTL_SECONDS || 60 * 60 * 24);
+
+export const CERTS_DIR: string = process.env.CERTS_DIR || path.resolve(process.cwd(), 'data', 'certs');
+export const ROOT_DIR: string = path.join(CERTS_DIR, 'root');
+export const PROV_DIR: string = path.join(CERTS_DIR, 'provisioning');
+export const CA_KEY: string = path.join(ROOT_DIR, 'ca.key');
+export const CA_CRT: string = path.join(ROOT_DIR, 'ca.crt');
+
+// Resolve UI_DIST to the freshly built UI bundled alongside the app by default.
+// dist/config.js sits at <root>/dist, ui build at <root>/ui/build - works the
+// same in the repo and in the installed tree (/opt/Edgeberry/devicehub).
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const CANDIDATE_UI_DIST = path.resolve(__dirname, '../ui/build');
+export const UI_DIST: string = process.env.UI_DIST || (fs.existsSync(CANDIDATE_UI_DIST) ? CANDIDATE_UI_DIST : '/opt/Edgeberry/devicehub/ui/build');
+// Main SQLite database for Device Hub (consolidates registry and whitelist)
+export const DEVICEHUB_DB: string = process.env.DEVICEHUB_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/devicehub.db'
+    : path.resolve(process.cwd(), 'data', 'devicehub.db')
+);
+
+// Device twin database (desired/reported state + connection status events).
+// Owned by twin-store.ts, the only module that ever opens this file.
+export const TWIN_DB: string = process.env.TWIN_DB || (
+  NODE_ENV === 'production'
+    ? '/var/lib/edgeberry/devicehub/twin.db'
+    : path.resolve(process.cwd(), 'data', 'twin.db')
+);
+
+// Where the live Certificate Revocation List is published. Distinct from
+// CERTS_DIR (the CA's own key/cert - read-only inputs for signing): this is
+// an *output* the broker needs to pick up - certs.ts's
+// syncCertsToMosquitto() mirrors it into /etc/mosquitto/certs and reloads
+// Mosquitto directly after every write.
+export const PERSISTENT_CERTS_DIR: string = process.env.PERSISTENT_CERTS_DIR || (
+  NODE_ENV === 'production' ? '/var/lib/edgeberry/devicehub/certs' : CERTS_DIR
+);
+export const CRL_PATH: string = path.join(PERSISTENT_CERTS_DIR, 'crl.pem');
+export const CRL_NUMBER_PATH: string = path.join(CERTS_DIR, 'crlnumber');
+
+// Legacy environment variables for backward compatibility
+export const REGISTRY_DB: string = process.env.REGISTRY_DB || DEVICEHUB_DB;
+export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || DEVICEHUB_DB;
+// Consider a device online if we've seen an event within this window (seconds)
+export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);
+
+export const DEFAULT_LOG_UNITS: string[] = [
+  'devicehub.service',
+  // Infra dependencies
+  'mosquitto.service',
+];
+
+// MQTT configuration (shared by the telemetry capture, provisioning, twin,
+// and application sub-services - each opens its own connection)
+export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';
+export const MQTT_USERNAME: string | undefined = process.env.MQTT_USERNAME;
+export const MQTT_PASSWORD: string | undefined = process.env.MQTT_PASSWORD;
+export const MQTT_TLS_CA: string | undefined = process.env.MQTT_TLS_CA;
+export const MQTT_TLS_CERT: string | undefined = process.env.MQTT_TLS_CERT;
+export const MQTT_TLS_KEY: string | undefined = process.env.MQTT_TLS_KEY;
+export const MQTT_TLS_REJECT_UNAUTHORIZED: boolean = process.env.MQTT_TLS_REJECT_UNAUTHORIZED !== 'false';
+
+// --- Provisioning sub-service (was provisioning-service/src/config.ts) ---
+// If true, incoming provision requests must include a UUID present in
+// uuid_whitelist and not disabled. Secure by default: any device reaching
+// the provisioning topic with a valid CSR gets a certificate and gets
+// registered when this is off - only set ENFORCE_WHITELIST=false
+// deliberately.
+export const ENFORCE_WHITELIST: boolean = (process.env.ENFORCE_WHITELIST || 'true').toLowerCase() === 'true';
+export const CERT_DAYS: number = Number(process.env.CERT_DAYS || '825');
+
+// --- Application sub-service (was application-service, port 8090) ---
+export const APPLICATION_PORT: number = Number(process.env.APPLICATION_PORT || 8090);
+

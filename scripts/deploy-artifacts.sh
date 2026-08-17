@@ -22,82 +22,67 @@ require_root() {
   fi
 }
 
-# Ensure backend service envs are aligned with non-TLS loopback usage and persistent database
+# Ensure the service env file is aligned with loopback MQTT and the
+# persistent database. One process, one env file.
 configure_service_envs() {
   local ETC_DIR="/etc/Edgeberry/devicehub"
   mkdir -p "$ETC_DIR"
-  # Force mqtt:// for provisioning and twin; remove TLS/auth keys that are no longer used
-  local files=("$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env" "$ETC_DIR/application.env")
-  local f
-  for f in "${files[@]}"; do
-    # Create file if missing and set URL
-    ensure_env_kv "$f" "MQTT_URL" "mqtt://127.0.0.1:1883"
-    # Set persistent database location
-    ensure_env_kv "$f" "DEVICEHUB_DB" "$PERSISTENT_DB"
-    # Remove obsolete or conflicting keys
-    # Remove obsolete TLS and auth keys (use grep -v for safer removal)
-    if [[ -f "$f" ]]; then
-      grep -vE '^\s*(MQTT_TLS_CA|MQTT_TLS_CERT|MQTT_TLS_KEY|MQTT_TLS_REJECT_UNAUTHORIZED|MQTT_USERNAME|MQTT_PASSWORD)\s*=' "$f" > "$f.tmp" 2>/dev/null || cp "$f" "$f.tmp"
-      mv "$f.tmp" "$f"
-    fi
-  done
+  local env_file="$ETC_DIR/devicehub.env"
 
-  # Twin-service's own default for TWIN_DB is a bare relative path that
-  # resolves to wherever its cwd happens to be, while core-service's default
-  # is already the absolute persistent path below - the two silently
-  # diverged onto different database files. Set it explicitly for both so
-  # they agree regardless of code defaults (twin-service/src/config.ts also
-  # fixes its own default, but belt and suspenders).
-  ensure_env_kv "$ETC_DIR/twin.env" "TWIN_DB" "$PERSISTENT_DIR/twin.db"
+  # Upgrade path from the 4-process layout: carry the old core.env over
+  # (it holds the installer-seeded ADMIN_PASSWORD/JWT_SECRET, which must
+  # survive), then drop the other three - they're merged into this one now.
+  if [[ ! -f "$env_file" && -f "$ETC_DIR/core.env" ]]; then
+    mv "$ETC_DIR/core.env" "$env_file"
+    log "migrated core.env -> devicehub.env"
+  fi
+  rm -f "$ETC_DIR/core.env" "$ETC_DIR/provisioning.env" "$ETC_DIR/twin.env" "$ETC_DIR/application.env"
 
-  # Provisioning-service: whitelist enforcement is secure-by-default in code
-  # (provisioning-service/src/config.ts) - write it explicitly here too, so
-  # the deployed env file documents the choice instead of relying on an
-  # implicit default. Only set when absent, so an operator's own explicit
-  # ENFORCE_WHITELIST=false is never silently overwritten on redeploy/upgrade.
-  local prov_env="$ETC_DIR/provisioning.env"
-  if [[ -f "$prov_env" ]] && grep -qE '^\s*ENFORCE_WHITELIST\s*=' "$prov_env"; then
-    log "provisioning: ENFORCE_WHITELIST already set explicitly, leaving as-is"
-  else
-    echo "ENFORCE_WHITELIST=true" >> "$prov_env"
-    log "provisioning: set ENFORCE_WHITELIST=true (default)"
+  ensure_env_kv "$env_file" "MQTT_URL" "mqtt://127.0.0.1:1883"
+  ensure_env_kv "$env_file" "DEVICEHUB_DB" "$PERSISTENT_DB"
+  ensure_env_kv "$env_file" "TWIN_DB" "$PERSISTENT_DIR/twin.db"
+  # JWT session timeout in seconds (default 24 hours = 86400)
+  ensure_env_kv "$env_file" "JWT_TTL_SECONDS" "${JWT_TTL_SECONDS:-86400}"
+  # Production ports: admin UI/API, and the application interface
+  ensure_env_kv "$env_file" "PORT" "3000"
+  ensure_env_kv "$env_file" "APPLICATION_PORT" "8090"
+
+  # Remove obsolete TLS/auth keys that are no longer used
+  if [[ -f "$env_file" ]]; then
+    grep -vE '^\s*(MQTT_TLS_CA|MQTT_TLS_CERT|MQTT_TLS_KEY|MQTT_TLS_REJECT_UNAUTHORIZED|MQTT_USERNAME|MQTT_PASSWORD)\s*=' "$env_file" > "$env_file.tmp" 2>/dev/null || cp "$env_file" "$env_file.tmp"
+    mv "$env_file.tmp" "$env_file"
   fi
 
-  # Core service environment
-  local core_env="$ETC_DIR/core.env"
-  ensure_env_kv "$core_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
-  ensure_env_kv "$core_env" "TWIN_DB" "$PERSISTENT_DIR/twin.db"
-  # JWT session timeout in seconds (default 24 hours = 86400)
-  ensure_env_kv "$core_env" "JWT_TTL_SECONDS" "${JWT_TTL_SECONDS:-86400}"
-  # Production port (3000 for reverse proxy setup)
-  ensure_env_kv "$core_env" "PORT" "3000"
+  # Whitelist enforcement is secure-by-default in code (src/config.ts) -
+  # write it explicitly so the deployed env file documents the choice. Only
+  # set when absent, so an operator's own ENFORCE_WHITELIST=false is never
+  # silently overwritten on redeploy/upgrade.
+  if grep -qE '^\s*ENFORCE_WHITELIST\s*=' "$env_file" 2>/dev/null; then
+    log "ENFORCE_WHITELIST already set explicitly, leaving as-is"
+  else
+    echo "ENFORCE_WHITELIST=true" >> "$env_file"
+    log "set ENFORCE_WHITELIST=true (default)"
+  fi
 
-  # Admin password - write-once. ADMIN_PASSWORD is only ever consulted by
-  # core-service as a login fallback for before a real users-table row
-  # exists (see core-service/src/index.ts's /api/auth/login and
-  # /api/auth/change-password); once an operator changes their password
-  # in-app, that DB row takes over and this value is never read again. Only
-  # set it here when the installer (scripts/install.sh) actually prompted
-  # for/generated one and the key isn't already present, so a redeploy never
-  # silently resets an operator's still-in-use admin password.
-  if [[ -n "${ADMIN_PASSWORD:-}" ]] && ! grep -qE '^\s*ADMIN_PASSWORD\s*=' "$core_env" 2>/dev/null; then
-    echo "ADMIN_PASSWORD=${ADMIN_PASSWORD}" >> "$core_env"
-    log "core: set initial admin password from installer"
+  # Admin password - write-once. ADMIN_PASSWORD is only ever consulted as a
+  # login fallback for before a real users-table row exists (see
+  # /api/auth/login and /api/auth/change-password); once an operator changes
+  # their password in-app, that DB row takes over and this value is never
+  # read again. Only set it here when the installer (scripts/install.sh)
+  # actually prompted for/generated one and the key isn't already present,
+  # so a redeploy never silently resets a still-in-use admin password.
+  if [[ -n "${ADMIN_PASSWORD:-}" ]] && ! grep -qE '^\s*ADMIN_PASSWORD\s*=' "$env_file" 2>/dev/null; then
+    echo "ADMIN_PASSWORD=${ADMIN_PASSWORD}" >> "$env_file"
+    log "set initial admin password from installer"
   fi
   # JWT signing secret - write-once, same rationale as ADMIN_PASSWORD above.
-  # Left unset, core-service falls back to a fixed 'dev-change-me' secret
-  # (core-service/src/config.ts), which would let anyone forge a valid
-  # session for any Device Hub install - always seed a real one.
-  if ! grep -qE '^\s*JWT_SECRET\s*=' "$core_env" 2>/dev/null; then
-    echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$core_env"
-    log "core: generated JWT_SECRET"
+  # Left unset, the service falls back to a fixed 'dev-change-me' secret
+  # (src/config.ts), which would let anyone forge a valid session for any
+  # Device Hub install - always seed a real one.
+  if ! grep -qE '^\s*JWT_SECRET\s*=' "$env_file" 2>/dev/null; then
+    echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$env_file"
+    log "generated JWT_SECRET"
   fi
-
-  # Application service environment
-  local app_env="$ETC_DIR/application.env"
-  ensure_env_kv "$app_env" "DEVICEHUB_DB" "$PERSISTENT_DB"
-  ensure_env_kv "$app_env" "MQTT_URL" "mqtt://127.0.0.1:1883"
-  ensure_env_kv "$app_env" "APPLICATION_PORT" "8090"
 }
 
 # Create or update key=value in an env file idempotently
@@ -181,60 +166,40 @@ ensure_system_deps() {
   fi
 }
 
-# Skip npm install since node_modules are included in artifacts
-# But rebuild native modules for the target platform
+# Skip npm install since node_modules are included in artifacts, but rebuild
+# native modules (better-sqlite3) for the target platform/ABI.
 install_node_deps() {
-  local services=(core-service provisioning-service twin-service)
-  services+=(application-service)
-  local svc dir
-  for svc in "${services[@]}"; do
-    dir="${INSTALL_ROOT}/${svc}"
-    if [[ -f "${dir}/package.json" ]]; then
-      if [[ -d "${dir}/node_modules" ]]; then
-        local module_count=$(find "${dir}/node_modules" -maxdepth 1 -type d | wc -l)
-        log "${svc}: node_modules present with $module_count modules (pre-installed)"
-        
-        # Rebuild native modules if needed
-        pushd "${dir}" >/dev/null
-        # Always rebuild all native modules to ensure compatibility
-        log "${svc}: rebuilding native modules for target architecture..."
-        
-        # Capture full output for diagnostics
-        local rebuild_output
-        rebuild_output=$(mktemp)
-        
-        # Force rebuild from source for better-sqlite3 to ensure ABI compatibility
-        if npm rebuild --build-from-source 2>&1 | tee "$rebuild_output"; then
-          log "${svc}: native modules rebuilt successfully"
-          rm -f "$rebuild_output"
-        else
-          log "ERROR: ${svc}: failed to rebuild native modules"
-          log "--- Rebuild output (last 50 lines) ---"
-          tail -n 50 "$rebuild_output" || true
-          log "--- Node.js version ---"
-          node --version || true
-          log "--- npm version ---"
-          npm --version || true
-          log "--- Python version (required for native builds) ---"
-          python3 --version || true
-          log "--- Compiler availability ---"
-          which gcc g++ make || true
-          rm -f "$rebuild_output"
-          
-          # For critical services, fail the deployment
-          if [[ "$svc" == "core-service" ]] || [[ "$svc" == "application-service" ]]; then
-            log "FATAL: ${svc} is critical and rebuild failed - stopping deployment"
-            exit 1
-          fi
-        fi
-        popd >/dev/null
-      else
-        log "WARN: ${svc}: node_modules missing, service may not start"
-      fi
-    else
-      log "skip ${svc}: no package.json"
-    fi
-  done
+  local dir="${INSTALL_ROOT}"
+  if [[ ! -f "${dir}/package.json" ]]; then
+    log "ERROR: no package.json at ${dir} - artifact incomplete"
+    exit 1
+  fi
+  if [[ ! -d "${dir}/node_modules" ]]; then
+    log "ERROR: node_modules missing at ${dir} - artifact incomplete"
+    exit 1
+  fi
+
+  pushd "${dir}" >/dev/null
+  log "rebuilding native modules for target architecture..."
+  local rebuild_output
+  rebuild_output=$(mktemp)
+  if npm rebuild --build-from-source 2>&1 | tee "$rebuild_output"; then
+    log "native modules rebuilt successfully"
+    rm -f "$rebuild_output"
+    popd >/dev/null
+  else
+    log "ERROR: failed to rebuild native modules"
+    log "--- Rebuild output (last 50 lines) ---"
+    tail -n 50 "$rebuild_output" || true
+    log "--- Node.js version ---"; node --version || true
+    log "--- npm version ---"; npm --version || true
+    log "--- Python version (required for native builds) ---"; python3 --version || true
+    log "--- Compiler availability ---"; which gcc g++ make || true
+    rm -f "$rebuild_output"
+    popd >/dev/null
+    log "FATAL: native module rebuild failed - stopping deployment"
+    exit 1
+  fi
 }
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -249,12 +214,22 @@ DATA_DIR="/var/lib/edgeberry/devicehub"
 # Allowed top-level directories inside the combined artifact
 ALLOWED_NAMES=(
   ui
-  core-service
-  provisioning-service
-  twin-service
-  application-service
+  dist
+  node_modules
   config
   scripts
+  # Not shipped in the artifact, but created at install time
+  # (setup_persistent_certificates) and written to at runtime - listed so the
+  # stale-entry cleanup below doesn't wipe it on every redeploy, which would
+  # reset the CRL number sequence (CRL_NUMBER_PATH lives here).
+  data
+)
+
+# Allowed top-level files (the app now lives at the install root, so its
+# package.json/lock ride along beside dist/ and node_modules/)
+ALLOWED_FILES=(
+  package.json
+  package-lock.json
 )
 
 log() { echo "[install] $*" >&2; }
@@ -286,7 +261,7 @@ extract_artifacts() {
       local base
       base="$(basename "$entry")"
       allowed=0
-      for an in "${ALLOWED_NAMES[@]}"; do
+      for an in "${ALLOWED_NAMES[@]}" "${ALLOWED_FILES[@]}"; do
         if [[ "$base" == "$an" ]]; then allowed=1; break; fi
       done
       if [[ $allowed -eq 0 ]]; then
@@ -322,6 +297,13 @@ extract_artifacts() {
           find "${INSTALL_ROOT}/${an}" -type f -name "*.conf" -exec chmod 644 {} \;
         fi
         log "installed to ${INSTALL_ROOT}/${an}"
+      fi
+    done
+    # Top-level files (package.json / package-lock.json)
+    for af in "${ALLOWED_FILES[@]}"; do
+      if [[ -f "$ART_DIR/$af" ]]; then
+        install -m 0644 -o root -g root "$ART_DIR/$af" "${INSTALL_ROOT}/${af}"
+        log "installed ${INSTALL_ROOT}/${af}"
       fi
     done
     # chmod +x scripts/*.sh if present so diagnostics script runs
@@ -370,6 +352,13 @@ extract_artifacts() {
           fi
         fi
       done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print0)
+      # Top-level files (package.json / package-lock.json)
+      for af in "${ALLOWED_FILES[@]}"; do
+        if [[ -f "$tmp/$af" ]]; then
+          install -m 0644 -o root -g root "$tmp/$af" "${INSTALL_ROOT}/${af}"
+          log "installed ${INSTALL_ROOT}/${af}"
+        fi
+      done
       rm -rf "$tmp"
       # chmod +x scripts/*.sh if present so diagnostics script runs
       if [[ -d "${INSTALL_ROOT}/scripts" ]]; then
@@ -391,8 +380,7 @@ install_systemd_units() {
     return 0
   fi
   log "installing systemd unit files"
-  # Install systemd units
-  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}"; do
     if [[ -f "${ROOT_DIR}/config/${unit}" ]]; then
       install -m 0644 "${ROOT_DIR}/config/${unit}" "${SYSTEMD_DIR}/${unit}"
       log "installed ${SYSTEMD_DIR}/${unit}"
@@ -401,63 +389,36 @@ install_systemd_units() {
     fi
   done
   systemctl_safe daemon-reload || true
+}
 
-  # Install D-Bus system service and policy files
-  local DBUS_SYSTEM_SERVICES_DIR="/usr/share/dbus-1/system-services"
-  local DBUS_SYSTEM_POLICY_DIR="/etc/dbus-1/system.d"
-  
-  # Core service D-Bus files
-  local DBUS_SERVICE_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.service"
-  local DBUS_POLICY_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Core.conf"
-  if [[ -f "$DBUS_SERVICE_SRC" ]]; then
-    mkdir -p "$DBUS_SYSTEM_SERVICES_DIR"
-    install -m 0644 "$DBUS_SERVICE_SRC" "$DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Core.service"
-    log "installed D-Bus system service: $DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Core.service"
-  else
-    log "WARN: missing $DBUS_SERVICE_SRC"
-  fi
-  if [[ -f "$DBUS_POLICY_SRC" ]]; then
-    mkdir -p "$DBUS_SYSTEM_POLICY_DIR"
-    install -m 0644 "$DBUS_POLICY_SRC" "$DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Core.conf"
-    log "installed D-Bus policy: $DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Core.conf"
-  else
-    log "WARN: missing $DBUS_POLICY_SRC"
-  fi
-  
-  # Twin service D-Bus files
-  local TWIN_DBUS_SERVICE_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Twin.service"
-  local TWIN_DBUS_POLICY_SRC="${ROOT_DIR}/config/dbus-io.edgeberry.devicehub.Twin.conf"
-  if [[ -f "$TWIN_DBUS_SERVICE_SRC" ]]; then
-    mkdir -p "$DBUS_SYSTEM_SERVICES_DIR"
-    install -m 0644 "$TWIN_DBUS_SERVICE_SRC" "$DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Twin.service"
-    log "installed D-Bus system service: $DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.Twin.service"
-  else
-    log "WARN: missing $TWIN_DBUS_SERVICE_SRC"
-  fi
-  if [[ -f "$TWIN_DBUS_POLICY_SRC" ]]; then
-    mkdir -p "$DBUS_SYSTEM_POLICY_DIR"
-    install -m 0644 "$TWIN_DBUS_POLICY_SRC" "$DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Twin.conf"
-    log "installed D-Bus policy: $DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.Twin.conf"
-  else
-    log "WARN: missing $TWIN_DBUS_POLICY_SRC"
-  fi
-  
-  # Application service D-Bus files
-  local APP_DBUS_SERVICE_SRC="${ROOT_DIR}/config/io.edgeberry.devicehub.ApplicationService.service"
-  local APP_DBUS_POLICY_SRC="${ROOT_DIR}/config/io.edgeberry.devicehub.ApplicationService.conf"
-  if [[ -f "$APP_DBUS_SERVICE_SRC" ]]; then
-    mkdir -p "$DBUS_SYSTEM_SERVICES_DIR"
-    install -m 0644 "$APP_DBUS_SERVICE_SRC" "$DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.ApplicationService.service"
-    log "installed D-Bus system service: $DBUS_SYSTEM_SERVICES_DIR/io.edgeberry.devicehub.ApplicationService.service"
-  else
-    log "WARN: missing $APP_DBUS_SERVICE_SRC"
-  fi
-  if [[ -f "$APP_DBUS_POLICY_SRC" ]]; then
-    mkdir -p "$DBUS_SYSTEM_POLICY_DIR"
-    install -m 0644 "$APP_DBUS_POLICY_SRC" "$DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.ApplicationService.conf"
-    log "installed D-Bus policy: $DBUS_SYSTEM_POLICY_DIR/io.edgeberry.devicehub.ApplicationService.conf"
-  else
-    log "WARN: missing $APP_DBUS_POLICY_SRC"
+# Upgrade path from the 4-process layout: stop, disable, and remove the old
+# per-service units (and the cert-sync/ca-rehash path units, whose job the
+# service now does in-process) so they can't keep running against the same
+# database and MQTT topics alongside the merged service. Also drops the
+# D-Bus activation/policy files, since nothing speaks D-Bus anymore.
+remove_legacy_units() {
+  if ! have_systemd; then return 0; fi
+  local removed=0 unit
+  for unit in "${DEVICEHUB_LEGACY_UNITS[@]}"; do
+    if [[ -f "${SYSTEMD_DIR}/${unit}" ]]; then
+      systemctl stop "$unit" 2>/dev/null || true
+      systemctl disable "$unit" 2>/dev/null || true
+      rm -f "${SYSTEMD_DIR}/${unit}"
+      removed=1
+      log "removed legacy unit: ${unit}"
+    fi
+  done
+  rm -f /usr/share/dbus-1/system-services/io.edgeberry.devicehub.Core.service \
+        /usr/share/dbus-1/system-services/io.edgeberry.devicehub.Twin.service \
+        /usr/share/dbus-1/system-services/io.edgeberry.devicehub.ApplicationService.service \
+        /etc/dbus-1/system.d/io.edgeberry.devicehub.Core.conf \
+        /etc/dbus-1/system.d/io.edgeberry.devicehub.Twin.conf \
+        /etc/dbus-1/system.d/io.edgeberry.devicehub.ApplicationService.conf 2>/dev/null || true
+  # Old per-service install trees (the app now lives at the install root)
+  rm -rf "${INSTALL_ROOT}/core-service" "${INSTALL_ROOT}/provisioning-service" \
+         "${INSTALL_ROOT}/twin-service" "${INSTALL_ROOT}/application-service" 2>/dev/null || true
+  if [[ $removed -eq 1 ]]; then
+    systemctl_safe daemon-reload || true
   fi
 }
 
@@ -482,22 +443,12 @@ stop_services() {
   done
 }
 
-validate_compiled_no_decorators() {
-  local dbus_glob="$INSTALL_ROOT/core-service/dist/dbus-*.js"
-  shopt -s nullglob
-  local files=( $dbus_glob )
-  shopt -u nullglob
-  if (( ${#files[@]} == 0 )); then
-    log "WARN: no dbus-*.js files found under core-service/dist; build may be incomplete"
-    return 0
+validate_build() {
+  if [[ ! -f "$INSTALL_ROOT/dist/index.js" ]]; then
+    log "FATAL: $INSTALL_ROOT/dist/index.js missing - build/artifact is incomplete"
+    exit 1
   fi
-  if grep -Hn "__decorate" ${files[@]} >/dev/null 2>&1; then
-    log "WARN: found TypeScript decorator emit ('__decorate') in compiled dbus files. This build may crash at runtime. Files:"
-    grep -Hn "__decorate" ${files[@]} || true
-    log "WARN: please ensure sources use imperative dbus method registration (this.addMethod) and rebuild artifacts."
-  else
-    log "validated: no '__decorate' references in core-service/dist/dbus-*.js"
-  fi
+  log "validated: dist/index.js present"
 }
 
 enable_services() {
@@ -506,7 +457,7 @@ enable_services() {
     return 0
   fi
   log "enabling services"
-  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}" "${DEVICEHUB_AUX_UNITS[@]}"; do
+  for unit in "${DEVICEHUB_SERVICE_UNITS[@]}"; do
     systemctl_safe enable "$unit" || true
   done
 }
@@ -519,15 +470,6 @@ start_services() {
   log "starting services"
   for unit in "${DEVICEHUB_SERVICE_UNITS[@]}"; do
     systemctl_safe restart "$unit" || true
-  done
-  # Start path units to monitor certificate changes (their .service pair is
-  # triggered by the path unit, not started directly)
-  for unit in "${DEVICEHUB_AUX_UNITS[@]}"; do
-    [[ "$unit" == *.path ]] || continue
-    if ! systemctl_safe start "$unit"; then
-      log "WARN: failed to start $unit; dumping recent logs"
-      journalctl -u "$unit" -n 50 --no-pager 2>/dev/null | tail -n 50 || true
-    fi
   done
 }
 
@@ -595,7 +537,7 @@ EOF
     fi
 
     # mosquitto.conf references crlfile unconditionally (see config/mosquitto.conf) -
-    # if that path doesn't exist, mosquitto refuses to start. core-service normally
+    # if that path does not exist, mosquitto refuses to start. The Device Hub normally
     # publishes the real CRL itself (certs.ts ensureCRLExists/regenerateCRL) once it
     # first runs, but on a fresh install mosquitto may start before that ever
     # happens, so seed an initial empty one (nothing revoked yet, still a valid CRL)
@@ -627,11 +569,11 @@ EOF
             cp "$CRL_WORK_DIR/crlnumber" "$PERSISTENT_CERTS_DIR/crlnumber"
             log "generated initial empty CRL: $ETC_CRL"
         else
-            log "WARN: failed to generate initial CRL; mosquitto will fail to start until core-service publishes one"
+            log "WARN: failed to generate initial CRL; mosquitto will fail to start until the Device Hub publishes one"
         fi
         rm -rf "$CRL_WORK_DIR"
     elif [[ ! -f "$ETC_CRL" ]]; then
-        log "WARN: no CA key available yet to seed an initial CRL; mosquitto will fail to start until core-service publishes one"
+        log "WARN: no CA key available yet to seed an initial CRL; mosquitto will fail to start until the Device Hub publishes one"
     fi
 
     mkdir -p "$ETC_CA_DIR"
@@ -806,7 +748,7 @@ clean_persistent_data() {
   if [[ $FORCE_CLEAN -eq 1 ]]; then
     log "force clean: removing persistent data"
     rm -rf "$PERSISTENT_DIR"
-    rm -rf "/opt/Edgeberry/devicehub/core-service/data"
+    rm -rf "/opt/Edgeberry/devicehub/data"
     rm -rf "/etc/Edgeberry/devicehub"
   fi
 }
@@ -919,14 +861,15 @@ EOF
   cp "$PERSISTENT_SERVER_CERT" "$INSTALL_ROOT/config/certs/server.crt"
   cp "$PERSISTENT_SERVER_KEY" "$INSTALL_ROOT/config/certs/server.key"
   
-  # Sync to core-service data directory
-  mkdir -p "$INSTALL_ROOT/core-service/data/certs/root"
-  mkdir -p "$INSTALL_ROOT/core-service/data/certs/provisioning"
-  cp "$PERSISTENT_CA" "$INSTALL_ROOT/core-service/data/certs/root/ca.crt"
-  cp "$PERSISTENT_CA_KEY" "$INSTALL_ROOT/core-service/data/certs/root/ca.key"
-  cp "$PERSISTENT_PROV_CERT" "$INSTALL_ROOT/core-service/data/certs/provisioning/provisioning.crt"
-  cp "$PERSISTENT_PROV_KEY" "$INSTALL_ROOT/core-service/data/certs/provisioning/provisioning.key"
-  
+  # Sync to the service's own data directory (CERTS_DIR defaults to
+  # <WorkingDirectory>/data/certs - see src/config.ts)
+  mkdir -p "$INSTALL_ROOT/data/certs/root"
+  mkdir -p "$INSTALL_ROOT/data/certs/provisioning"
+  cp "$PERSISTENT_CA" "$INSTALL_ROOT/data/certs/root/ca.crt"
+  cp "$PERSISTENT_CA_KEY" "$INSTALL_ROOT/data/certs/root/ca.key"
+  cp "$PERSISTENT_PROV_CERT" "$INSTALL_ROOT/data/certs/provisioning/provisioning.crt"
+  cp "$PERSISTENT_PROV_KEY" "$INSTALL_ROOT/data/certs/provisioning/provisioning.key"
+
   log "persistent certificates configured"
 }
 
@@ -954,19 +897,20 @@ main() {
   
   # Stop services before modifying install tree to avoid reading mixed versions
   stop_services
+  # Tear down the previous 4-process layout, if this is an upgrade
+  remove_legacy_units
   extract_artifacts
-  
+
   # Restore persistent data if not force clean
   if [[ $FORCE_CLEAN -eq 0 && -n "$backup_dir" ]]; then
     restore_persistent_data "$backup_dir"
   fi
-  
+
   ensure_data_dir
   setup_persistent_certificates
   install_node_deps
-  
-  # Sanity-check compiled outputs for known hazards
-  validate_compiled_no_decorators
+
+  validate_build
   install_systemd_units
   install_cli
   configure_service_envs
