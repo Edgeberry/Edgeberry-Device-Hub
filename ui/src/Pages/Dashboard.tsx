@@ -32,7 +32,7 @@ export default function Dashboard(props:{user:any, loading:boolean, onLoggedIn: 
               style={{ fontWeight: 'bold', color: 'inherit', textDecoration: 'none' }}
             >
               Edgeberry Device Hub
-            </a>{' '}is open-source software. Licensed under GPL-3.0-or-later. Consider
+            </a>{' '}is open-source software. Licensed under AGPL-3.0-or-later. Consider
             {' '}<a
               href="https://github.com/sponsors/Edgeberry"
               target="_blank"
