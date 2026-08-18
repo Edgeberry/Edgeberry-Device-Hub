@@ -153,6 +153,7 @@ class CompleteVirtualDevice {
   private telemetryTimer: NodeJS.Timeout | null = null;
   private runtimeDeviceId: string;
   private deviceKeyPath?: string;
+  private provReqTopic = '';
 
   constructor() {
     this.runtimeDeviceId = String(PROV_UUID || DEVICE_ID);
@@ -231,36 +232,20 @@ class CompleteVirtualDevice {
           return;
         }
 
-        // Generate device key + CSR
-        let keyPem: string, csrPem: string;
-        try {
-          ({ keyPem, csrPem } = genKeyAndCsr(String(PROV_UUID)));
-        } catch (e: any) {
-          console.error('[virtual-device] CSR generation failed', e?.message || e);
-          return;
-        }
+        // Provisioning is a TWO-round handshake over this same connection,
+        // distinguished by whether a CSR is attached:
+        //   round 1 (here)  - no csrPem: the Hub assigns this UUID a fresh
+        //                     device name and returns it as `deviceId`.
+        //   round 2 (below) - csrPem CN'd for that assigned name, plus the
+        //                     name echoed back as `deviceId`.
+        // Sending a CSR straight away is rejected: nothing has been claimed
+        // for this UUID yet, so there is no name for the CSR to match.
+        this.provReqTopic = provReqTopic;
+        const claimPayload: any = {};
+        if (PROV_UUID) claimPayload.uuid = PROV_UUID;
 
-        // Save device key for runtime use
-        const keyPath = DEVICE_KEY_OUT || path.join(tmpdir(), `${String(PROV_UUID)}.key`);
-        writeFileSync(keyPath, keyPem);
-        console.log(`[virtual-device] saved device key to ${keyPath}`);
-        this.deviceKeyPath = keyPath;
-
-        const provisionPayload: any = {
-          csrPem,
-          name: `Virtual Device ${this.runtimeDeviceId}`,
-          token: process.env.DEVICE_TOKEN || undefined,
-          meta: { 
-            model: 'simulator', 
-            firmware: '1.0.0', 
-            startedAt: new Date().toISOString(),
-            telemetryInterval: TELEMETRY_PERIOD_MS
-          },
-        };
-        if (PROV_UUID) provisionPayload.uuid = PROV_UUID;
-
-        console.log(`[virtual-device] -> ${provReqTopic} payload: csrPem(len=${csrPem.length}) uuid=${PROV_UUID ? 'set' : 'unset'}`);
-        this.client?.publish(provReqTopic, JSON.stringify(provisionPayload), { qos: 1 });
+        console.log(`[virtual-device] -> ${provReqTopic} (round 1: claim, no CSR) uuid=${PROV_UUID ? 'set' : 'unset'}`);
+        this.client?.publish(provReqTopic, JSON.stringify(claimPayload), { qos: 1 });
       });
     });
 
@@ -296,11 +281,52 @@ class CompleteVirtualDevice {
 
   private handleProvisioningAccepted(payload: Buffer): void {
     const msg = JSON.parse(payload.toString() || '{}');
-    console.log(`[virtual-device] <- accepted: keys(certPem:${msg.certPem ? 'yes' : 'no'} caChainPem:${msg.caChainPem ? 'yes' : 'no'})`);
-    
+    console.log(`[virtual-device] <- accepted: keys(deviceId:${msg.deviceId ? 'yes' : 'no'} certPem:${msg.certPem ? 'yes' : 'no'} caChainPem:${msg.caChainPem ? 'yes' : 'no'})`);
+
     if (this.provisioned) return;
+
+    // Round 1 accept: a name was claimed for this UUID, but no cert yet.
+    // Generate the keypair + CSR *CN'd for the assigned name* and send
+    // round 2 - the Hub rejects any CSR whose CN doesn't match what it
+    // just assigned.
     if (!msg.certPem) {
-      console.error('[virtual-device] missing certPem in accepted payload');
+      if (!msg.deviceId || typeof msg.deviceId !== 'string') {
+        console.error('[virtual-device] round-1 accept had no deviceId; cannot continue');
+        return;
+      }
+      const assignedName = String(msg.deviceId);
+      this.runtimeDeviceId = assignedName;
+      console.log(`[virtual-device] round 1 accepted: assigned name=${assignedName}`);
+
+      let keyPem: string, csrPem: string;
+      try {
+        ({ keyPem, csrPem } = genKeyAndCsr(assignedName));
+      } catch (e: any) {
+        console.error('[virtual-device] CSR generation failed', e?.message || e);
+        return;
+      }
+
+      const keyPath = DEVICE_KEY_OUT || path.join(tmpdir(), `${assignedName}.key`);
+      writeFileSync(keyPath, keyPem);
+      console.log(`[virtual-device] saved device key to ${keyPath}`);
+      this.deviceKeyPath = keyPath;
+
+      const issuePayload: any = {
+        csrPem,
+        deviceId: assignedName,
+        name: `Virtual Device ${assignedName}`,
+        token: process.env.DEVICE_TOKEN || undefined,
+        meta: {
+          model: 'simulator',
+          firmware: '1.0.0',
+          startedAt: new Date().toISOString(),
+          telemetryInterval: TELEMETRY_PERIOD_MS
+        },
+      };
+      if (PROV_UUID) issuePayload.uuid = PROV_UUID;
+
+      console.log(`[virtual-device] -> ${this.provReqTopic} (round 2: issue) csrPem(len=${csrPem.length}) deviceId=${assignedName}`);
+      this.client?.publish(this.provReqTopic, JSON.stringify(issuePayload), { qos: 1 });
       return;
     }
 
@@ -435,13 +461,25 @@ class CompleteVirtualDevice {
     try {
       const message = JSON.parse(payload.toString());
       
-      // Check if it's a method request (matches pattern: $devicehub/devices/{deviceId}/methods/{methodName}/request)
-      const methodRequestPattern = new RegExp(`^\$devicehub\/devices\/${deviceId}\/methods\/([^/]+)\/request$`);
-      const methodMatch = topic.match(methodRequestPattern);
-      
-      if (methodMatch) {
-        const methodName = methodMatch[1];
-        this.handleDirectMethod(deviceId, methodName, message);
+      // Method request topic: $devicehub/devices/{deviceId}/methods/{methodName}/request
+      //
+      // Matched by splitting on '/' rather than with a RegExp: the topic
+      // starts with '$', which must be escaped as '\$' in a regex - but
+      // inside a template literal '\$' collapses to a plain '$' before the
+      // RegExp ever sees it, leaving '^$devicehub...', i.e. "start of string
+      // immediately followed by end of string". That matches nothing at all,
+      // so every direct method was silently dropped.
+      const parts = topic.split('/');
+      const isMethodRequest =
+        parts.length === 6 &&
+        parts[0] === '$devicehub' &&
+        parts[1] === 'devices' &&
+        parts[2] === deviceId &&
+        parts[3] === 'methods' &&
+        parts[5] === 'request';
+
+      if (isMethodRequest) {
+        this.handleDirectMethod(deviceId, parts[4], message);
       } else if (topic.includes('/twin/update/')) {
         this.handleTwinUpdate(deviceId, topic, message);
       }

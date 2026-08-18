@@ -470,7 +470,29 @@ export async function generateProvisioningCert(opts?: { force?: boolean }): Prom
     } catch (e) {
       console.warn('[certs] Warning: Could not set certificate permissions:', (e as Error).message);
     }
-    
+
+    // Mirror the new claim cert into PERSISTENT_CERTS_DIR. PROV_DIR lives
+    // under the app install root, which the installer overwrites on every
+    // deploy by copying the persistent copy back over it
+    // (deploy-artifacts.sh, configure_persistent_certs). Without this
+    // write-back the persistent copy stays frozen at whatever the first
+    // install generated, so the next upgrade restores a claim certificate
+    // that a previous renewal already revoked - and every device then fails
+    // its provisioning handshake with "certificate revoked" until someone
+    // renews again by hand.
+    try {
+      fs.mkdirSync(PERSISTENT_CERTS_DIR, { recursive: true });
+      const persistentCert = path.join(PERSISTENT_CERTS_DIR, 'provisioning.crt');
+      const persistentKey = path.join(PERSISTENT_CERTS_DIR, 'provisioning.key');
+      fs.copyFileSync(provisioningCertPath, persistentCert);
+      fs.copyFileSync(provisioningKeyPath, persistentKey);
+      try { fs.chmodSync(persistentCert, 0o640); } catch {}
+      try { fs.chmodSync(persistentKey, 0o640); } catch {}
+      console.log('[certs] Mirrored provisioning certificate to persistent storage');
+    } catch (e) {
+      console.warn('[certs] Warning: could not mirror provisioning certificate to persistent storage:', (e as Error).message);
+    }
+
     console.log('[certs] Generated provisioning certificate');
   } finally {
     // Cleanup temp files

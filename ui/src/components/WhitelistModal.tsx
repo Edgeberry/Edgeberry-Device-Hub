@@ -198,10 +198,18 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
                       <td style={{fontFamily:'monospace', fontSize:'0.85em'}}>{entry.uuid}</td>
                       <td>{fmtDate(entry.created_at)}</td>
                       <td>
+                        {/* Disabled first: an admin blacklisted this UUID, which
+                            overrides whatever it did before. Then the three
+                            states a permitted UUID can be in - never claimed,
+                            claimed and still registered, or claimed and since
+                            decommissioned. That last one used to read "In use",
+                            which described a device that no longer exists. */}
                         {entry.disabled_at ? (
                           <Badge bg='danger' title={`Disabled ${fmtDate(entry.disabled_at)}`}>Disabled</Badge>
-                        ) : entry.used_at ? (
+                        ) : entry.used_at && entry.registered ? (
                           <Badge bg='secondary' title={`Last claimed ${fmtDate(entry.used_at)}`}>In use</Badge>
+                        ) : entry.used_at ? (
+                          <Badge bg='warning' text='dark' title={`Claimed ${fmtDate(entry.used_at)}, no longer registered. This UUID may provision again.`}>Decommissioned</Badge>
                         ) : (
                           <Badge bg='success'>Unused</Badge>
                         )}

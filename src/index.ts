@@ -91,7 +91,7 @@ import { buildJournalctlArgs } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
 import { validateDeviceName } from './device-names.js';
 import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents } from './twin-store.js';
-import { getDevicesListSync, tryParseJson } from './devices-store.js';
+import { getDevicesListSync, tryParseJson, normalizeGroups, setGroupsForRole, getGroupsForRole, listGroups } from './devices-store.js';
 import { getAppSetting, setAppSetting, isAuthDisabled } from './app-settings.js';
 import { startProvisioning } from './services/provisioning/mqtt.js';
 import { startTwin } from './services/twin/mqtt.js';
@@ -946,10 +946,10 @@ function ensureDeviceHubSchema(){
 
     // device_roles: a persistent, admin-chosen label pointing at a device's
     // uuid - kept in its own table (not a column on devices) because
-    // claimDeviceName (devices-store.ts) deletes and reinserts the devices
-    // row on every reprovision; anything that needs to survive that must
-    // live elsewhere. UNIQUE(uuid) keeps the role->device mapping 1:1 so
-    // uuid->role translation (application-service) never has to pick
+    // claimDeviceName (devices-store.ts) resets the devices row's mutable
+    // columns on every reprovision; anything that must survive that lives
+    // elsewhere. UNIQUE(uuid) keeps the role->device mapping 1:1 so
+    // uuid->role translation (the application sub-service) never has to pick
     // between candidates.
     db.prepare(
       'CREATE TABLE IF NOT EXISTS device_roles ('+
@@ -959,6 +959,34 @@ function ensureDeviceHubSchema(){
       ' updated_at TEXT DEFAULT CURRENT_TIMESTAMP)'
     ).run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_device_roles_uuid ON device_roles(uuid)').run();
+
+    // device_groups: free-form operator tags, many-to-many, so applications
+    // can address a fleet by what devices *are* ("all freezers", or a
+    // `user-<id>` tag marking which customer owns them) instead of having to
+    // enumerate identifiers.
+    //
+    // Keyed on the *role* - the application-facing id - not on the hardware
+    // uuid. The chain is group -> application id -> hardware uuid, and only
+    // the last link moves: a hardware swap repoints a role at a replacement
+    // unit. Tagging the hardware would mean a swapped-in unit silently
+    // dropped out of every group the old one was in, which for an ownership
+    // tag means a customer losing sight of their own device. Tagging the
+    // application id makes the grouping survive the swap for free, because
+    // the thing the tag is attached to is exactly the thing that moved.
+    //
+    // No FOREIGN KEY onto device_roles: device_events shows what that costs
+    // (every membership row becomes something that blocks deleting or
+    // re-claiming). Rows are dropped explicitly when a role is cleared or its
+    // device decommissioned.
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS device_groups ('+
+      ' role TEXT NOT NULL,'+
+      ' group_name TEXT NOT NULL,'+
+      ' created_at TEXT DEFAULT CURRENT_TIMESTAMP,'+
+      ' PRIMARY KEY (role, group_name))'
+    ).run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_device_groups_group ON device_groups(group_name)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_device_groups_role ON device_groups(role)').run();
 
     // app_settings: small generic key/value store for admin-toggleable
     // settings that need to persist and be flippable at runtime from the UI
@@ -1259,6 +1287,24 @@ app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => 
     // name (see twin-store.ts), not its uuid - resolve before deleting the
     // devices row out from under that lookup.
     const deviceRow = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(uuid) as any;
+    // devicehub.db's own device_events table has a foreign key onto
+    // devices(uuid), so its rows must go first - otherwise deleting the
+    // device fails outright with SQLITE_CONSTRAINT_FOREIGNKEY for any device
+    // that ever reported telemetry or an event (i.e. every device that has
+    // actually been in service). This is separate from the twin database's
+    // connection-status events cleaned up below, which are keyed by name.
+    db.prepare('DELETE FROM device_events WHERE device_id = ?').run(uuid);
+    // Release the device's role, and with it that application id's groups.
+    // device_roles has no foreign key, so a leftover row doesn't error - it
+    // just keeps the role name permanently reserved and still resolving (via
+    // resolveIdentifierToUuid) to a device that no longer exists. Decommission
+    // retires the application identity outright, unlike a swap where the role
+    // survives on new hardware and must keep its tags.
+    const retiredRole = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
+    db.prepare('DELETE FROM device_roles WHERE uuid = ?').run(uuid);
+    if (retiredRole?.role) {
+      db.prepare('DELETE FROM device_groups WHERE role = ?').run(retiredRole.role);
+    }
     const info = db.prepare('DELETE FROM devices WHERE uuid = ?').run(uuid);
     // Return also how many whitelist entries exist for this device so UI can
     // prompt follow-up removal. Keyed by `uuid` - uuid_whitelist has no
@@ -1338,6 +1384,29 @@ app.put('/api/devices/:uuid/role', authRequired, (req: Request, res: Response) =
   try {
     const device = db.prepare('SELECT uuid FROM devices WHERE uuid = ?').get(uuid);
     if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
+
+    // If this role currently belongs to a *different* hardware uuid, this call
+    // is a hardware swap: that device loses the role the moment this commits.
+    // That transfer is the intended mechanic (the label follows wherever it is
+    // plugged in), but it used to happen invisibly. Report who lost it - and
+    // which groups it carried - so the caller and the UI's confirmation step
+    // can state plainly what was taken over.
+    let takenFrom: { uuid: string; name: string | null } | null = null;
+    if (role) {
+      const current = db.prepare(
+        'SELECT r.uuid AS uuid, d.name AS name FROM device_roles r '+
+        'LEFT JOIN devices d ON d.uuid = r.uuid WHERE r.role = ?'
+      ).get(role) as any;
+      if (current && current.uuid !== uuid) {
+        takenFrom = { uuid: current.uuid, name: current.name ?? null };
+      }
+    }
+
+    // Whatever role this device is giving up. If no other device picks it up,
+    // that application identity is retired and its groups go with it - a
+    // swap, by contrast, never reaches here for the surviving role.
+    const previousRole = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
+
     const setRole = db.transaction(() => {
       db.prepare('DELETE FROM device_roles WHERE uuid = ?').run(uuid);
       if (role) {
@@ -1346,14 +1415,114 @@ app.put('/api/devices/:uuid/role', authRequired, (req: Request, res: Response) =
           'ON CONFLICT(role) DO UPDATE SET uuid = excluded.uuid, updated_at = CURRENT_TIMESTAMP'
         ).run(role, uuid);
       }
+      // Groups hang off the role, so a transfer carries them across on its
+      // own - nothing to copy here. Only a role being genuinely retired (this
+      // device dropped it and no other device holds it) releases its tags, so
+      // a future, unrelated device given the same role name doesn't silently
+      // inherit a previous owner's `user-<id>`.
+      if (previousRole?.role && previousRole.role !== role) {
+        const stillHeld = db.prepare('SELECT 1 FROM device_roles WHERE role = ?').get(previousRole.role);
+        if (!stillHeld) db.prepare('DELETE FROM device_groups WHERE role = ?').run(previousRole.role);
+      }
     });
     setRole();
-    res.json({ ok: true, uuid, role: role || null });
+    if (takenFrom) {
+      console.log(`[devicehub] role "${role}" transferred from ${takenFrom.name || takenFrom.uuid} to ${uuid} (groups follow the role)`);
+    }
+    res.json({
+      ok: true,
+      uuid,
+      role: role || null,
+      taken_from: takenFrom,
+      groups: role ? getGroupsForRole(role) : []
+    });
   } catch (e:any) {
     res.status(500).json({ error: 'set_role_failed', message: e?.message || 'failed' });
   } finally {
     try{ db.close(); }catch{}
   }
+});
+
+// Groups: free-form operator tags on a device's *application id* (its role -
+// see device_groups in ensureDeviceHubSchema). Unlike the role itself, which
+// is a single exclusive identity, an application id can carry any number of
+// groups and many share the same one. They exist so an application can say
+// "everything in `cold-storage`", or "everything owned by `user-<id>`",
+// instead of tracking identifiers itself. Because they hang off the
+// application id rather than the hardware, they follow a device swap.
+
+// GET /api/groups -> every group in use, with device counts
+app.get('/api/groups', authRequired, (_req: Request, res: Response) => {
+  try {
+    res.json({ groups: listGroups() });
+  } catch (e: any) {
+    res.status(500).json({ error: 'list_failed', message: e?.message || 'failed' });
+  }
+});
+
+// PUT /api/devices/:uuid/groups -> replace the group membership of whatever
+// application id this device currently holds. Accepts either a bare string
+// ("freezers") or an array; an empty array or null clears membership. Replace
+// rather than merge, so the body is the full desired state and repeated calls
+// are idempotent.
+//
+// Addressed by hardware uuid for convenience (that's what the UI has in hand),
+// but stored against the role, so the tags stay with the application identity
+// if the hardware is later swapped out. A device with no role has no
+// application identity to tag yet, and is rejected rather than silently
+// accepting tags that would evaporate.
+app.put('/api/devices/:uuid/groups', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
+  // Tolerate both spellings: `groups` is the documented field, `group` is the
+  // natural thing to write when assigning exactly one.
+  const raw = req.body?.groups !== undefined ? req.body.groups : req.body?.group;
+  const normalized = normalizeGroups(raw);
+  if (!normalized.ok) { res.status(400).json({ error: 'invalid_groups', message: normalized.error }); return; }
+
+  const device = getDevicesListSync().devices.find(d => d.uuid === uuid);
+  if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
+  if (!device.role) {
+    res.status(409).json({
+      error: 'no_application_id',
+      message: 'Groups attach to a device\'s application id (role). Assign a role first.'
+    });
+    return;
+  }
+
+  const result = setGroupsForRole(device.role, normalized.groups || []);
+  if (!result.ok) { res.status(500).json({ error: result.error || 'set_groups_failed' }); return; }
+  res.json({ ok: true, uuid, role: device.role, groups: result.groups });
+});
+
+// GET /api/devices/:uuid/groups -> groups of this device's application id
+app.get('/api/devices/:uuid/groups', authRequired, (req: Request, res: Response) => {
+  const { uuid } = req.params;
+  if (!uuid) { res.status(400).json({ error: 'invalid_device_uuid' }); return; }
+  const device = getDevicesListSync().devices.find(d => d.uuid === uuid);
+  if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
+  res.json({ uuid, role: device.role, groups: device.role ? getGroupsForRole(device.role) : [] });
+});
+
+// PUT /api/roles/:role/groups -> same, addressed directly by application id.
+// This is the form that makes sense for automation: the caller knows which
+// application identity it is provisioning for, not which box is behind it.
+app.put('/api/roles/:role/groups', authRequired, (req: Request, res: Response) => {
+  const { role } = req.params;
+  if (!role) { res.status(400).json({ error: 'invalid_role' }); return; }
+  const raw = req.body?.groups !== undefined ? req.body.groups : req.body?.group;
+  const normalized = normalizeGroups(raw);
+  if (!normalized.ok) { res.status(400).json({ error: 'invalid_groups', message: normalized.error }); return; }
+  const result = setGroupsForRole(role, normalized.groups || []);
+  if (!result.ok) { res.status(500).json({ error: result.error || 'set_groups_failed' }); return; }
+  res.json({ ok: true, role, groups: result.groups });
+});
+
+// GET /api/roles/:role/groups
+app.get('/api/roles/:role/groups', authRequired, (req: Request, res: Response) => {
+  const { role } = req.params;
+  if (!role) { res.status(400).json({ error: 'invalid_role' }); return; }
+  res.json({ role, groups: getGroupsForRole(role) });
 });
 
 // GET /api/devices/:uuid/events -> recent events from registry DB
@@ -1490,7 +1659,17 @@ app.get('/api/admin/uuid-whitelist', authRequired, (_req: Request, res: Response
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.json({ entries: [] }); return; }
   try{
-    const rows = db.prepare('SELECT uuid, hardware_version, manufacturer, created_at, used_at, disabled_at FROM uuid_whitelist ORDER BY created_at DESC').all();
+    // `registered` distinguishes the two states a claimed UUID can be in:
+    // still in the registry, or claimed once and since decommissioned. Without
+    // it a decommissioned device is indistinguishable from a live one here -
+    // both just carry a used_at - which reads as though the device is still
+    // out there. LEFT JOIN so an entry that never provisioned stays listed.
+    const rows = db.prepare(
+      'SELECT w.uuid, w.hardware_version, w.manufacturer, w.created_at, w.used_at, w.disabled_at, '+
+      '  CASE WHEN d.uuid IS NULL THEN 0 ELSE 1 END AS registered '+
+      'FROM uuid_whitelist w LEFT JOIN devices d ON d.uuid = w.uuid '+
+      'ORDER BY w.created_at DESC'
+    ).all();
     res.json({ entries: rows });
   }catch{
     res.json({ entries: [] });

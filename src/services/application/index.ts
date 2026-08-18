@@ -25,7 +25,7 @@ import http from 'http';
 import mqtt from 'mqtt';
 import { v4 as uuidv4 } from 'uuid';
 import { APPLICATION_PORT, MQTT_URL } from '../../config.js';
-import { getDevicesListSync, getDeviceByUuid, resolveIdentifierToUuid, resolvePublicIdFromUuid } from '../../devices-store.js';
+import { getDevicesListSync, getDeviceByUuid, resolveIdentifierToUuid, resolvePublicIdFromUuid, getDeviceGroups, listGroups, normalizeGroups } from '../../devices-store.js';
 import { verifyToken } from '../../token-store.js';
 import { recordEvent, queryEvents } from '../../event-store.js';
 import { getTwin } from '../../twin-store.js';
@@ -51,6 +51,7 @@ interface AuthenticatedClient {
   subscriptions: {
     topics: Set<string>;       // Topic types (telemetry, events, status, etc.)
     devices: Set<string>;      // Specific device IDs or '*' for all
+    groups: Set<string>;       // Group names, matched exactly; additive to `devices`
   };
 }
 
@@ -141,11 +142,33 @@ function handleMqttMessage(topic: string, payload: string) {
       ...data
     };
 
-    // Handle method responses
-    if (messageType === 'methods' && topicParts[4] === 'response') {
+    // Handle method responses.
+    // Topic: $devicehub/devices/{name}/methods/{methodName}/response
+    //   index:  0          1       2        3        4            5
+    // The trailing segment is index 5 - index 4 is the method name, so
+    // testing index 4 for 'response' never matched and every direct method
+    // call timed out waiting for a reply that had in fact already arrived.
+    if (messageType === 'methods' && topicParts[5] === 'response') {
       const requestId = data.requestId;
       if (requestId) {
         eventEmitter.emit(`method-response-${requestId}`, data);
+      }
+    }
+
+    // Persist device-originated telemetry and events so the history endpoints
+    // (GET /api/telemetry, GET /api/devices/:id/events) can actually serve
+    // them. Devices only ever publish over MQTT - without this, the only
+    // stored telemetry would be whatever an application POSTed back through
+    // the REST ingest path, and querying a real device's history returns
+    // nothing.
+    if (messageType === 'telemetry' || messageType === 'events') {
+      const uuid = resolveIdentifierToUuid(deviceId);
+      if (uuid) {
+        const eventType = messageType === 'telemetry' ? 'telemetry' : (topicParts[4] || 'event');
+        const stored = recordEvent(uuid, eventType, data);
+        if (!stored.ok) {
+          console.warn(`[${SERVICE}] failed to persist ${eventType} for ${deviceId}: ${stored.error}`);
+        }
       }
     }
 
@@ -171,6 +194,15 @@ function broadcastToSubscribers(topic: string, data: any) {
 
   const publicDeviceId = deviceUuid ? resolvePublicIdFromUuid(deviceUuid) : rawDeviceId;
 
+  // This device's groups, looked up at most once per message and only if some
+  // client actually subscribed by group - most deployments won't, and this is
+  // the hot path for every telemetry message in the fleet.
+  let cachedGroups: string[] | null = null;
+  const deviceGroups = (): string[] => {
+    if (cachedGroups === null) cachedGroups = deviceUuid ? getDeviceGroups(deviceUuid) : [];
+    return cachedGroups;
+  };
+
   for (const client of clients.values()) {
     // Check if client is subscribed to this topic
     if (!client.subscriptions.topics.has(topic) && !client.subscriptions.topics.has('*')) {
@@ -187,6 +219,18 @@ function broadcastToSubscribers(topic: string, data: any) {
       if (!isSubscribed && deviceUuid) {
         for (const subscribedDevice of client.subscriptions.devices) {
           if (resolveIdentifierToUuid(subscribedDevice) === deviceUuid) {
+            isSubscribed = true;
+            break;
+          }
+        }
+      }
+
+      // Group subscriptions are additive to device subscriptions: a client
+      // that subscribed to "cold-storage" receives every device in it without
+      // having to name them, including ones added to the group later.
+      if (!isSubscribed && client.subscriptions.groups.size > 0) {
+        for (const g of deviceGroups()) {
+          if (client.subscriptions.groups.has(g)) {
             isSubscribed = true;
             break;
           }
@@ -242,7 +286,8 @@ wss.on('connection', (ws: WebSocket, req) => {
     appName: tokenData.name,
     subscriptions: {
       topics: new Set(),
-      devices: new Set()
+      devices: new Set(),
+      groups: new Set()
     }
   };
   clients.set(ws, client);
@@ -277,25 +322,41 @@ function handleWebSocketMessage(client: AuthenticatedClient, message: string) {
     const msg = JSON.parse(message);
 
     switch (msg.type) {
-      case 'subscribe':
+      case 'subscribe': {
         if (msg.topics && Array.isArray(msg.topics)) {
           msg.topics.forEach((topic: string) => client.subscriptions.topics.add(topic));
         }
-        if (msg.devices && Array.isArray(msg.devices)) {
+        const hasDevices = Array.isArray(msg.devices);
+        const hasGroups = msg.groups !== undefined;
+        if (hasGroups) {
+          // Accepts a bare string or an array, same as the admin API.
+          const normalized = normalizeGroups(msg.groups);
+          if (!normalized.ok) {
+            client.ws.send(JSON.stringify({ type: 'error', message: normalized.error }));
+            return;
+          }
+          client.subscriptions.groups.clear();
+          (normalized.groups || []).forEach(g => client.subscriptions.groups.add(g));
+        }
+        if (hasDevices) {
           // Clear previous device subscriptions and add new ones
           client.subscriptions.devices.clear();
           msg.devices.forEach((device: string) => client.subscriptions.devices.add(device));
-        } else {
-          // Default to all devices if not specified
+        } else if (!hasGroups) {
+          // Fall back to "everything" only when the client narrowed by
+          // nothing at all - a group-only subscription means the group, not
+          // the whole fleet.
           client.subscriptions.devices.add('*');
         }
-        console.log(`[${SERVICE}] Client ${client.appName} subscribed to topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}`);
+        console.log(`[${SERVICE}] Client ${client.appName} subscribed to topics=${Array.from(client.subscriptions.topics)}, devices=${Array.from(client.subscriptions.devices)}, groups=${Array.from(client.subscriptions.groups)}`);
         client.ws.send(JSON.stringify({
           type: 'subscribed',
           topics: msg.topics,
-          devices: Array.from(client.subscriptions.devices)
+          devices: Array.from(client.subscriptions.devices),
+          groups: Array.from(client.subscriptions.groups)
         }));
         break;
+      }
 
       case 'unsubscribe':
         if (msg.topics && Array.isArray(msg.topics)) {
@@ -304,10 +365,15 @@ function handleWebSocketMessage(client: AuthenticatedClient, message: string) {
         if (msg.devices && Array.isArray(msg.devices)) {
           msg.devices.forEach((device: string) => client.subscriptions.devices.delete(device));
         }
+        if (msg.groups !== undefined) {
+          const normalized = normalizeGroups(msg.groups);
+          (normalized.groups || []).forEach(g => client.subscriptions.groups.delete(g));
+        }
         client.ws.send(JSON.stringify({
           type: 'unsubscribed',
           topics: msg.topics,
-          devices: msg.devices
+          devices: msg.devices,
+          groups: msg.groups
         }));
         break;
 
@@ -360,10 +426,10 @@ function handleMethodCall(client: AuthenticatedClient, msg: any) {
     return;
   }
 
-  // Resolve device identifier to UUID
-  const uuid = resolveIdentifierToUuid(deviceId);
+  // Resolve to the device's MQTT name - the namespace it actually listens on
+  const mqttName = resolveDeviceMqttName(deviceId);
 
-  if (!uuid) {
+  if (!mqttName) {
     client.ws.send(JSON.stringify({
       type: 'methodResponse',
       requestId,
@@ -372,7 +438,7 @@ function handleMethodCall(client: AuthenticatedClient, msg: any) {
     return;
   }
 
-  console.log(`[${SERVICE}] WebSocket method call: ${methodName} on device ${deviceId} (${uuid})`);
+  console.log(`[${SERVICE}] WebSocket method call: ${methodName} on device ${deviceId} (${mqttName})`);
 
   // Set up response listener with timeout
   const timeout = setTimeout(() => {
@@ -397,9 +463,8 @@ function handleMethodCall(client: AuthenticatedClient, msg: any) {
 
   eventEmitter.once(`method-response-${requestId}`, responseHandler);
 
-  // Publish method request using UUID
   mqttClient.publish(
-    `$devicehub/devices/${uuid}/methods/${methodName}/request`,
+    `$devicehub/devices/${mqttName}/methods/${methodName}/request`,
     JSON.stringify({
       requestId,
       methodName,
@@ -431,10 +496,10 @@ function handleSendMessage(client: AuthenticatedClient, msg: any) {
     return;
   }
 
-  // Resolve device identifier to UUID
-  const uuid = resolveIdentifierToUuid(deviceId);
+  // Resolve to the device's MQTT name - the namespace it actually listens on
+  const mqttName = resolveDeviceMqttName(deviceId);
 
-  if (!uuid) {
+  if (!mqttName) {
     client.ws.send(JSON.stringify({
       type: 'messageResponse',
       messageId,
@@ -443,11 +508,11 @@ function handleSendMessage(client: AuthenticatedClient, msg: any) {
     return;
   }
 
-  console.log(`[${SERVICE}] Sending cloud-to-device message to ${deviceId} (${uuid})`);
+  console.log(`[${SERVICE}] Sending cloud-to-device message to ${deviceId} (${mqttName})`);
 
   // Publish message to device
   mqttClient.publish(
-    `$devicehub/devices/${uuid}/messages/devicebound`,
+    `$devicehub/devices/${mqttName}/messages/devicebound`,
     JSON.stringify(payload),
     { qos: 1 },
     (err) => {
@@ -539,12 +604,40 @@ app.get('/api/connections/active', authenticateToken, (_req: Request, res: Respo
 });
 
 // Get all devices
-function toApiDevice(d: { uuid: string; name: string; role: string | null; meta: any; created_at: string; last_seen: string | null; online: boolean }) {
+/**
+ * Resolve any device identifier (assigned name, role, or uuid) to the device's
+ * MQTT name. That name is the device's actual broker identity - its certificate
+ * CN and clientId - and therefore the only topic namespace it is subscribed
+ * under. Every Hub->device publish must address this, never the uuid: a device
+ * only ever uses its uuid during the one-time provisioning claim, so a message
+ * sent to the uuid's namespace reaches nobody.
+ */
+/**
+ * Resolve one or more group names (?group=a&group=b, or a single value) to the
+ * hardware uuids of every device currently in any of them. Exact matching,
+ * same as the group filter on /api/devices.
+ */
+function devicesInGroups(group: unknown): string[] {
+  const wanted = new Set((Array.isArray(group) ? group : [group]).map(g => String(g)));
+  return getDevicesListSync().devices
+    .filter(d => (d.groups || []).some(g => wanted.has(g)))
+    .map(d => d.uuid);
+}
+
+function resolveDeviceMqttName(identifier: string): string | null {
+  const uuid = resolveIdentifierToUuid(identifier);
+  if (!uuid) return null;
+  const device = getDeviceByUuid(uuid);
+  return device ? device.name : null;
+}
+
+function toApiDevice(d: { uuid: string; name: string; role: string | null; groups?: string[]; meta: any; created_at: string; last_seen: string | null; online: boolean }) {
   const meta = d.meta && typeof d.meta === 'object' ? d.meta : {};
   return {
     deviceId: d.role ?? d.name, // role if assigned, else raw MQTT name - same precedence as the WebSocket broadcast
     deviceName: d.name,
     role: d.role,
+    groups: d.groups ?? [],
     uuid: d.uuid, // Include UUID for internal use only
     status: d.online ? 'online' : 'offline',
     lastSeen: d.last_seen,
@@ -557,11 +650,19 @@ function toApiDevice(d: { uuid: string; name: string; role: string | null; meta:
 
 app.get('/api/devices', authenticateToken, (req: Request, res: Response) => {
   try {
-    const { model, lastSeenAfter, lastSeenBefore, limit = 100, offset = 0 } = req.query;
+    const { model, group, status, lastSeenAfter, lastSeenBefore, limit = 100, offset = 0 } = req.query;
 
     let devices = getDevicesListSync().devices;
 
     if (model) devices = devices.filter(d => (d.meta?.model) === model);
+    // ?group=a&group=b returns devices in *any* of the named groups, which is
+    // what "show me the cold-storage and loading-bay fleet" means. Matched
+    // exactly (case included) - see normalizeGroups for why.
+    if (group) {
+      const wanted = new Set((Array.isArray(group) ? group : [group]).map(g => String(g)));
+      devices = devices.filter(d => (d.groups || []).some(g => wanted.has(g)));
+    }
+    if (status) devices = devices.filter(d => (d.online ? 'online' : 'offline') === String(status));
     if (lastSeenAfter) devices = devices.filter(d => d.created_at >= String(lastSeenAfter));
     if (lastSeenBefore) devices = devices.filter(d => d.created_at <= String(lastSeenBefore));
 
@@ -573,6 +674,17 @@ app.get('/api/devices', authenticateToken, (req: Request, res: Response) => {
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get devices:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve devices' });
+  }
+});
+
+// Groups in use, with device counts. Read-only here: grouping is an operator
+// concern, assigned through the Device Hub admin API/UI.
+app.get('/api/groups', authenticateToken, (_req: Request, res: Response) => {
+  try {
+    res.json(listGroups());
+  } catch (e: any) {
+    console.error(`[${SERVICE}] Failed to list groups:`, e.message);
+    res.status(500).json({ error: 'Failed to retrieve groups' });
   }
 });
 
@@ -603,7 +715,7 @@ app.get('/api/devices/:deviceId', authenticateToken, (req: Request, res: Respons
 // Get device telemetry
 app.get('/api/telemetry', authenticateToken, (req: Request, res: Response) => {
   try {
-    const { deviceId, startTime, endTime, limit = 100, offset = 0 } = req.query;
+    const { deviceId, group, startTime, endTime, limit = 100, offset = 0 } = req.query;
 
     const deviceUuid = deviceId ? resolveIdentifierToUuid(String(deviceId)) : undefined;
     if (deviceId && !deviceUuid) {
@@ -611,8 +723,15 @@ app.get('/api/telemetry', authenticateToken, (req: Request, res: Response) => {
       return;
     }
 
+    // ?group=... narrows to the devices currently in those groups. Resolved
+    // to uuids here so the store stays a plain event table with no knowledge
+    // of grouping. Membership is evaluated at query time, so a device added
+    // to a group today also surfaces its older readings under that group.
+    const groupUuids = group ? devicesInGroups(group) : undefined;
+
     const events = queryEvents({
       deviceUuid: deviceUuid || undefined,
+      deviceUuids: groupUuids,
       eventType: 'telemetry',
       startTime: startTime ? String(startTime) : undefined,
       endTime: endTime ? String(endTime) : undefined,
@@ -620,7 +739,12 @@ app.get('/api/telemetry', authenticateToken, (req: Request, res: Response) => {
       offset: Number(offset) || 0
     });
 
-    res.json(events.map(e => ({ deviceId: e.deviceUuid, timestamp: e.ts, data: e.data })));
+    // deviceId is the public identifier (role if assigned, else the MQTT
+    // name) - the same value getDevices() and the WebSocket broadcasts use,
+    // so telemetry can be correlated with a device without the caller having
+    // to translate uuids. It also keeps a hardware swap invisible: readings
+    // before and after keep reporting the role.
+    res.json(events.map(e => ({ deviceId: resolvePublicIdFromUuid(e.deviceUuid), uuid: e.deviceUuid, timestamp: e.ts, data: e.data })));
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get telemetry:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve telemetry' });
@@ -683,7 +807,8 @@ app.get('/api/devices/:deviceId/events', authenticateToken, (req: Request, res: 
       limit: Number(limit) || 100
     });
 
-    res.json(events.map(e => ({ deviceId: e.deviceUuid, eventType: e.eventType, timestamp: e.ts, data: e.data })));
+    // Same public-identifier convention as /api/telemetry and /api/devices.
+    res.json(events.map(e => ({ deviceId: resolvePublicIdFromUuid(e.deviceUuid), uuid: e.deviceUuid, eventType: e.eventType, timestamp: e.ts, data: e.data })));
   } catch (e: any) {
     console.error(`[${SERVICE}] Failed to get device events:`, e.message);
     res.status(500).json({ error: 'Failed to retrieve events' });
@@ -777,10 +902,10 @@ app.post('/api/devices/:deviceId/methods/:methodName', authenticateToken, (req: 
       return res.status(503).json({ error: 'MQTT broker not connected' });
     }
 
-    // Resolve device identifier to UUID
-    const uuid = resolveIdentifierToUuid(deviceId);
+    // Resolve to the device's MQTT name - the namespace it actually listens on
+    const mqttName = resolveDeviceMqttName(deviceId);
 
-    if (!uuid) {
+    if (!mqttName) {
       res.status(404).json({ error: 'Device not found' });
       return;
     }
@@ -807,9 +932,8 @@ app.post('/api/devices/:deviceId/methods/:methodName', authenticateToken, (req: 
 
     eventEmitter.once(`method-response-${requestId}`, responseHandler);
 
-    // Publish method request using UUID
     mqttClient.publish(
-      `$devicehub/devices/${uuid}/methods/${methodName}/request`,
+      `$devicehub/devices/${mqttName}/methods/${methodName}/request`,
       JSON.stringify({
         requestId,
         methodName,
@@ -840,9 +964,15 @@ app.post('/api/batch/methods', authenticateToken, (req: Request, res: Response) 
     const results = deviceIds.map(deviceId => {
       const requestId = uuidv4();
 
-      // Publish method request for each device
+      // Same resolution as the single-device route: publish to the device's
+      // MQTT name, not whatever identifier form the caller happened to use.
+      const mqttName = resolveDeviceMqttName(deviceId);
+      if (!mqttName) {
+        return { deviceId, requestId, status: 'failed', error: 'Device not found' };
+      }
+
       mqttClient!.publish(
-        `$devicehub/devices/${deviceId}/methods/${methodName}/request`,
+        `$devicehub/devices/${mqttName}/methods/${methodName}/request`,
         JSON.stringify({
           requestId,
           methodName,

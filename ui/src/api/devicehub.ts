@@ -184,6 +184,25 @@ export async function setDeviceRole(uuid: string, role: string|null){
   return jsonOrMessage(res);
 }
 
+// --- Groups: free-form tags on a device's *application id* (its role), not on
+// the hardware. A device can carry any number; several devices share one.
+// Because they hang off the application id, they follow a hardware swap
+// automatically - which is what makes an ownership tag like `user-<id>` safe
+// to rely on across a device replacement.
+/**
+ * List every group in use, with device counts
+ */
+export async function getGroups(){ return jsonOrMessage(await fetch(base()+"/groups", { credentials:'include' })); }
+/**
+ * Replace the groups on this device's application id. Pass a single string or
+ * an array; an empty array clears them. The device must already have a role -
+ * there is no application id to tag otherwise.
+ */
+export async function setDeviceGroups(uuid: string, groups: string[]|string){
+  const res = await fetch(base()+`/devices/${encodeURIComponent(uuid)}/groups`, { method:'PUT', headers:{ 'Content-Type':'application/json' }, credentials:'include', body: JSON.stringify({ groups }) });
+  return jsonOrMessage(res);
+}
+
 // --- Provisioning claim-certificate HTTP fetch switch. Off is an opt-in
 // hardening step for operators who install the claim cert on devices
 // out-of-band instead of letting them download it over HTTP.

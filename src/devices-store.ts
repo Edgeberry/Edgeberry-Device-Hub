@@ -16,6 +16,9 @@ export type DeviceListEntry = {
   uuid: string;
   name: string;
   role: string | null;
+  /** Free-form operator tags. A device can be in any number of groups, and a
+   *  group exists only as long as some device references it. */
+  groups: string[];
   token: string;
   meta: any;
   created_at: string;
@@ -79,6 +82,22 @@ export function getDevicesListSync(): { devices: DeviceListEntry[] } {
       console.error('[getDevicesListSync] Failed to load device roles:', e);
     }
 
+    // Loaded in one query and bucketed in memory rather than per device -
+    // this list is rendered on every dashboard poll and every application
+    // GET /api/devices. Keyed by role: groups belong to the application id,
+    // so a device without a role simply has none.
+    const groupsByRole = new Map<string, string[]>();
+    try {
+      const groupRows = db.prepare('SELECT role, group_name FROM device_groups ORDER BY group_name').all() as Array<{ role: string; group_name: string }>;
+      for (const g of groupRows) {
+        const list = groupsByRole.get(g.role);
+        if (list) list.push(g.group_name);
+        else groupsByRole.set(g.role, [g.group_name]);
+      }
+    } catch (e) {
+      console.error('[getDevicesListSync] Failed to load device groups:', e);
+    }
+
     const devices = rows.map((r: any) => {
       // Keyed by whatever MQTT identity twin-service actually observed in the
       // topic/connection-log line - the device's assigned name (r.name),
@@ -88,10 +107,12 @@ export function getDevicesListSync(): { devices: DeviceListEntry[] } {
       const online = deviceStatus ? deviceStatus.online : false;
       const last_seen = deviceStatus ? deviceStatus.last_seen : null;
 
+      const deviceRole = roleByUuid.get(r.uuid) ?? null;
       return {
         uuid: r.uuid,
         name: r.name,
-        role: roleByUuid.get(r.uuid) ?? null,
+        role: deviceRole,
+        groups: deviceRole ? (groupsByRole.get(deviceRole) ?? []) : [],
         token: r.token,
         meta: tryParseJson(r.meta),
         created_at: r.created_at,
@@ -148,6 +169,122 @@ export function getDeviceByUuid(uuid: string): DeviceListEntry | null {
   return devices.find(d => d.uuid === uuid) || null;
 }
 
+// ===== Groups =====
+//
+// Operator-assigned tags, keyed on the *role* (the application-facing id),
+// not on the hardware uuid. See the device_groups comment in
+// ensureDeviceHubSchema: the tag belongs to the application identity, so it
+// travels with that identity when the role is repointed at replacement
+// hardware. A device with no role has no application identity yet and so
+// carries no groups.
+
+// Long enough for an opaque tenancy identifier - a "user-<uuid>" tag is ~41
+// characters, and callers may prefix or namespace further.
+export const MAX_GROUP_NAME_LENGTH = 128;
+
+/**
+ * Accept what callers actually send - a single group as a bare string, or a
+ * list - and reduce it to a clean, de-duplicated, order-stable array.
+ * Returns an error rather than silently dropping bad entries, so a typo in an
+ * automation surfaces instead of quietly un-grouping a device.
+ *
+ * Group names are compared **exactly**, case included, everywhere they are
+ * matched. Case-insensitive matching would be friendlier for hand-typed tags
+ * ("Freezers" == "freezers"), but groups are also used as tenancy markers -
+ * a `user-<opaque-id>` tag scoping a fleet to one owner. Opaque ids can differ
+ * by case alone, and folding case would silently merge two distinct owners
+ * into one group, showing each other's devices and telemetry. Two tags that
+ * differ only in case are therefore two groups.
+ */
+export function normalizeGroups(input: unknown): { ok: boolean; groups?: string[]; error?: string } {
+  if (input === null || input === undefined) return { ok: true, groups: [] };
+  const raw = Array.isArray(input) ? input : [input];
+  const seen = new Set<string>();
+  const groups: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') return { ok: false, error: 'groups must be a string or an array of strings' };
+    const name = entry.trim();
+    if (!name) continue; // tolerate empty padding, e.g. from a trailing comma
+    if (name.length > MAX_GROUP_NAME_LENGTH) {
+      return { ok: false, error: `group name exceeds ${MAX_GROUP_NAME_LENGTH} characters: "${name.slice(0, 20)}..."` };
+    }
+    if (seen.has(name)) continue;
+    seen.add(name);
+    groups.push(name);
+  }
+  return { ok: true, groups };
+}
+
+/** Groups for an application id (role). */
+export function getGroupsForRole(role: string): string[] {
+  if (!role) return [];
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) return [];
+  try {
+    const rows = db.prepare('SELECT group_name FROM device_groups WHERE role = ? ORDER BY group_name').all(role) as Array<{ group_name: string }>;
+    return rows.map(r => r.group_name);
+  } catch {
+    return [];
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/** Groups for whatever device currently holds a given hardware uuid, via its role. */
+export function getDeviceGroups(uuid: string): string[] {
+  const device = getDeviceByUuid(uuid);
+  return device && device.role ? getGroupsForRole(device.role) : [];
+}
+
+/** Replace an application id's entire group membership. */
+export function setGroupsForRole(role: string, groups: string[]): { ok: boolean; groups?: string[]; error?: string } {
+  if (!role) return { ok: false, error: 'role_required' };
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) return { ok: false, error: 'Database unavailable' };
+  try {
+    const apply = db.transaction(() => {
+      db.prepare('DELETE FROM device_groups WHERE role = ?').run(role);
+      const insert = db.prepare('INSERT OR IGNORE INTO device_groups (role, group_name) VALUES (?, ?)');
+      for (const g of groups) insert.run(role, g);
+    });
+    apply();
+    return { ok: true, groups };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/** Every group currently in use, with how many devices carry it. */
+export function listGroups(): Array<{ group: string; device_count: number }> {
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) return [];
+  try {
+    return db.prepare(
+      'SELECT group_name AS "group", COUNT(*) AS device_count FROM device_groups GROUP BY group_name ORDER BY group_name'
+    ).all() as Array<{ group: string; device_count: number }>;
+  } catch {
+    return [];
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/** Drop every group membership for an application id - used when a role is
+ *  retired (cleared, or its device decommissioned). Not called on a swap:
+ *  there the role lives on, so its groups must too. */
+export function clearGroupsForRole(role: string): void {
+  if (!role) return;
+  const db = openDb(DEVICEHUB_DB);
+  if (!db) return;
+  try {
+    db.prepare('DELETE FROM device_groups WHERE role = ?').run(role);
+  } catch { /* ignore */ } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
 // ===== Provisioning-side registration (used by services/provisioning/) =====
 
 function ensureDevicesTable(db: any) {
@@ -173,9 +310,14 @@ function generateRandomDeviceName(): string {
 //
 // Every successful claim gets a *fresh* random name, replacing whatever was
 // reserved before - reprovisioning is meant to be a genuine fresh start,
-// not a renewal of the old identity. The old row for this uuid (if any) is
-// deleted and a new one inserted in the same transaction, so a crash
-// between those two steps can't leave the uuid with no row at all.
+// not a renewal of the old identity. The row is upserted rather than
+// deleted-and-reinserted: the uuid is the primary key and never changes, so
+// only the mutable columns need resetting, and device_events.device_id has a
+// foreign key onto devices(uuid) - deleting the row first fails outright
+// (SQLITE_CONSTRAINT_FOREIGNKEY) as soon as the device has any recorded
+// telemetry or events, which is every reprovision of a device that has ever
+// been in service. The upsert also removes the window where the uuid has no
+// row at all.
 //
 // Random on purpose: a name derived from the UUID would let anyone who
 // learns the UUID predict the device's public identity ahead of time.
@@ -192,8 +334,15 @@ export function claimDeviceName(uuid: string): { ok: boolean; deviceId?: string;
       const candidate = generateRandomDeviceName();
       try {
         const claim = db.transaction((deviceUuid: string, deviceName: string) => {
-          db.prepare('DELETE FROM devices WHERE uuid = ?').run(deviceUuid);
-          db.prepare(`INSERT INTO devices (uuid, name, token, meta, created_at) VALUES (?, ?, '', '{}', CURRENT_TIMESTAMP)`).run(deviceUuid, deviceName);
+          db.prepare(
+            `INSERT INTO devices (uuid, name, token, meta, created_at)
+             VALUES (?, ?, '', '{}', CURRENT_TIMESTAMP)
+             ON CONFLICT(uuid) DO UPDATE SET
+               name = excluded.name,
+               token = excluded.token,
+               meta = excluded.meta,
+               created_at = excluded.created_at`
+          ).run(deviceUuid, deviceName);
         });
         claim(uuid, candidate);
         console.log(`[devices-store] Claimed uuid=${uuid} -> deviceId=${candidate}`);

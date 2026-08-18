@@ -24,6 +24,10 @@ function openDb(): any {
 export type EventRecord = { deviceUuid: string; eventType: string; ts: string; data: any };
 export type EventFilter = {
   deviceUuid?: string;
+  /** Restrict to a set of devices - used to serve group queries, where the
+   *  caller resolved the group to its member uuids. An empty array means "no
+   *  devices match" and yields no rows, rather than being ignored. */
+  deviceUuids?: string[];
   eventType?: string;
   startTime?: string;
   endTime?: string;
@@ -53,6 +57,11 @@ export function queryEvents(filter: EventFilter): EventRecord[] {
     let query = 'SELECT device_id, event_type, payload, ts FROM device_events WHERE 1=1';
     const params: any[] = [];
     if (filter.deviceUuid) { query += ' AND device_id = ?'; params.push(filter.deviceUuid); }
+    if (filter.deviceUuids) {
+      if (filter.deviceUuids.length === 0) return [];
+      query += ` AND device_id IN (${filter.deviceUuids.map(() => '?').join(',')})`;
+      params.push(...filter.deviceUuids);
+    }
     if (filter.eventType) { query += ' AND event_type = ?'; params.push(filter.eventType); }
     if (filter.startTime) { query += ' AND ts >= ?'; params.push(filter.startTime); }
     if (filter.endTime) { query += ' AND ts <= ?'; params.push(filter.endTime); }

@@ -110,26 +110,37 @@ A comprehensive virtual device implementation that includes all functionality fr
 #### Environment Variables
 
 ```bash
-# Device identification
-DEVICE_ID=my-virtual-device-001
-PROV_UUID=unique-provisioning-id
+# Provisioning identity - PROV_UUID must be whitelisted on the Hub first
+PROV_UUID=d6062a92-83f3-4e0f-b42c-04c0b47a3d2a
 
-# Connection settings
-MQTT_HOST=127.0.0.1
-PROV_API_BASE=https://127.0.0.1:8080
+# Where to fetch the claim certificate (ca.crt / provisioning.crt / .key) from.
+# This is the Hub's admin HTTP port (3000 in production, 8080 in dev).
+PROV_API_BASE=http://devicehub.example.com:3000
 
-# Device metadata
-DEVICE_NAME="My Virtual Device"
-DEVICE_MODEL=EdgeberryVirtualDevice
-FIRMWARE_VERSION=1.2.3
+# MQTT broker - full URL, not a bare host
+MQTT_URL=mqtts://devicehub.example.com:8883
 
-# Telemetry settings
-TELEMETRY_INTERVAL=5000
+# Set false when the broker cert is signed by a CA your machine doesn't trust
+# (e.g. the Hub's own root CA, or an IP-addressed test Hub)
+MQTT_TLS_REJECT_UNAUTHORIZED=true
 
-# Certificate output paths (optional)
+# Where the fetched claim certificate is written (default ./certs)
+CERTS_DIR=./certs
+
+# Telemetry publish period, milliseconds
+TELEMETRY_PERIOD_MS=5000
+
+# Certificate output paths (optional; default to the system temp dir)
 DEVICE_CERT_OUT=/path/to/device.crt
 DEVICE_KEY_OUT=/path/to/device.key
 ```
+
+> [!NOTE]
+> The device's own name is **assigned by the Hub** during provisioning - it is
+> not something you choose. `DEVICE_ID` only labels the pre-provisioning
+> session; the Hub replaces it with the name it hands back in round 1 of the
+> handshake, and that assigned name becomes the device's certificate CN, MQTT
+> client id, and topic namespace from then on.
 
 #### Running Examples
 
@@ -260,14 +271,51 @@ const client = EdgeberryDeviceHubClient.createSecureClient({
 
 ## Topic Structure
 
-The client uses the following MQTT topic patterns:
+All topics are namespaced under `$devicehub` and keyed by `{deviceId}` — the
+name the Hub **assigned** during provisioning, which is also the certificate CN
+and MQTT client id. Nothing is addressed by hardware UUID after provisioning.
 
-- **Telemetry**: `devices/{deviceId}/telemetry`
-- **Events**: `devices/{deviceId}/events`
-- **Direct Methods**: `$devicehub/devices/{deviceId}/methods/post`
-- **Method Response**: `$devicehub/devices/{deviceId}/methods/res`
-- **Twin Desired**: `devices/{deviceId}/twin/desired`
-- **Twin Reported**: `devices/{deviceId}/twin/reported`
+Device publishes:
+
+| Purpose | Topic |
+|---|---|
+| Telemetry | `$devicehub/devices/{deviceId}/telemetry` |
+| Events | `$devicehub/devices/{deviceId}/messages/events` |
+| Heartbeat | `$devicehub/devices/{deviceId}/heartbeat` |
+| Twin read request | `$devicehub/devices/{deviceId}/twin/get` |
+| Twin reported update | `$devicehub/devices/{deviceId}/twin/update` |
+| Direct method reply | `$devicehub/devices/{deviceId}/methods/{methodName}/response` |
+
+Device subscribes:
+
+| Purpose | Topic |
+|---|---|
+| Direct method calls | `$devicehub/devices/{deviceId}/methods/+/request` |
+| Cloud-to-device messages | `$devicehub/devices/{deviceId}/messages/devicebound` |
+| Twin update accepted | `$devicehub/devices/{deviceId}/twin/update/accepted` |
+| Twin update rejected | `$devicehub/devices/{deviceId}/twin/update/rejected` |
+| Twin desired delta | `$devicehub/devices/{deviceId}/twin/update/delta` |
+
+Provisioning is the one exception: it runs under the hardware UUID, because no
+name has been assigned yet.
+
+| Purpose | Topic |
+|---|---|
+| Claim / issue request | `$devicehub/devices/{uuid}/provision/request` |
+| Accepted | `$devicehub/devices/{uuid}/provision/accepted` |
+| Rejected | `$devicehub/devices/{uuid}/provision/rejected` |
+
+The handshake is **two round trips** on the same connection:
+
+1. **Claim** — publish to `provision/request` with no `csrPem`. The Hub assigns
+   a fresh name and returns it as `deviceId`.
+2. **Issue** — publish again with `csrPem` (CN'd for that assigned name) and
+   `deviceId` echoed back. The Hub returns `certPem` and `caChainPem`.
+
+Sending a CSR in the first request is rejected: nothing has been claimed for the
+UUID yet, so there is no assigned name for the CSR's CN to match. See
+[`examples/complete-virtual-device.ts`](examples/complete-virtual-device.ts) for
+a working implementation.
 
 ## Error Handling
 

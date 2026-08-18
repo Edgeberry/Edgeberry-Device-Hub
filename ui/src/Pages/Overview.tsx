@@ -17,7 +17,7 @@ import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
 import SystemWidget from '../components/SystemWidget';
 import ApplicationsWidget from '../components/ApplicationsWidget';
-import { getDevices, decommissionDevice, deleteWhitelistByDevice, setDeviceRole } from '../api/devicehub';
+import { getDevices, decommissionDevice, deleteWhitelistByDevice, setDeviceRole, setDeviceGroups } from '../api/devicehub';
 import { roleLabelFor } from '../deviceDisplay';
 import { direct_identifySystem } from '../api/directMethods';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
@@ -25,8 +25,10 @@ import { Link } from 'react-router-dom';
 import DeviceDetailModal from '../components/DeviceDetailModal';
 import CertificateSettingsModal from '../components/CertificateSettingsModal';
 import WhitelistModal from '../components/WhitelistModal';
+import SwapIdentityModal from '../components/SwapIdentityModal';
+import DecommissionModal from '../components/DecommissionModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTrash, faLocationDot, faEye, faSearch, faPen, faListCheck, faCloudArrowDown } from '@fortawesome/free-solid-svg-icons';
+import { faTrash, faLocationDot, faEye, faSearch, faPen, faListCheck, faCloudArrowDown, faRightLeft } from '@fortawesome/free-solid-svg-icons';
 
 export default function Overview(){
   const [devices, setDevices] = useState<any[]>([]);
@@ -38,6 +40,11 @@ export default function Overview(){
   const [searchQuery, setSearchQuery] = useState('');
   const [editingRole, setEditingRole] = useState<string | null>(null);
   const [roleInput, setRoleInput] = useState('');
+  const [editingGroups, setEditingGroups] = useState<string | null>(null);
+  const [groupsInput, setGroupsInput] = useState('');
+  const [swapSource, setSwapSource] = useState<any>(null);
+  const [swapThenDecommission, setSwapThenDecommission] = useState(false);
+  const [pendingDecommission, setPendingDecommission] = useState<any>(null);
   // Re-render every second to update relative offline timers
   const [now, setNow] = useState<number>(()=> Date.now());
   useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
@@ -139,8 +146,29 @@ export default function Overview(){
     } catch {}
   };
 
-  const handleDeleteDevice = async (uuid: string, name: string) => {
-    if (!confirm(`Delete device "${name || uuid}"? This removes it from the registry only.`)) return;
+  // Decommissioning is offered through a modal rather than a confirm() because
+  // for a device that holds an application ID there is a second, usually
+  // better, answer than "delete it": hand that ID to the replacement first.
+  const handleDeleteDevice = (device: any) => {
+    setPendingDecommission(device);
+  };
+
+  const handleOpenSwap = (device: any) => {
+    setSwapSource(device);
+  };
+
+  // "Swap to replacement" from the decommission modal: hand over the identity,
+  // then come back to finish removing this unit - the device is being retired
+  // either way, the identity just shouldn't die with it.
+  const handleSwapInstead = () => {
+    setSwapSource(pendingDecommission);
+    setSwapThenDecommission(true);
+    setPendingDecommission(null);
+  };
+
+  const doDecommission = async (device: any) => {
+    const uuid = device?.uuid;
+    if (!uuid) return;
     try {
       setActionBusy(uuid);
       const res: any = await decommissionDevice(uuid);
@@ -157,6 +185,22 @@ export default function Overview(){
       // Failed to delete device - error handled by UI state
     } finally {
       setActionBusy(null);
+      setPendingDecommission(null);
+    }
+  };
+
+  const handleSwapped = async () => {
+    await refreshDevices();
+    // Came here from the decommission flow: the identity is safely on the
+    // replacement, so finish retiring the device that was being replaced.
+    if (swapThenDecommission && swapSource) {
+      const source = swapSource;
+      setSwapThenDecommission(false);
+      setSwapSource(null);
+      // Its role moved away, so this is now a plain removal - no second prompt.
+      await doDecommission({ ...source, role: null, groups: [] });
+    } else {
+      setSwapSource(null);
     }
   };
 
@@ -173,6 +217,25 @@ export default function Overview(){
   const handleSaveRole = async (uuid: string, previousRole: string|null) => {
     const nextRole = roleInput.trim();
     if (nextRole === (previousRole || '')) { handleCancelEditRole(); return; }
+    // Taking a role another device already holds is a hardware swap: that
+    // device loses its application identity, and the groups attached to that
+    // identity come across with it. The transfer is the intended mechanic,
+    // but it used to happen with no indication at all - so confirm, naming
+    // exactly what is being taken over and from which device.
+    if (nextRole) {
+      const holder = (devices||[]).find((x:any)=> x.role === nextRole && x.uuid !== uuid);
+      if (holder) {
+        const holderLabel = holder.name || holder.uuid;
+        const holderGroups: string[] = holder.groups || [];
+        const confirmed = window.confirm(
+          `"${nextRole}" is currently the application ID of device ${holderLabel}.\n\n` +
+          `Continuing transfers it to this device` +
+          (holderGroups.length ? `, along with its groups (${holderGroups.join(', ')})` : '') +
+          `.\n\n${holderLabel} will be left without an application ID. Its own history stays with it.`
+        );
+        if (!confirmed) return;
+      }
+    }
     try {
       setActionBusy(uuid);
       await setDeviceRole(uuid, nextRole || null);
@@ -180,6 +243,36 @@ export default function Overview(){
       handleCancelEditRole();
     } catch (error) {
       // Failed to update role - error handled by UI state
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleEditGroups = (uuid: string, currentGroups: string[]|undefined) => {
+    setEditingGroups(uuid);
+    setGroupsInput((currentGroups || []).join(', '));
+  };
+
+  const handleCancelEditGroups = () => {
+    setEditingGroups(null);
+    setGroupsInput('');
+  };
+
+  const handleSaveGroups = async (uuid: string) => {
+    // Comma-separated in the box, an array on the wire. Empty entries are
+    // dropped server-side, so a trailing comma is harmless.
+    const groups = groupsInput.split(',').map(g => g.trim()).filter(Boolean);
+    try {
+      setActionBusy(uuid);
+      const result = await setDeviceGroups(uuid, groups);
+      if (result && result.error === 'no_application_id') {
+        alert('Assign a role first - groups attach to a device\'s application ID, not to the hardware.');
+        return;
+      }
+      await refreshDevices();
+      handleCancelEditGroups();
+    } catch (error) {
+      // Failed to update groups - error surfaced by refresh state
     } finally {
       setActionBusy(null);
     }
@@ -243,6 +336,7 @@ export default function Overview(){
               <thead>
                 <tr>
                   <th>Role</th>
+                  <th>Groups</th>
                   <th>Device ID</th>
                   <th>Status</th>
                   <th className="text-end">Actions</th>
@@ -259,6 +353,7 @@ export default function Overview(){
                   const roleLabel = roleLabelFor(d);
                   const isBusy = actionBusy === uuid;
                   const isEditingRole = editingRole === uuid;
+                  const isEditingGroups = editingGroups === uuid;
 
                   return (
                     <tr key={uuid} className="device-row" onClick={open} style={{cursor: 'pointer'}}>
@@ -299,6 +394,44 @@ export default function Overview(){
                           </>
                         )}
                       </td>
+                      <td onClick={isEditingGroups ? (e) => e.stopPropagation() : undefined} style={{maxWidth: '260px'}}>
+                        {isEditingGroups ? (
+                          <div className="d-flex gap-1" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              className="form-control form-control-sm"
+                              placeholder="comma, separated, groups"
+                              value={groupsInput}
+                              onChange={(e) => setGroupsInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveGroups(uuid);
+                                if (e.key === 'Escape') handleCancelEditGroups();
+                              }}
+                              autoFocus
+                            />
+                            <button className="btn btn-sm btn-success" onClick={() => handleSaveGroups(uuid)} disabled={isBusy}>✓</button>
+                            <button className="btn btn-sm btn-secondary" onClick={handleCancelEditGroups} disabled={isBusy}>✗</button>
+                          </div>
+                        ) : (
+                          <>
+                            {(d.groups && d.groups.length)
+                              ? d.groups.map((g: string) => (
+                                  <Badge bg="secondary" key={g} className="me-1" style={{fontWeight: 400}}>{g}</Badge>
+                                ))
+                              : <span className="text-muted">—</span>}
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-edgeberry device-actions ms-1"
+                              style={{padding:'0 6px'}}
+                              onClick={(e) => { e.stopPropagation(); handleEditGroups(uuid, d.groups); }}
+                              title={d.role ? 'Edit groups' : 'Assign a role first - groups attach to the application ID'}
+                              disabled={!d.role}
+                            >
+                              <FontAwesomeIcon icon={faPen} size="xs" />
+                            </button>
+                          </>
+                        )}
+                      </td>
                       <td>{uuid || '-'}</td>
                       <td>
                         <Badge bg={status === 'online' ? 'success' : status === 'disabled' ? 'danger' : 'secondary'}>
@@ -322,8 +455,20 @@ export default function Overview(){
                           <button
                             type="button"
                             className="btn btn-sm btn-edgeberry"
-                            onClick={() => handleDeleteDevice(uuid, roleLabel)}
+                            onClick={() => handleOpenSwap(d)}
+                            disabled={isBusy || !d.role}
+                            title={d.role
+                              ? `Swap: move "${d.role}" to another device`
+                              : 'No application ID to transfer - assign a role first'}
+                          >
+                            <FontAwesomeIcon icon={faRightLeft} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-edgeberry"
+                            onClick={() => handleDeleteDevice(d)}
                             disabled={isBusy}
+                            title="Decommission"
                           >
                             {isBusy ? <Spinner animation="border" size="sm" /> : <FontAwesomeIcon icon={faTrash} />}
                           </button>
@@ -348,6 +493,21 @@ export default function Overview(){
       <DeviceDetailModal deviceId={selected||''} show={!!selected} onClose={()=> setSelected(null)} />
       <CertificateSettingsModal show={showCerts} onClose={()=> setShowCerts(false)} />
       <WhitelistModal show={showWhitelist} onClose={()=> setShowWhitelist(false)} />
+      <SwapIdentityModal
+        show={!!swapSource}
+        source={swapSource}
+        devices={devices}
+        onClose={()=> { setSwapSource(null); setSwapThenDecommission(false); }}
+        onSwapped={handleSwapped}
+      />
+      <DecommissionModal
+        show={!!pendingDecommission}
+        device={pendingDecommission}
+        busy={!!actionBusy && actionBusy === pendingDecommission?.uuid}
+        onClose={()=> setPendingDecommission(null)}
+        onSwapInstead={handleSwapInstead}
+        onDecommission={()=> doDecommission(pendingDecommission)}
+      />
     </div>
   );
 }

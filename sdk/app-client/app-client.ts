@@ -19,13 +19,25 @@ export interface AppClientConfig {
  * Device information structure
  */
 export interface DeviceInfo {
+  /** The device's public identifier: its assigned role if it has one, else its raw MQTT name.
+   *  This is the same identifier used in WebSocket broadcasts, and what you pass back to
+   *  getDevice()/getDeviceTwin()/callDeviceMethod(). */
   deviceId: string;
-  name: string;
+  /** The device's raw MQTT name, independent of any role assignment. */
+  deviceName: string;
+  /** Assigned role, or null if the device has none. */
+  role: string | null;
+  /** Operator-assigned tags. A device can be in any number of groups; use
+   *  them to address a fleet by what devices are, rather than by uuid. */
+  groups: string[];
+  /** Hardware UUID. Stable across re-provisioning; prefer deviceId for addressing. */
+  uuid: string;
   status: 'online' | 'offline' | 'unknown';
-  lastSeen: string;
+  lastSeen: string | null;
   model?: string;
   firmware?: string;
   metadata?: Record<string, any>;
+  createdAt: string;
 }
 
 /**
@@ -63,6 +75,9 @@ export interface DeviceTwin {
 export interface DeviceQuery {
   status?: 'online' | 'offline';
   model?: string;
+  /** Restrict to devices in this group, or in any of these groups. Group
+   *  names are matched exactly, case included. */
+  group?: string | string[];
   lastSeenAfter?: string;
   lastSeenBefore?: string;
   limit?: number;
@@ -73,6 +88,8 @@ export interface DeviceQuery {
  * Telemetry query filters
  */
 export interface TelemetryQuery {
+  /** Restrict to devices in this group, or in any of these groups. */
+  group?: string | string[];
   deviceId?: string;
   startTime?: string;
   endTime?: string;
@@ -432,6 +449,53 @@ export class DeviceHubAppClient extends EventEmitter {
       }));
     } else {
       console.warn('WebSocket not connected, cannot subscribe to device');
+    }
+  }
+
+  /**
+   * Subscribe to every device in one or more groups.
+   *
+   * Membership is evaluated per message, so devices added to the group later
+   * start arriving without re-subscribing - which is the point of subscribing
+   * by group rather than enumerating devices. Because groups follow a device's
+   * application id, a hardware swap behind that id is invisible here too.
+   */
+  subscribeToGroup(group: string | string[], topics: string[] = ['telemetry', 'status']): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      this.websocket.send(JSON.stringify({
+        type: 'subscribe',
+        topics,
+        groups: Array.isArray(group) ? group : [group]
+      }));
+    } else {
+      console.warn('WebSocket not connected, cannot subscribe to group');
+    }
+  }
+
+  /**
+   * Unsubscribe from one or more groups.
+   */
+  unsubscribeFromGroup(group: string | string[]): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      this.websocket.send(JSON.stringify({
+        type: 'unsubscribe',
+        groups: Array.isArray(group) ? group : [group]
+      }));
+    } else {
+      console.warn('WebSocket not connected, cannot unsubscribe from group');
+    }
+  }
+
+  /**
+   * List every group in use, with how many devices carry it.
+   */
+  async getGroups(): Promise<Array<{ group: string; device_count: number }>> {
+    try {
+      const response = await this.httpClient.get('/api/groups');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to get groups:', error);
+      throw error;
     }
   }
 
