@@ -593,4 +593,4 @@ Devices (external)
 ## Support
 
 - **Issues:** https://github.com/Edgeberry/Edgeberry-Device-Hub/issues
-- **License:** GNU GPLv3
+- **License:** GNU AGPLv3

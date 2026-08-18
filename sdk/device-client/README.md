@@ -2,6 +2,8 @@
 
 A comprehensive Node.js client library for connecting to and interacting with the Edgeberry Device Hub. This library provides a high-level interface for device communication, telemetry transmission, direct method handling, and device twin management.
 
+This is not just a reference client: it's the actual connection layer used in production by the [Edgeberry Device Software](https://github.com/Edgeberry/Edgeberry-device-software), which imports `EdgeberryDeviceHubClient` (in `src/deviceHub.ts`) to authenticate, provision, and stay connected to the Hub. That project currently depends on `^1.8.0`, one major version behind this package's `2.0.0` — worth checking for breaking changes before bumping it there.
+
 ## Features
 
 - **MQTT Communication**: Secure MQTT connections with mTLS support
@@ -351,7 +353,7 @@ edgeberry-device-hub-client/
 
 ## License
 
-GPL-3.0-or-later
+MIT — see [LICENSE](LICENSE). Note this differs from the Device Hub server itself, which is AGPL-3.0-or-later.
 
 ## Support
 

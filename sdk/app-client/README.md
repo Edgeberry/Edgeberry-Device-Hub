@@ -168,4 +168,4 @@ interface TelemetryData {
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Note this differs from the Device Hub server itself, which is AGPL-3.0-or-later.

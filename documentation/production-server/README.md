@@ -279,7 +279,7 @@ sudo systemctl start devicehub.service
 
 - **Full Documentation:** [PRODUCTION_SETUP.md](../PRODUCTION_SETUP.md)
 - **GitHub Issues:** https://github.com/Edgeberry/Edgeberry-Device-Hub/issues
-- **License:** GNU GPLv3
+- **License:** GNU AGPLv3
 
 ## Support
 
