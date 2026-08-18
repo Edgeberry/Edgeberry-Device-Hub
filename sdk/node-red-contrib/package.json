@@ -35,7 +35,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@edgeberry/devicehub-app-client": "^1.8.1"
+    "@edgeberry/devicehub-app-client": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.28",
