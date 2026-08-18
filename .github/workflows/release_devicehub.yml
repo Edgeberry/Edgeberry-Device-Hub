@@ -27,7 +27,7 @@ jobs:
 
       - name: Ensure Device Hub release tarball naming
         run: |
-          # Find the existing tarball created by build-all script
+          # Find the existing tarball created by the build script
           EXISTING_TARBALL=$(find dist-artifacts -name "devicehub-*.tar.gz" | head -1)
           TARGET_NAME="devicehub-${{ github.ref_name }}.tar.gz"
           TARGET_PATH="dist-artifacts/${TARGET_NAME}"

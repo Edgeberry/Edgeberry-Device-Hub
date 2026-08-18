@@ -57,10 +57,10 @@ fi
 # --- Admin password & domain ---
 # The env file already having ADMIN_PASSWORD means this is a redeploy/upgrade
 # of an existing install - keep whatever admin password is already configured
-# (it's write-once in deploy-artifacts.sh for the same reason) rather than
+# (it's write-once in lib/install-core.sh for the same reason) rather than
 # prompting again or generating a new one out from under the operator. Both
 # names are checked: releases before the single-process merge used core.env,
-# which deploy-artifacts.sh renames to devicehub.env on upgrade.
+# which lib/install-core.sh renames to devicehub.env on upgrade.
 EXISTING_ADMIN_PASSWORD=0
 for env_file in /etc/Edgeberry/devicehub/devicehub.env /etc/Edgeberry/devicehub/core.env; do
     if [ -f "$env_file" ] && grep -qE '^\s*ADMIN_PASSWORD\s*=' "$env_file"; then
@@ -226,10 +226,10 @@ if ! tar -xzf devicehub.tar.gz; then
 fi
 
 # The tarball extracts directly to current directory, not into a subdirectory
-# Check if deploy-artifacts.sh exists in the current directory
-DEPLOY_SCRIPT="./scripts/deploy-artifacts.sh"
+# The shared installer core, shipped inside the release artifact
+DEPLOY_SCRIPT="./scripts/lib/install-core.sh"
 if [ ! -f "$DEPLOY_SCRIPT" ]; then
-    echo "ERROR: deploy-artifacts.sh not found in $DEPLOY_SCRIPT"
+    echo "ERROR: install-core.sh not found in $DEPLOY_SCRIPT"
     exit 1
 fi
 

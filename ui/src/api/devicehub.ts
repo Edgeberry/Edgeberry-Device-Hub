@@ -190,6 +190,13 @@ export async function setDeviceRole(uuid: string, role: string|null){
 // automatically - which is what makes an ownership tag like `user-<id>` safe
 // to rely on across a device replacement.
 /**
+ * List whitelist entries. Each carries `registered`: whether a device with that
+ * uuid is currently in the registry. Entries that are whitelisted but not yet
+ * registered are hardware that may still show up - a replacement board waiting
+ * to be plugged in - and can already be handed an application ID.
+ */
+export async function getWhitelist(){ return jsonOrMessage(await fetch(base()+"/admin/uuid-whitelist", { credentials:'include' })); }
+/**
  * List every group in use, with device counts
  */
 export async function getGroups(){ return jsonOrMessage(await fetch(base()+"/groups", { credentials:'include' })); }

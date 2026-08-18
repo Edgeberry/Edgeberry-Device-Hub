@@ -30,10 +30,14 @@ export default function SwapIdentityModal(props:{
   source: Device | null;
   /** Every known device, used to offer targets. */
   devices: Device[];
+  /** Whitelisted uuids with no device yet - hardware that is expected but has
+   *  never connected. Offered as targets so a replacement can be given the
+   *  identity before it is plugged in. */
+  pendingUuids?: string[];
   /** Called after a successful transfer, with the target's uuid. */
   onSwapped: (targetUuid: string)=>void|Promise<void>;
 }){
-  const { show, onClose, source, devices, onSwapped } = props;
+  const { show, onClose, source, devices, pendingUuids, onSwapped } = props;
   const [targetUuid, setTargetUuid] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string|undefined>();
@@ -42,13 +46,21 @@ export default function SwapIdentityModal(props:{
   // their own come first - a spare unit is the normal target, and picking one
   // that already has an identity costs it that identity.
   const candidates = useMemo(()=>{
-    const list = (devices||[]).filter(d => d.uuid !== source?.uuid);
-    return list.sort((a,b)=>{
+    const list = (devices||[]).filter(d => d.uuid !== source?.uuid)
+      .map(d => ({ ...d, pending: false }));
+    // Whitelisted-but-never-seen hardware is a legitimate target: a role can be
+    // assigned ahead of provisioning, so a replacement board arrives already
+    // being the thing it was sent out to be.
+    const pending = (pendingUuids||[])
+      .filter(u => u !== source?.uuid && !list.some(d => d.uuid === u))
+      .map(u => ({ uuid: u, role: null, groups: [], online: false, pending: true }));
+    return [...list, ...pending].sort((a,b)=>{
       if (!!a.role !== !!b.role) return a.role ? 1 : -1;      // unassigned first
+      if (a.pending !== b.pending) return a.pending ? 1 : -1;  // real devices before pending
       if (!!a.online !== !!b.online) return a.online ? -1 : 1; // then online first
       return String(a.uuid).localeCompare(String(b.uuid));
     });
-  }, [devices, source]);
+  }, [devices, pendingUuids, source]);
 
   const target = candidates.find(d => d.uuid === targetUuid);
 
@@ -128,13 +140,22 @@ export default function SwapIdentityModal(props:{
                           ? <Badge bg="warning" text="dark" className="ms-2" style={{fontWeight:400}}>{d.role}</Badge>
                           : <span className="text-muted ms-2" style={{fontSize:'0.9em'}}>unassigned</span>}
                       </span>
-                      <Badge bg={d.online ? 'success' : 'secondary'}>{d.online ? 'online' : 'offline'}</Badge>
+                      <Badge bg={d.pending ? 'info' : d.online ? 'success' : 'secondary'}>
+                        {d.pending ? 'not provisioned' : d.online ? 'online' : 'offline'}
+                      </Badge>
                     </label>
                   ))}
                 </div>
               </>
             )}
 
+            {target?.pending && (
+              <Alert variant="info" className="mt-3 mb-0">
+                This board is whitelisted but has never connected. It takes the identity
+                on now, and will already be <strong>{source.role}</strong> the moment it
+                provisions — no second step once it comes online.
+              </Alert>
+            )}
             {target?.role && (
               <Alert variant="warning" className="mt-3 mb-0">
                 {target.uuid} already answers to <strong>{target.role}</strong>. Continuing

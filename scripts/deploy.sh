@@ -121,7 +121,7 @@ fi
 # Build artifacts locally
 if [[ $SKIP_BUILD -eq 0 ]]; then
   log "building artifacts..."
-  bash "$ROOT_DIR/scripts/build-all.sh" || error "Build failed"
+  bash "$ROOT_DIR/scripts/lib/build.sh" || error "Build failed"
 else
   log "skipping build"
 fi
@@ -167,7 +167,7 @@ if [[ -n "${DEVICEHUB_DOMAIN:-}" ]]; then
   DEVICEHUB_DOMAIN_B64="$(printf '%s' "$DEVICEHUB_DOMAIN" | base64 | tr -d '\n')"
   DEPLOY_CMD="$DEPLOY_CMD DEVICEHUB_DOMAIN=\"\$(echo $DEVICEHUB_DOMAIN_B64 | base64 -d)\""
 fi
-DEPLOY_CMD="$DEPLOY_CMD bash scripts/deploy-artifacts.sh $INSTALL_ARGS"
+DEPLOY_CMD="$DEPLOY_CMD bash scripts/lib/install-core.sh $INSTALL_ARGS"
 
 ssh_run "$DEPLOY_CMD" || error "Installation failed"
 

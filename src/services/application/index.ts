@@ -547,6 +547,31 @@ app.get('/health', (_req: Request, res: Response) => {
 /** Live WebSocket connection stats - also consumed by the admin
  * GET /api/applications/connections route (a direct call now; this used to
  * be served to core-service over D-Bus). */
+/**
+ * Tell connected applications that an application ID moved to different
+ * hardware. Everything they address it by is unchanged - same deviceId, same
+ * groups - so nothing breaks if they ignore this; it exists because a silent
+ * hardware substitution is something an application may legitimately want to
+ * react to (re-read the twin, note it in an audit log, reset a calibration
+ * baseline that belonged to the old unit).
+ *
+ * Called directly by the admin server's role endpoint - same process, so no
+ * transport in between - and delivered on the existing broadcast channel
+ * under its own `swap` topic, filtered by the same device and group
+ * subscriptions as everything else.
+ */
+export function notifyIdentityTransfer(info: { deviceId: string; previousUuid: string; previousName: string | null; newUuid: string; newName: string; groups: string[] }) {
+  broadcastToSubscribers('swap', {
+    deviceId: info.deviceId,
+    previousUuid: info.previousUuid,
+    previousName: info.previousName,
+    uuid: info.newUuid,
+    deviceName: info.newName,
+    groups: info.groups,
+    timestamp: new Date().toISOString()
+  });
+}
+
 export function getConnectionStatus() {
   // Group active clients by token ID
   const connectionsByToken = new Map<string, {

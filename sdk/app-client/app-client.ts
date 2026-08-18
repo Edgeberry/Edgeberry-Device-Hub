@@ -70,6 +70,21 @@ export interface DeviceTwin {
 }
 
 /**
+ * An application ID moved to different hardware (a device swap). The deviceId
+ * is unchanged - that is the point of it - but the hardware behind it is now
+ * a different unit, with its own separate history.
+ */
+export interface IdentityTransfer {
+  deviceId: string;
+  previousUuid: string;
+  previousName: string | null;
+  uuid: string;
+  deviceName: string;
+  groups: string[];
+  timestamp: string;
+}
+
+/**
  * Device query filters
  */
 export interface DeviceQuery {
@@ -279,6 +294,19 @@ export class DeviceHubAppClient extends EventEmitter {
             data
           });
           break;
+        case 'swap':
+          // The application ID is unchanged - only the hardware behind it
+          // moved - so nothing held on this side becomes invalid.
+          this.emit('swap', {
+            deviceId,
+            previousUuid: data.previousUuid,
+            previousName: data.previousName,
+            uuid: data.uuid,
+            deviceName: data.deviceName,
+            groups: data.groups,
+            timestamp: data.timestamp
+          } as IdentityTransfer);
+          break;
         default:
           this.emit('message', message);
       }
@@ -444,7 +472,7 @@ export class DeviceHubAppClient extends EventEmitter {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       this.websocket.send(JSON.stringify({
         type: 'subscribe',
-        topics: ['telemetry', 'status'],
+        topics: ['telemetry', 'status', 'swap'],
         devices: [deviceId]
       }));
     } else {
@@ -460,7 +488,7 @@ export class DeviceHubAppClient extends EventEmitter {
    * by group rather than enumerating devices. Because groups follow a device's
    * application id, a hardware swap behind that id is invisible here too.
    */
-  subscribeToGroup(group: string | string[], topics: string[] = ['telemetry', 'status']): void {
+  subscribeToGroup(group: string | string[], topics: string[] = ['telemetry', 'status', 'swap']): void {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       this.websocket.send(JSON.stringify({
         type: 'subscribe',

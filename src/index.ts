@@ -95,7 +95,7 @@ import { getDevicesListSync, tryParseJson, normalizeGroups, setGroupsForRole, ge
 import { getAppSetting, setAppSetting, isAuthDisabled } from './app-settings.js';
 import { startProvisioning } from './services/provisioning/mqtt.js';
 import { startTwin } from './services/twin/mqtt.js';
-import { startApplication, getConnectionStatus as getApplicationConnectionStatus } from './services/application/index.js';
+import { startApplication, getConnectionStatus as getApplicationConnectionStatus, notifyIdentityTransfer } from './services/application/index.js';
 
 // Function to get hardware UUID from device tree
 function getHardwareUUID(): string | null {
@@ -1382,8 +1382,20 @@ app.put('/api/devices/:uuid/role', authRequired, (req: Request, res: Response) =
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try {
+    // A role can be assigned before the hardware has ever connected, as long as
+    // the uuid is whitelisted. That is the useful order of operations for a
+    // replacement: whitelist the new board, hand it the identity it is going to
+    // take over, then let it provision - it comes up already being the thing it
+    // was sent out to be, with no window where it is online but anonymous and
+    // no second trip to the UI once it appears. Roles live in their own table
+    // keyed by uuid, so provisioning later simply finds the role already there.
+    // Still gated on the whitelist: without that, a typo'd uuid would silently
+    // create a role pointing at hardware that can never exist.
     const device = db.prepare('SELECT uuid FROM devices WHERE uuid = ?').get(uuid);
-    if (!device) { res.status(404).json({ error: 'device_not_found' }); return; }
+    if (!device) {
+      const whitelisted = db.prepare('SELECT uuid FROM uuid_whitelist WHERE uuid = ?').get(uuid);
+      if (!whitelisted) { res.status(404).json({ error: 'device_not_found' }); return; }
+    }
 
     // If this role currently belongs to a *different* hardware uuid, this call
     // is a hardware swap: that device loses the role the moment this commits.
@@ -1426,15 +1438,32 @@ app.put('/api/devices/:uuid/role', authRequired, (req: Request, res: Response) =
       }
     });
     setRole();
-    if (takenFrom) {
+    const currentGroups = role ? getGroupsForRole(role) : [];
+    if (takenFrom && role) {
       console.log(`[devicehub] role "${role}" transferred from ${takenFrom.name || takenFrom.uuid} to ${uuid} (groups follow the role)`);
+      // Applications address this device by an id that just changed hardware
+      // underneath it. Nothing they hold becomes invalid, but the substitution
+      // is worth telling them about rather than making them infer it.
+      try {
+        const newDevice = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(uuid) as any;
+        notifyIdentityTransfer({
+          deviceId: role,
+          previousUuid: takenFrom.uuid,
+          previousName: takenFrom.name,
+          newUuid: uuid,
+          newName: newDevice?.name || uuid,
+          groups: currentGroups
+        });
+      } catch (e) {
+        console.warn('[devicehub] failed to notify applications of identity transfer:', (e as Error).message);
+      }
     }
     res.json({
       ok: true,
       uuid,
       role: role || null,
       taken_from: takenFrom,
-      groups: role ? getGroupsForRole(role) : []
+      groups: currentGroups
     });
   } catch (e:any) {
     res.status(500).json({ error: 'set_role_failed', message: e?.message || 'failed' });

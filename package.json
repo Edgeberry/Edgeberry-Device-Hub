@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "bash scripts/build-all.sh",
+    "build": "bash scripts/lib/build.sh",
     "build:app": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",

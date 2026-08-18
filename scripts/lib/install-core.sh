@@ -5,7 +5,7 @@
 # - Reloads and enables services
 #
 # Usage:
-#   sudo bash scripts/deploy-artifacts.sh [ARTIFACTS_DIR] [--force-clean]
+#   sudo bash scripts/lib/install-core.sh [ARTIFACTS_DIR] [--force-clean]
 # If ARTIFACTS_DIR is omitted, the script will look for dist-artifacts/.
 # --force-clean removes persistent certificates and database for clean install.
 
@@ -17,7 +17,7 @@ fi
 require_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
     echo "[install] ERROR: This script must be run as root (sudo)." >&2
-    echo "[install] Usage: sudo bash scripts/deploy-artifacts.sh [ARTIFACTS_DIR] [--force-clean]" >&2
+    echo "[install] Usage: sudo bash scripts/lib/install-core.sh [ARTIFACTS_DIR] [--force-clean]" >&2
     exit 1
   fi
 }
@@ -202,7 +202,7 @@ install_node_deps() {
   fi
 }
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck source=lib/services.sh
 source "${ROOT_DIR}/scripts/lib/services.sh"
 ART_DIR="${1:-${ROOT_DIR}/dist-artifacts}"

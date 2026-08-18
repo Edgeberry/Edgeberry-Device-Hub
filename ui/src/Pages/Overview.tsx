@@ -17,7 +17,7 @@ import type { KeyboardEvent } from 'react';
 import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
 import SystemWidget from '../components/SystemWidget';
 import ApplicationsWidget from '../components/ApplicationsWidget';
-import { getDevices, decommissionDevice, deleteWhitelistByDevice, setDeviceRole, setDeviceGroups } from '../api/devicehub';
+import { getDevices, decommissionDevice, deleteWhitelistByDevice, setDeviceRole, setDeviceGroups, getWhitelist } from '../api/devicehub';
 import { roleLabelFor } from '../deviceDisplay';
 import { direct_identifySystem } from '../api/directMethods';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
@@ -45,6 +45,9 @@ export default function Overview(){
   const [swapSource, setSwapSource] = useState<any>(null);
   const [swapThenDecommission, setSwapThenDecommission] = useState(false);
   const [pendingDecommission, setPendingDecommission] = useState<any>(null);
+  // Whitelisted uuids with no device yet - offered as swap targets so a
+  // replacement can be given its identity before it is ever plugged in.
+  const [pendingUuids, setPendingUuids] = useState<string[]>([]);
   // Re-render every second to update relative offline timers
   const [now, setNow] = useState<number>(()=> Date.now());
   useEffect(()=>{ const t = setInterval(()=> setNow(Date.now()), 1000); return ()=> clearInterval(t); },[]);
@@ -153,17 +156,26 @@ export default function Overview(){
     setPendingDecommission(device);
   };
 
-  const handleOpenSwap = (device: any) => {
+  const handleOpenSwap = async (device: any) => {
     setSwapSource(device);
+    try{
+      const wl: any = await getWhitelist();
+      const entries = Array.isArray(wl?.entries) ? wl.entries : [];
+      setPendingUuids(entries.filter((e:any)=> !e.registered && !e.disabled_at).map((e:any)=> e.uuid));
+    }catch{ setPendingUuids([]); }
   };
 
   // "Swap to replacement" from the decommission modal: hand over the identity,
   // then come back to finish removing this unit - the device is being retired
   // either way, the identity just shouldn't die with it.
-  const handleSwapInstead = () => {
-    setSwapSource(pendingDecommission);
-    setSwapThenDecommission(true);
+  const handleSwapInstead = async () => {
+    const source = pendingDecommission;
     setPendingDecommission(null);
+    setSwapThenDecommission(true);
+    // Same target list as the standalone swap - the replacement for a device
+    // being decommissioned is very often the board that was just whitelisted
+    // and has not connected yet.
+    await handleOpenSwap(source);
   };
 
   const doDecommission = async (device: any) => {
@@ -497,6 +509,7 @@ export default function Overview(){
         show={!!swapSource}
         source={swapSource}
         devices={devices}
+        pendingUuids={pendingUuids}
         onClose={()=> { setSwapSource(null); setSwapThenDecommission(false); }}
         onSwapped={handleSwapped}
       />
