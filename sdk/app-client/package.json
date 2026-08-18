@@ -1,11 +1,11 @@
 {
-  "name": "@edgeberry/devicehub-device-client",
+  "name": "@edgeberry/devicehub-app-client",
   "version": "2.0.0",
   "author": "Sanne 'SpuQ' Santens",
   "license": "MIT",
-  "description": "TypeScript Node.js Device client for Edgeberry Device Hub",
-  "main": "dist/device-client.js",
-  "types": "dist/device-client.d.ts",
+  "description": "TypeScript Node.js application client for consuming data from Edgeberry Device Hub",
+  "main": "dist/app-client.js",
+  "types": "dist/app-client.d.ts",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -18,32 +18,35 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Edgeberry/Edgeberry-Device-Hub.git",
-    "directory": "examples/device-client"
+    "directory": "sdk/app-client"
   },
-  "homepage": "https://github.com/Edgeberry/Edgeberry-Device-Hub/tree/main/examples/device-client",
+  "homepage": "https://github.com/Edgeberry/Edgeberry-Device-Hub/tree/main/sdk/app-client",
   "bugs": {
     "url": "https://github.com/Edgeberry/Edgeberry-Device-Hub/issues"
   },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "dev": "tsx device-client.ts",
-    "start": "node dist/device-client.js",
-    "example:virtual-device": "tsx examples/virtual-device.js",
-    "example:complete-virtual-device": "tsx examples/complete-virtual-device.ts"
+    "dev": "tsx app-client.ts",
+    "start": "node dist/app-client.js"
   },
   "keywords": [
     "edgeberry",
     "device-hub",
-    "mqtt",
+    "application",
+    "client",
     "iot",
-    "client"
+    "dashboard",
+    "monitoring"
   ],
   "dependencies": {
-    "mqtt": "^5.3.4"
+    "ws": "^8.18.3",
+    "axios": "^1.6.0",
+    "eventemitter3": "^5.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "@types/ws": "^8.5.10",
     "typescript": "^5.4.5",
     "tsx": "^4.7.0"
   }

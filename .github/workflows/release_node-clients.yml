@@ -24,22 +24,22 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: 'examples/${{ matrix.client }}/package-lock.json'
+          cache-dependency-path: 'sdk/${{ matrix.client }}/package-lock.json'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies for ${{ matrix.client }}
         run: |
-          cd examples/${{ matrix.client }}
+          cd sdk/${{ matrix.client }}
           npm ci || npm install
 
       - name: Build TypeScript for ${{ matrix.client }}
         run: |
-          cd examples/${{ matrix.client }}
+          cd sdk/${{ matrix.client }}
           npm run build
 
       - name: Publish ${{ matrix.client }} to npm
         run: |
-          cd examples/${{ matrix.client }}
+          cd sdk/${{ matrix.client }}
           # Version must already be set in package.json before tagging a release
           npm publish --provenance --access public
         env:

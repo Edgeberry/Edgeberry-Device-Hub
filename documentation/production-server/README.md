@@ -17,7 +17,7 @@ sudo -E ./install.sh
 ## Directory Structure
 
 ```
-examples/production-server/
+documentation/production-server/
 ├── nginx/
 │   └── devicehub.conf           # Nginx reverse proxy configuration
 ├── systemd/
@@ -120,7 +120,7 @@ sudo apt install nginx -y
 
 ```bash
 # Copy example configuration
-sudo cp examples/production-server/nginx/devicehub.conf /etc/nginx/sites-available/devicehub
+sudo cp documentation/production-server/nginx/devicehub.conf /etc/nginx/sites-available/devicehub
 
 # Edit and update domain
 sudo nano /etc/nginx/sites-available/devicehub
@@ -228,11 +228,8 @@ sudo systemctl status devicehub.service
 ### Logs
 
 ```bash
-# Core service logs
+# Device Hub logs
 sudo journalctl -u devicehub.service -f
-
-# All Device Hub services
-sudo journalctl -u 'devicehub-*' -f
 
 # Nginx logs
 sudo tail -f /var/log/nginx/devicehub_access.log
@@ -280,7 +277,7 @@ sudo systemctl start devicehub.service
 
 ## Additional Resources
 
-- **Full Documentation:** [documentation/PRODUCTION_SETUP.md](../../documentation/PRODUCTION_SETUP.md)
+- **Full Documentation:** [PRODUCTION_SETUP.md](../PRODUCTION_SETUP.md)
 - **GitHub Issues:** https://github.com/Edgeberry/Edgeberry-Device-Hub/issues
 - **License:** GNU GPLv3
 
@@ -288,6 +285,6 @@ sudo systemctl start devicehub.service
 
 For questions or issues:
 1. Check the [troubleshooting section](#troubleshooting)
-2. Review [documentation/PRODUCTION_SETUP.md](../../documentation/PRODUCTION_SETUP.md)
+2. Review [PRODUCTION_SETUP.md](../PRODUCTION_SETUP.md)
 3. Search or create an issue on GitHub
 4. Ensure you're using the latest release

@@ -170,7 +170,7 @@ Compiles JavaScript and copies HTML to `dist/`:
 ### Project Structure
 
 ```
-examples/app-client/examples/
+sdk/app-client/examples/
 ├── node-red-device-node.js    # Node implementation
 ├── node-red-device-node.html  # Node UI definition
 ├── package.json               # Package configuration

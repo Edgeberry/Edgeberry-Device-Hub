@@ -1639,7 +1639,8 @@ app.delete('/api/admin/uuid-whitelist/by-device/:deviceId', authRequired, (req: 
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   try{
-    const info = db.prepare('DELETE FROM uuid_whitelist WHERE device_id = ?').run(deviceId);
+    // uuid_whitelist has no device_id column; the caller actually passes the uuid (see ui/src/api/devicehub.ts's deleteWhitelistByDevice)
+    const info = db.prepare('DELETE FROM uuid_whitelist WHERE uuid = ?').run(deviceId);
     res.json({ deleted: info.changes || 0 });
   }catch{ res.status(500).json({ error: 'delete_failed' }); }
   finally{ try{ db.close(); }catch{} }

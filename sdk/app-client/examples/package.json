@@ -48,10 +48,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Edgeberry/Edgeberry-Device-Hub.git",
-    "directory": "examples/app-client/examples"
+    "directory": "sdk/app-client/examples"
   },
   "bugs": {
     "url": "https://github.com/Edgeberry/Edgeberry-Device-Hub/issues"
   },
-  "homepage": "https://github.com/Edgeberry/Edgeberry-Device-Hub/tree/main/examples/app-client/examples"
+  "homepage": "https://github.com/Edgeberry/Edgeberry-Device-Hub/tree/main/sdk/app-client/examples"
 }
