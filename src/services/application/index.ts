@@ -733,19 +733,28 @@ app.patch('/api/devices/:deviceId/twin', authenticateToken, (req: Request, res: 
       return res.status(400).json({ error: 'desired properties required' });
     }
 
-    // Resolve device identifier to UUID
+    // Resolve device identifier to UUID, then to the device's assigned MQTT
+    // name - twin topics are keyed by that name (see twin-store.ts / the
+    // twin sub-service's TOPICS), never by uuid.
     const uuid = resolveIdentifierToUuid(deviceId);
-
     if (!uuid) {
       res.status(404).json({ error: 'Device not found' });
       return;
     }
+    const device = getDeviceByUuid(uuid);
+    if (!device) {
+      res.status(404).json({ error: 'Device not found' });
+      return;
+    }
 
-    // Publish desired state update to MQTT using UUID
+    // Publish onto the same twin/update topic a device itself would use;
+    // the twin sub-service's own subscription applies the patch and
+    // computes/publishes the resulting delta - no need to duplicate that
+    // logic here.
     if (mqttClient && mqttClient.connected) {
       mqttClient.publish(
-        `$devicehub/devices/${uuid}/twin/desired`,
-        JSON.stringify(desired),
+        `$devicehub/devices/${device.name}/twin/update`,
+        JSON.stringify({ desired }),
         { qos: 1 }
       );
     }

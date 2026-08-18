@@ -27,15 +27,15 @@ jobs:
       - name: Build and pack Node-RED module
         run: |
           mkdir -p dist-artifacts
-          pushd sdk/app-client/examples
+          pushd sdk/node-red-contrib
           npm ci || npm install
           npm run build
-          npm pack --pack-destination ../../../dist-artifacts
+          npm pack --pack-destination ../../dist-artifacts
           popd
 
       - name: Publish Node-RED package to npm
         run: |
-          pushd sdk/app-client/examples
+          pushd sdk/node-red-contrib
           # Version must already be set in package.json before tagging a release
           npm publish --provenance --access public
           popd

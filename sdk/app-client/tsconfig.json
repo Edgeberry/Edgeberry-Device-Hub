@@ -16,9 +16,7 @@
     "noEmit": false
   },
   "include": [
-    "*.ts",
-    "examples/*.ts",
-    "examples/*.js"
+    "*.ts"
   ],
   "exclude": [
     "node_modules",

@@ -177,7 +177,7 @@ ssh_run "rm -rf '$REMOTE_STAGING'" || true
 
 # Check service status
 log "checking service status..."
-ssh_run "systemctl status devicehub-core.service --no-pager -l" || true
-ssh_run "journalctl -u devicehub-core.service -n 20 --no-pager" || true
+ssh_run "systemctl status devicehub.service --no-pager -l" || true
+ssh_run "journalctl -u devicehub.service -n 20 --no-pager" || true
 
 log "✅ Deployment complete"

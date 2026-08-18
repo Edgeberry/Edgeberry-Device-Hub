@@ -41,7 +41,8 @@ export function verifyToken(token: string): { ok: boolean; token?: TokenInfo; er
       token: {
         id: row.id,
         name: row.name,
-        scopes: row.scopes ? JSON.parse(row.scopes) : []
+        // Stored as a comma-joined string (see POST /api/tokens in index.ts), not JSON
+        scopes: row.scopes ? row.scopes.split(',').filter(Boolean) : []
       }
     };
   } catch (error) {

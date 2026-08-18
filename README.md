@@ -62,10 +62,11 @@ Standard desired/reported split, MQTT-native (`.../twin/get`, `.../twin/update`,
 
 ## SDKs
 
-Two small TypeScript client libraries live under [`sdk/`](sdk/), published as `@edgeberry/devicehub-app-client` and `@edgeberry/devicehub-device-client` — one for each side of the Hub, not two flavors of the same side. Both are **MIT-licensed**, separately from the Edgeberry Device Hub itself — see [License & Collaboration](#license--collaboration).
+Three small TypeScript packages live under [`sdk/`](sdk/), published to npm — one for each side of the Hub, plus one integration built on top. All **MIT-licensed**, separately from the Edgeberry Device Hub itself — see [License & Collaboration](#license--collaboration).
 
-- **[app-client](sdk/app-client/)** — the *cloud-application* side: talks HTTP/WebSocket to the application API (port 8090) to list devices, subscribe to telemetry, invoke methods, read/write twins. What you'd use to build a dashboard, a Node-RED flow, or any other app that consumes the fleet. Not currently used by any Edgeberry project — it exists for third-party applications to build on.
-- **[device-client](sdk/device-client/)** — the *device* side: speaks raw mTLS MQTT directly to the Hub — provisioning, telemetry, twin sync, direct methods. This isn't just a reference implementation of the protocol: it's the actual library the [Edgeberry Device Software](https://github.com/Edgeberry/Edgeberry-device-software) imports (`EdgeberryDeviceHubClient` in its `deviceHub.ts`) as its live connection to this Hub. Use it directly if you're building a custom device — non-Raspberry-Pi, or one that skips the full Device Software — that still shows up as a first-class device in the Hub.
+- **[app-client](sdk/app-client/)** (`@edgeberry/devicehub-app-client`) — the *cloud-application* side: talks HTTP/WebSocket to the application API (port 8090) to list devices, subscribe to telemetry, invoke methods, read/write twins. What you'd use to build a dashboard, a Node-RED flow, or any other app that consumes the fleet. Not currently used by any Edgeberry project — it exists for third-party applications to build on.
+- **[device-client](sdk/device-client/)** (`@edgeberry/devicehub-device-client`) — the *device* side: speaks raw mTLS MQTT directly to the Hub — provisioning, telemetry, twin sync, direct methods. This isn't just a reference implementation of the protocol: it's the actual library the [Edgeberry Device Software](https://github.com/Edgeberry/Edgeberry-device-software) imports (`EdgeberryDeviceHubClient` in its `deviceHub.ts`) as its live connection to this Hub. Use it directly if you're building a custom device — non-Raspberry-Pi, or one that skips the full Device Software — that still shows up as a first-class device in the Hub.
+- **[node-red-contrib](sdk/node-red-contrib/)** (`@edgeberry/devicehub-node-red-contrib`) — a ready-made Node-RED node built on `app-client`, published as its own package rather than kept as sample code.
 
 There's no separate "reach through the Hub to one device" client — an application always goes through the application API; the Hub does the MQTT routing to the actual device internally.
 
@@ -77,7 +78,7 @@ Reverse proxy (TLS termination, WebSocket passthrough), firewall, and backup gui
 
 **Copyright 2025 Sanne 'SpuQ' Santens**. The Edgeberry Device Hub server itself is licensed under the **[GNU AGPLv3](LICENSE.txt)** — if you run a modified version as a network service, that modified source must be made available to its users.
 
-The client libraries under [`sdk/`](sdk/) are licensed separately and more permissively, under **MIT** ([app-client](sdk/app-client/LICENSE), [device-client](sdk/device-client/LICENSE)): they're meant to be linked into other people's applications and devices — including closed-source ones — without pulling those projects under the AGPL. Building an application against `app-client`, or a device against `device-client`, does not make that application or device AGPL-licensed.
+Everything under [`sdk/`](sdk/) — [app-client](sdk/app-client/LICENSE), [device-client](sdk/device-client/LICENSE), and [node-red-contrib](sdk/node-red-contrib/LICENSE) — is licensed separately and more permissively, under **MIT**: it's meant to be linked into other people's applications and devices, including closed-source ones, without pulling those projects under the AGPL. Building an application against `app-client`, or a device against `device-client`, does not make that application or device AGPL-licensed.
 
 The [Rules & Guidelines](https://github.com/Edgeberry/.github/blob/main/brand/Edgeberry_Trademark_Rules_and_Guidelines.md) apply to the usage of the Edgeberry brand.
 

@@ -48,7 +48,7 @@ pattern write $devicehub/devices/%c/twin/get
 pattern write $devicehub/devices/%c/twin/update
 pattern read  $devicehub/devices/%c/twin/update/accepted
 pattern read  $devicehub/devices/%c/twin/update/rejected
-pattern read  $devicehub/devices/%c/twin/delta
+pattern read  $devicehub/devices/%c/twin/update/delta
 
 # Device heartbeat (devices need to publish heartbeat messages)
 pattern write $devicehub/devices/+/heartbeat

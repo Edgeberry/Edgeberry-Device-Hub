@@ -170,7 +170,7 @@ Compiles JavaScript and copies HTML to `dist/`:
 ### Project Structure
 
 ```
-sdk/app-client/examples/
+sdk/node-red-contrib/
 ├── node-red-device-node.js    # Node implementation
 ├── node-red-device-node.html  # Node UI definition
 ├── package.json               # Package configuration
@@ -193,7 +193,7 @@ npm publish --access public
 
 - **Documentation:** https://github.com/Edgeberry/Edgeberry-Device-Hub
 - **Issues:** https://github.com/Edgeberry/Edgeberry-Device-Hub/issues
-- **License:** GPL-3.0-or-later
+- **License:** MIT
 
 ## Example Flows
 

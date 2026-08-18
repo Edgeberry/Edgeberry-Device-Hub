@@ -103,11 +103,7 @@ Unsubscribe from a specific device.
 
 ## Examples
 
-See the `examples/` directory for complete integration examples:
-
-- **[Node-RED Integration](examples/node-red-integration/)**: Complete Node-RED flow demonstrating device discovery, telemetry streaming, and method invocation
-- **[Basic Usage](examples/basic/)**: Simple TypeScript examples
-- **[Dashboard Integration](examples/dashboard/)**: Web dashboard integration patterns
+- **[Node-RED nodes](../node-red-contrib/)** (`@edgeberry/devicehub-node-red-contrib`): a full Node-RED integration built on this client, published as its own package rather than kept as sample code.
 
 ## Error Handling
 
