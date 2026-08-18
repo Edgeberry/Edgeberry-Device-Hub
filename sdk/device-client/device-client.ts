@@ -80,6 +80,208 @@ async function fetchProvisioningFile(base: string, filename: 'ca.crt' | 'provisi
   }
 }
 
+/*
+ *  Reconnection policy - exponential backoff with full jitter.
+ *
+ *  mqtt.js retries on a fixed interval. That is fine for one device and bad
+ *  for a fleet: every device dropped by the same hub restart comes back in
+ *  lockstep and hits it with a synchronised burst of mTLS handshakes, which
+ *  can push it over again and re-synchronise everyone into a retry storm.
+ *
+ *  Each retry therefore waits a random delay drawn from a window that doubles
+ *  per consecutive failure. Randomising from the very first retry spreads the
+ *  fleet immediately; doubling decays the offered load over a long outage;
+ *  the cap keeps recovery timely.
+ */
+const RECONNECT_MIN_MS  = 1000;     // floor; also keeps the value above zero
+const RECONNECT_BASE_MS = 5000;     // first window: 1-5 s
+const RECONNECT_MAX_MS  = 60000;    // window ceiling
+
+export interface ReconnectBackoff {
+  minMs?: number;
+  baseMs?: number;
+  maxMs?: number;
+}
+
+/**
+ * Delay before reconnect attempt `attempt` (0-based), in milliseconds.
+ *
+ * Never returns zero: mqtt.js reads `reconnectPeriod: 0` as "stop
+ * reconnecting", which would leave a device offline until something restarted
+ * it.
+ */
+export function reconnectDelay(attempt: number, backoff?: ReconnectBackoff): number {
+  const minMs  = backoff?.minMs  ?? RECONNECT_MIN_MS;
+  const baseMs = backoff?.baseMs ?? RECONNECT_BASE_MS;
+  const maxMs  = backoff?.maxMs  ?? RECONNECT_MAX_MS;
+  const ceiling = Math.min(maxMs, baseMs * Math.pow(2, attempt));
+  return Math.round(minMs + Math.random() * Math.max(0, ceiling - minMs));
+}
+
+/**
+ * Inputs to the X.509 fleet-provisioning exchange.
+ */
+export interface ProvisioningOptions {
+  /** Hub hostname running the MQTT broker. */
+  host: string;
+  /** The device's hardware UUID - its one-time claim token. */
+  uuid: string;
+  /** Fleet-wide provisioning ("claim") certificate and key, PEM. */
+  cert: Buffer | string;
+  key: Buffer | string;
+  /** Root CA to verify the broker with, PEM. */
+  ca?: Buffer | string;
+  port?: number;
+  /** Device metadata recorded against the registration (model, firmware, ...). */
+  meta?: Record<string, any>;
+  token?: string;
+  timeoutMs?: number;
+  rejectUnauthorized?: boolean;
+}
+
+/**
+ * A device's newly issued identity. The private key is returned rather than
+ * written anywhere: only the caller knows where its certificate store lives.
+ */
+export interface ProvisioningResult {
+  deviceId: string;
+  certPem: string;
+  privateKeyPem: string;
+  caChainPem?: string;
+}
+
+/**
+ * Run the X.509 fleet-provisioning exchange and return the issued identity.
+ *
+ * The device authenticates with the fleet-wide provisioning certificate and
+ * earns one of its own. Two round trips over that one connection, distinguished
+ * by whether a CSR is present:
+ *
+ *   1. claim  - UUID only, no CSR. The hub assigns a fresh random deviceId.
+ *   2. issue  - a CSR CN'd for *that* deviceId. The hub returns the certificate.
+ *
+ * The split exists so the UUID, which is a one-time claim token, never becomes
+ * the device's ongoing MQTT/TLS identity.
+ *
+ * This is deliberately a standalone function rather than a client method: it
+ * runs before the device has an identity to construct a client with.
+ */
+export function provisionDevice(options: ProvisioningOptions): Promise<ProvisioningResult> {
+  const {
+    host, uuid, cert, key, ca,
+    port = 8883,
+    meta,
+    token,
+    timeoutMs = 60000,
+    rejectUnauthorized = true,
+  } = options;
+
+  const requestTopic  = `$devicehub/devices/${uuid}/provision/request`;
+  const acceptedTopic = `$devicehub/devices/${uuid}/provision/accepted`;
+  const rejectedTopic = `$devicehub/devices/${uuid}/provision/rejected`;
+
+  const asBuffer = (v: Buffer | string) => Buffer.isBuffer(v) ? v : Buffer.from(v);
+
+  return new Promise<ProvisioningResult>((resolve, reject) => {
+    const client = connect({
+      host,
+      port,
+      protocol: 'mqtts',
+      clientId: uuid,
+      cert: asBuffer(cert),
+      key: asBuffer(key),
+      ca: ca ? asBuffer(ca) : undefined,
+      rejectUnauthorized,
+      // One-shot exchange: a retry loop here would race the identity
+      // connection that follows a successful provisioning.
+      reconnectPeriod: 0,
+      clean: true,
+    });
+
+    // The keypair generated for round 2 is held in memory rather than staged
+    // on disk. The certificate the hub returns is useless without it, but it
+    // never needs to outlive the exchange: a device that dies mid-flight has
+    // stored no identity and simply provisions again from scratch.
+    let pendingKeyPem: string | null = null;
+    let settled = false;
+
+    const finish = (error: Error | null, result?: ProvisioningResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { client.end(true); } catch { /* teardown is best-effort */ }
+      if (error) reject(error); else resolve(result as ProvisioningResult);
+    };
+
+    const timer = setTimeout(
+      () => finish(new Error(`Provisioning timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+
+    client.on('connect', () => {
+      client.subscribe([acceptedTopic, rejectedTopic], { qos: 1 }, (err) => {
+        if (err) {
+          finish(new Error(`Failed to subscribe to provisioning topics: ${err.message}`));
+          return;
+        }
+        client.publish(requestTopic, JSON.stringify({ meta, token }), { qos: 1 });
+      });
+    });
+
+    client.on('message', (topic, message) => {
+      if (topic === rejectedTopic) {
+        let reason = message.toString();
+        try {
+          const body = JSON.parse(reason);
+          reason = body.message ? `${body.error}: ${body.message}` : String(body.error ?? reason);
+        } catch { /* not JSON - report it as received */ }
+        finish(new Error(`Provisioning rejected: ${reason}`));
+        return;
+      }
+      if (topic !== acceptedTopic) return;
+
+      try {
+        const response = JSON.parse(message.toString());
+
+        if (!response.certPem) {
+          // Round 1 accepted. Generate the real keypair for the assigned
+          // identity - not for the UUID we claimed with - and submit it.
+          if (!response.deviceId) {
+            finish(new Error('Provisioning claim response missing deviceId'));
+            return;
+          }
+          const { keyPem, csrPem } = genKeyAndCsr(response.deviceId);
+          pendingKeyPem = keyPem;
+          client.publish(
+            requestTopic,
+            JSON.stringify({ deviceId: response.deviceId, csrPem, meta, token }),
+            { qos: 1 }
+          );
+          return;
+        }
+
+        if (!pendingKeyPem) {
+          finish(new Error('Received a certificate without having submitted a CSR'));
+          return;
+        }
+
+        finish(null, {
+          deviceId:      response.deviceId || uuid,
+          certPem:       response.certPem,
+          privateKeyPem: pendingKeyPem,
+          caChainPem:    response.caChainPem,
+        });
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+
+    client.on('error', (error) => {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
+}
+
 /**
  * Connection parameters for Device Hub client
  */
@@ -116,6 +318,10 @@ export interface HubClientStatus {
   connected?: boolean;
   provisioning?: boolean;
   provisioned?: boolean;
+  /** Disconnected, but mqtt.js is still working to get back. */
+  retrying?: boolean;
+  /** Consecutive failed attempts; resets to 0 on a successful connect. */
+  reconnectAttempts?: number;
 }
 
 /**
@@ -207,6 +413,12 @@ export interface EdgeberryClientOptions {
   reconnectPeriod?: number;
   rejectUnauthorized?: boolean;
   telemetryInterval?: number;
+
+  // Reconnection backoff. See reconnectDelay() for why these shapes matter to
+  // a fleet rather than to a single device.
+  reconnectMinMs?: number;
+  reconnectBaseMs?: number;
+  reconnectMaxMs?: number;
 }
 
 /**
@@ -275,7 +487,7 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
       // Connection options
       keepalive: options.keepalive || 240,
       connectTimeout: options.connectTimeout || 30000,
-      reconnectPeriod: options.reconnectPeriod || 2000,
+      reconnectPeriod: options.reconnectPeriod || RECONNECT_BASE_MS,
       rejectUnauthorized: options.rejectUnauthorized !== false,
       
       ...options
@@ -350,7 +562,9 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
           protocol: 'mqtts', // Always use secure MQTT
           keepalive: this.options.keepalive,
           connectTimeout: this.options.connectTimeout,
-          reconnectPeriod: this.options.reconnectPeriod,
+          // Seeded so that even the first retry is jittered; re-set on every
+          // 'reconnect' below to widen the window as failures accumulate.
+          reconnectPeriod: this.nextReconnectDelay(0),
           clean: false, // Persistent session
           clientId: this.deviceId,
           
@@ -366,11 +580,12 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
         this.client.on('connect', () => {
           this.connected = true;
           this.reconnectAttempts = 0;
+          if (this.client) this.client.options.reconnectPeriod = this.nextReconnectDelay(0);
           console.log(`Connected to Device Hub as ${this.deviceId}`);
-          
+
           this.setupSubscriptions();
           this.startHeartbeat();
-          
+
           this.emit('connected');
           resolve();
         });
@@ -378,11 +593,10 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
         this.client.on('error', (error) => {
           console.error('MQTT connection error:', error);
           this.emit('error', error);
-          if (!this.connected) {
-            reject(error);
-          } else {
-            this.scheduleReconnect();
-          }
+          // Only the very first attempt settles the promise. Later failures
+          // are mqtt.js's reconnect loop doing its job and must not reject a
+          // promise the caller already resolved.
+          if (!this.connected) reject(error);
         });
 
         this.client.on('close', () => {
@@ -390,7 +604,23 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
           console.log('Disconnected from Device Hub');
           this.stopHeartbeat();
           this.emit('disconnected');
-          this.scheduleReconnect();
+        });
+
+        // Reconnection is mqtt.js's job - it retries on the *existing* client,
+        // which is what keeps a second client off the same clientId. All this
+        // does is widen the interval it waits between attempts. mqtt.js re-reads
+        // options.reconnectPeriod each time it reschedules (_cleanUp calls
+        // _clearReconnect then _setupReconnect), so varying the value between
+        // attempts is enough; no custom retry loop is needed.
+        this.client.on('reconnect', () => {
+          this.reconnectAttempts++;
+          const delayMs = this.nextReconnectDelay(this.reconnectAttempts);
+          if (this.client) this.client.options.reconnectPeriod = delayMs;
+          this.emit('reconnecting', { attempt: this.reconnectAttempts, delayMs });
+        });
+
+        this.client.on('offline', () => {
+          this.emit('offline');
         });
 
         this.client.on('message', (topic, message) => {
@@ -739,22 +969,20 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
   /**
    * Schedule reconnection with exponential backoff
    */
-  private scheduleReconnect(): void {
-    if (this.connected) return; // Don't reconnect if already connected
-
-    const maxDelayMs = 30000;
-    const baseDelayMs = 1000;
-    const jitterMs = 250;
-    const attempt = Math.min(this.reconnectAttempts + 1, 10);
-    const delay = Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs) + Math.floor(Math.random() * jitterMs);
-    
-    this.reconnectAttempts = attempt;
-    
-    setTimeout(() => {
-      this.connect().catch(() => {
-        // Swallow error; next disconnect/error schedules again
-      });
-    }, delay);
+  /**
+   * Backoff window for the next reconnect attempt, per this client's options.
+   *
+   * `reconnectPeriod` predates the backoff policy and used to be a fixed
+   * interval. It is honoured as the base window so that callers who set it
+   * keep the retry pacing they asked for rather than having it silently
+   * ignored; `reconnectBaseMs` takes precedence when both are given.
+   */
+  private nextReconnectDelay(attempt: number): number {
+    return reconnectDelay(attempt, {
+      minMs:  this.options.reconnectMinMs,
+      baseMs: this.options.reconnectBaseMs ?? this.options.reconnectPeriod,
+      maxMs:  this.options.reconnectMaxMs,
+    });
   }
 
   /**
@@ -781,8 +1009,35 @@ export class EdgeberryDeviceHubClient extends EventEmitter {
       connected: this.connected,
       connecting: false, // Could be enhanced to track connecting state
       provisioning: false,
-      provisioned: true // Assume provisioned if we have certificates
+      provisioned: true, // Assume provisioned if we have certificates
+      retrying: this.isRetrying(),
+      reconnectAttempts: this.reconnectAttempts
     };
+  }
+
+  /**
+   * Whether a disconnected client is still working to get back.
+   *
+   * The distinction matters to a caller deciding whether to discard a client:
+   * discarding one that is still retrying leaves it reconnecting in the
+   * background while a replacement is built on the same clientId, and the
+   * broker then kicks the two alternately, forever. A client that has stopped
+   * is inert and safe to drop.
+   */
+  public isRetrying(): boolean {
+    return !!this.client && !this.connected && !this.client.disconnecting;
+  }
+
+  /**
+   * Ask a disconnected client to retry immediately instead of waiting out its
+   * current backoff window. No-op when already connected.
+   *
+   * Retries happen on the existing mqtt client, so this never risks a second
+   * connection on the same clientId.
+   */
+  public reconnect(): void {
+    if (!this.client || this.connected) return;
+    this.client.reconnect();
   }
 
   /**
