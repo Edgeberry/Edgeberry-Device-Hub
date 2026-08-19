@@ -83,6 +83,20 @@
   <p>Use the device's <b>role</b> (<code>Freya-vivarium</code>), not its raw MQTT
      name. The raw name is reassigned whenever a device re-provisions; the role
      follows the device and survives a hardware swap.</p>
+  <p>The field is free text and names are case-sensitive. If the hub has no
+     device by that name the node shows <b>"unknown device"</b>.</p>
+
+  <h3>Status</h3>
+  <p>The badge reports the <i>device</i>, and is the same one the
+     <code>device</code> node shows. Hub problems take over the badge, because
+     while the hub is unreachable the device's state cannot be observed.</p>
+  <ul>
+    <li><b>Green dot "&lt;device&gt;: online"</b> - connected to the hub</li>
+    <li><b>Red ring "&lt;device&gt;: offline"</b> - hub reachable, device is not connected</li>
+    <li><b>Red ring "unknown device: &lt;device&gt;"</b> - no such device on this hub</li>
+    <li><b>Grey ring "&lt;device&gt;: unknown"</b> - state not yet established</li>
+    <li><b>Yellow ring "connecting to hub"</b> / <b>Red ring "hub unreachable"</b></li>
+  </ul>
 
   <h3>Delivery</h3>
   <p>Best effort. Nothing is queued: a message sent while the hub or device is
@@ -127,6 +141,24 @@
      is authoritative: a message arriving with a different <code>msg.topic</code>
      is sent under the node's topic and a warning is logged. Wildcards are for
      receiving only.</p>
+
+  <h3>Device</h3>
+  <p>Use the device's <b>role</b>, not its raw MQTT name. The field is free text
+     and names are case-sensitive; if the hub has no device by that name the node
+     shows <b>"unknown device"</b> and every message sent is rejected with
+     <code>Device not found</code>.</p>
+
+  <h3>Status</h3>
+  <p>The badge reports the <i>device</i>, and is the same one the
+     <code>device</code> node shows — this direction only sends, but nothing
+     queues, so an offline or misnamed device means the next message is dropped.</p>
+  <ul>
+    <li><b>Green dot "&lt;device&gt;: online"</b> - connected to the hub</li>
+    <li><b>Red ring "&lt;device&gt;: offline"</b> - hub reachable, device is not connected</li>
+    <li><b>Red ring "unknown device: &lt;device&gt;"</b> - no such device on this hub</li>
+    <li><b>Grey ring "&lt;device&gt;: unknown"</b> - state not yet established</li>
+    <li><b>Yellow ring "connecting to hub"</b> / <b>Red ring "hub unreachable"</b></li>
+  </ul>
 
   <h3>Delivery</h3>
   <p>Best effort. If the device is offline the message is dropped, not queued —

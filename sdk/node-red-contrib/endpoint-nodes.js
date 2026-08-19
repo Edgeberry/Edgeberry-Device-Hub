@@ -24,6 +24,8 @@
 
 const ENVELOPE_VERSION = 1;
 
+const { deviceStatus } = require('./status');
+
 module.exports = function(RED) {
     "use strict";
 
@@ -96,16 +98,7 @@ module.exports = function(RED) {
         }
 
         function renderStatus() {
-            const hub = hubConfig.getHubState();
-            if (hub === 'connecting' || hub === 'idle') {
-                node.status({fill: "yellow", shape: "ring", text: "connecting to hub"});
-            } else if (hub === 'down') {
-                node.status({fill: "red", shape: "ring", text: "hub unreachable"});
-            } else if (hubConfig.getDeviceState(node.deviceName) === 'online') {
-                node.status({fill: "green", shape: "dot", text: node.topic || '*'});
-            } else {
-                node.status({fill: "grey", shape: "ring", text: `${node.deviceName}: offline`});
-            }
+            node.status(deviceStatus(hubConfig, node.deviceName));
         }
 
         const unregister = hubConfig.register(node.deviceName, {
@@ -156,15 +149,14 @@ module.exports = function(RED) {
             return;
         }
 
+        // This direction only sends, but the badge still reports the device -
+        // nothing queues, so an offline or misnamed device means the next
+        // message is dropped, and that is worth seeing before it happens.
         function renderStatus() {
-            const hub = hubConfig.getHubState();
-            if (hub === 'up') node.status({fill: "green", shape: "dot", text: node.topic});
-            else if (hub === 'down') node.status({fill: "red", shape: "ring", text: "hub unreachable"});
-            else node.status({fill: "yellow", shape: "ring", text: "connecting to hub"});
+            node.status(deviceStatus(hubConfig, node.deviceName));
         }
 
-        // Registers for state only - this direction sends, but the badge should
-        // still say whether the hub can be reached at all.
+        // Registers for state only; there is nothing to receive here.
         const unregister = hubConfig.register(node.deviceName, {
             onMessage() { /* outbound endpoint; nothing to receive */ },
             onStateChange: renderStatus

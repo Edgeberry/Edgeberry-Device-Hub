@@ -22,7 +22,8 @@
   },
   "include": [
     "node-red-device-node.js",
-    "endpoint-nodes.js"
+    "endpoint-nodes.js",
+    "status.js"
   ],
   "exclude": [
     "node_modules",

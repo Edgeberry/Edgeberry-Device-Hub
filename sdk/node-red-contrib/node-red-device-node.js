@@ -7,6 +7,7 @@
  */
 
 const DeviceHubAppClient = require('@edgeberry/devicehub-app-client').default;
+const { deviceStatus } = require('./status');
 
 module.exports = function(RED) {
     "use strict";
@@ -44,7 +45,13 @@ module.exports = function(RED) {
         let client = null;
         let hubState = 'idle';      // 'idle' | 'connecting' | 'up' | 'down'
         let pollTimer = null;
-        const deviceState = new Map();   // deviceId -> 'online' | 'offline' | 'unknown'
+        // deviceId -> 'online' | 'offline' | 'absent' | 'unknown'
+        //
+        // 'absent' and 'unknown' are deliberately not the same thing. 'unknown'
+        // means we have not asked yet; 'absent' means we asked, the hub
+        // answered, and it has no device by that name. Collapsing the two hid a
+        // mistyped Device field behind a badge that looked merely uninitialised.
+        const deviceState = new Map();
 
         // Device online status is derived from heartbeats the device sends every
         // 30s, so it is never fresher than that. One poll now covers every
@@ -77,6 +84,11 @@ module.exports = function(RED) {
         function setDeviceState(deviceId, next) {
             if (deviceState.get(deviceId) === next) return;
             deviceState.set(deviceId, next);
+            // Said once, on the transition, rather than on every poll - and once
+            // for the hub rather than once per node referencing the device.
+            if (next === 'absent') {
+                node.warn(`No device named "${deviceId}" on this hub - check the Device field for a typo`);
+            }
             if (hubState === 'up') notify(deviceId);
         }
 
@@ -132,7 +144,7 @@ module.exports = function(RED) {
                 }
                 // Subscribed to something the hub does not list: it does not exist.
                 for (const id of subscribers.keys()) {
-                    if (!seen.has(id)) setDeviceState(id, 'unknown');
+                    if (!seen.has(id)) setDeviceState(id, 'absent');
                 }
             } catch (error) {
                 // Failing to ask says nothing about the devices - only that the
@@ -284,29 +296,11 @@ module.exports = function(RED) {
             return;
         }
 
-        // Status is rendered from two facts the config node owns: whether the
-        // hub is reachable at all, and what it knows about this device. Hub
-        // trouble takes over the badge, because while the hub is unreachable
-        // the device's state cannot be observed - a remembered "online" would
-        // be a guess.
+        // Rendered from the two facts the config node owns: whether the hub is
+        // reachable, and what it knows about this device. Shared with the
+        // endpoint nodes so one device reads the same way everywhere.
         function renderStatus() {
-            const hub = hubConfig.getHubState();
-            if (hub === 'connecting' || hub === 'idle') {
-                node.status({fill: "yellow", shape: "ring", text: "connecting to hub"});
-                return;
-            }
-            if (hub === 'down') {
-                node.status({fill: "red", shape: "ring", text: "hub unreachable"});
-                return;
-            }
-            const state = hubConfig.getDeviceState(node.deviceName);
-            if (state === 'online') {
-                node.status({fill: "green", shape: "dot", text: `${node.deviceName}: online`});
-            } else if (state === 'offline') {
-                node.status({fill: "red", shape: "ring", text: `${node.deviceName}: offline`});
-            } else {
-                node.status({fill: "grey", shape: "ring", text: `${node.deviceName}: unknown`});
-            }
+            node.status(deviceStatus(hubConfig, node.deviceName));
         }
 
         // Inbound traffic for this device, fanned out from the shared socket.

@@ -111,11 +111,15 @@
     <ul>
         <li><b>Green dot "&lt;device&gt;: online"</b> - The device is connected to the hub</li>
         <li><b>Red ring "&lt;device&gt;: offline"</b> - The hub is reachable, but the device is not connected</li>
+        <li><b>Red ring "unknown device: &lt;device&gt;"</b> - The hub has no device by that name. The Device field is free text, so this is nearly always a typo - names are case-sensitive</li>
         <li><b>Grey ring "&lt;device&gt;: unknown"</b> - Hub reachable, device state not yet established</li>
         <li><b>Yellow ring "connecting to hub"</b> - Establishing connection to Device Hub</li>
         <li><b>Red ring "hub unreachable"</b> - Lost connection to Device Hub; device state unknown</li>
         <li><b>Red ring "no config"</b> - Device Hub config node not selected</li>
     </ul>
+    <p>The same badge is used by the <code>from device</code> and
+       <code>to device</code> endpoint nodes, so one device reads the same way
+       wherever it appears in a flow.</p>
     <p>Device state comes from the hub, which tracks it from device heartbeats
        (sent every 30s), refreshed on connect and polled periodically. Incoming
        telemetry, events or twin updates mark the device online immediately.</p>
