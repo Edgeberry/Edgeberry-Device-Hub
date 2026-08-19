@@ -154,7 +154,13 @@ export class DeviceHubAppClient extends EventEmitter {
   private websocket: WebSocket | null = null;
   private connected: boolean = false;
   private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 5;
+  // Backoff grows to this ceiling and stays there. There is deliberately no
+  // attempt limit: this is a long-lived connection to infrastructure that is
+  // expected to restart occasionally, and a client that stops trying stays
+  // dead until a human notices. Giving up after five tries meant roughly 31s
+  // of patience - less than a hub deploy takes - after which every application
+  // was silently disconnected until it was restarted by hand.
+  private reconnectMaxDelayMs: number = 30000;
   // Set by disconnect() so the socket's own 'close' handler can tell a
   // deliberate shutdown from a dropped connection. Without it, closing a client
   // scheduled a reconnect that brought it straight back - see disconnect().
@@ -335,17 +341,17 @@ export class DeviceHubAppClient extends EventEmitter {
   }
 
   /**
-   * Schedule WebSocket reconnection with exponential backoff
+   * Schedule WebSocket reconnection with exponential backoff, capped and
+   * unlimited: the delay grows to reconnectMaxDelayMs and keeps retrying at
+   * that interval for as long as the client is meant to be connected. Only
+   * disconnect() stops it.
    */
   private scheduleWebSocketReconnect(): void {
     if (this.closing) return;
+    // Already waiting on a retry - don't stack a second timer on top of it.
+    if (this.reconnectTimer) return;
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max WebSocket reconnection attempts reached');
-      return;
-    }
-
-    const delay = Math.pow(2, this.reconnectAttempts) * 1000;
+    const delay = Math.min(Math.pow(2, this.reconnectAttempts) * 1000, this.reconnectMaxDelayMs);
     this.reconnectAttempts++;
 
     // Kept so disconnect() can cancel a retry that is already pending -
@@ -354,7 +360,7 @@ export class DeviceHubAppClient extends EventEmitter {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.closing) return;
-      console.log(`Attempting WebSocket reconnection (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      console.log(`Attempting WebSocket reconnection (attempt ${this.reconnectAttempts}, next in ${Math.round(delay / 1000)}s)`);
       this.connectWebSocket().catch(() => {
         // Will retry again due to close event
       });

@@ -1,0 +1,131 @@
+<script type="text/javascript">
+  RED.nodes.registerType('devicehub-from-device', {
+    category: 'Edgeberry',
+    color: '#c7d2ff',
+    defaults: {
+      name:       { value: "" },
+      hub:        { value: "", type: "devicehub-config", required: true },
+      deviceName: { value: "", required: true },
+      topic:      { value: "", required: true }
+    },
+    inputs: 0,
+    outputs: 1,
+    icon: "font-awesome/fa-arrow-right",
+    label: function () {
+      return this.name || (this.topic ? `from ${this.deviceName || 'device'}: ${this.topic}` : 'from device');
+    },
+    labelStyle: function () { return this.name ? "node_label_italic" : ""; }
+  });
+
+  RED.nodes.registerType('devicehub-to-device', {
+    category: 'Edgeberry',
+    color: '#c7d2ff',
+    defaults: {
+      name:       { value: "" },
+      hub:        { value: "", type: "devicehub-config", required: true },
+      deviceName: { value: "", required: true },
+      topic:      { value: "", required: true }
+    },
+    inputs: 1,
+    outputs: 0,
+    align: 'right',
+    icon: "font-awesome/fa-arrow-left",
+    label: function () {
+      return this.name || (this.topic ? `to ${this.deviceName || 'device'}: ${this.topic}` : 'to device');
+    },
+    labelStyle: function () { return this.name ? "node_label_italic" : ""; }
+  });
+</script>
+
+<script type="text/html" data-template-name="devicehub-from-device">
+  <div class="form-row">
+    <label for="node-input-hub"><i class="fa fa-server"></i> Hub</label>
+    <input type="text" id="node-input-hub">
+  </div>
+  <div class="form-row">
+    <label for="node-input-deviceName"><i class="fa fa-microchip"></i> Device</label>
+    <input type="text" id="node-input-deviceName" placeholder="Freya-vivarium">
+  </div>
+  <div class="form-row">
+    <label for="node-input-topic"><i class="fa fa-tag"></i> Topic</label>
+    <input type="text" id="node-input-topic" placeholder="doorState">
+  </div>
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="devicehub-from-device">
+  <p>Receives messages sent by a device's <code>to cloud</code> endpoint under a
+     matching topic.</p>
+
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>topic <span class="property-type">string</span></dt>
+    <dd>Exactly the topic the device sent under.</dd>
+    <dt>payload <span class="property-type">any JSON</span></dt>
+    <dd>Exactly what the device flow sent — objects, arrays, strings, numbers,
+        booleans and <code>null</code> all arrive unchanged.</dd>
+    <dt>timestamp <span class="property-type">string</span></dt>
+    <dd>ISO 8601, stamped when the device sent it. Not the time it arrived.</dd>
+  </dl>
+
+  <h3>Topic matching</h3>
+  <p>Exact by default. <code>*</code> receives every topic from this device, and
+     a trailing <code>*</code> matches a prefix (<code>sensor/*</code>) — useful
+     for a single debugging node.</p>
+
+  <h3>Device</h3>
+  <p>Use the device's <b>role</b> (<code>Freya-vivarium</code>), not its raw MQTT
+     name. The raw name is reassigned whenever a device re-provisions; the role
+     follows the device and survives a hardware swap.</p>
+
+  <h3>Delivery</h3>
+  <p>Best effort. Nothing is queued: a message sent while the hub or device is
+     unreachable is lost, not delayed.</p>
+</script>
+
+<script type="text/html" data-template-name="devicehub-to-device">
+  <div class="form-row">
+    <label for="node-input-hub"><i class="fa fa-server"></i> Hub</label>
+    <input type="text" id="node-input-hub">
+  </div>
+  <div class="form-row">
+    <label for="node-input-deviceName"><i class="fa fa-microchip"></i> Device</label>
+    <input type="text" id="node-input-deviceName" placeholder="Freya-vivarium">
+  </div>
+  <div class="form-row">
+    <label for="node-input-topic"><i class="fa fa-tag"></i> Topic</label>
+    <input type="text" id="node-input-topic" placeholder="setpoint">
+  </div>
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="devicehub-to-device">
+  <p>Sends a message to a device, arriving at the device's <code>from cloud</code>
+     endpoint configured with the same topic.</p>
+
+  <h3>Inputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">any JSON</span></dt>
+    <dd>Sent through unchanged. Must be JSON-serialisable — Buffers are not
+        supported.</dd>
+    <dt class="optional">timestamp <span class="property-type">string</span></dt>
+    <dd>ISO 8601. Added automatically when absent, and never rewritten
+        afterwards.</dd>
+  </dl>
+
+  <h3>Topic</h3>
+  <p>Set on the node, not the message. This node is the endpoint, so its topic
+     is authoritative: a message arriving with a different <code>msg.topic</code>
+     is sent under the node's topic and a warning is logged. Wildcards are for
+     receiving only.</p>
+
+  <h3>Delivery</h3>
+  <p>Best effort. If the device is offline the message is dropped, not queued —
+     the node reports an error rather than failing silently.</p>
+</script>
