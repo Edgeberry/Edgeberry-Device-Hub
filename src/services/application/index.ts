@@ -53,6 +53,9 @@ interface AuthenticatedClient {
     devices: Set<string>;      // Specific device IDs or '*' for all
     groups: Set<string>;       // Group names, matched exactly; additive to `devices`
   };
+  /** Cleared when a heartbeat ping goes out, set again by the client's pong.
+   *  A client still false at the next sweep never answered and is dropped. */
+  alive: boolean;
 }
 
 const clients = new Map<WebSocket, AuthenticatedClient>();
@@ -279,6 +282,37 @@ wss.on('connection', (ws: WebSocket, req) => {
   }
   const tokenData = result.token;
 
+  /*
+   *  One live session per token.
+   *
+   *  A token identifies an application, and an application needs exactly one
+   *  connection: the hub's subscription model is a set of devices per socket,
+   *  so everything an application watches fits down one. Several sockets on one
+   *  token meant an application paying for the fan-out the hub already does -
+   *  and made the connection count a property of how a client happened to be
+   *  written rather than of how many applications there are.
+   *
+   *  The newest connection wins, rather than the new one being refused. A
+   *  client that reconnects after a network drop must be able to get straight
+   *  back in: its previous socket can still look alive here for as long as it
+   *  takes the heartbeat to notice, and refusing the replacement would lock out
+   *  the very client the token belongs to. The cost is that two applications
+   *  sharing a token disconnect each other visibly - which is the intended
+   *  answer to sharing a token: give each application its own.
+   */
+  for (const [otherWs, other] of clients) {
+    if (other.tokenId !== tokenData.id) continue;
+    console.warn(`[${SERVICE}] Token ${tokenData.name} reconnected; closing previous session`);
+    try {
+      otherWs.send(JSON.stringify({
+        type: 'session-replaced',
+        message: 'This token connected from elsewhere. Each application needs its own token.'
+      }));
+    } catch { /* the old socket may already be gone */ }
+    clients.delete(otherWs);
+    otherWs.close(1008, 'Session replaced');
+  }
+
   // Register authenticated client
   const client: AuthenticatedClient = {
     ws,
@@ -288,9 +322,16 @@ wss.on('connection', (ws: WebSocket, req) => {
       topics: new Set(),
       devices: new Set(),
       groups: new Set()
-    }
+    },
+    alive: true
   };
   clients.set(ws, client);
+
+  // Answering a protocol-level ping is handled by the ws library itself; all
+  // this has to do is record that an answer arrived.
+  ws.on('pong', () => {
+    client.alive = true;
+  });
 
   // Send welcome message
   ws.send(JSON.stringify({
@@ -315,6 +356,52 @@ wss.on('connection', (ws: WebSocket, req) => {
     console.error(`[${SERVICE}] WebSocket error for ${client.appName}:`, err.message);
   });
 });
+
+/*
+ *  Connection heartbeat.
+ *
+ *  A client that dies without closing cleanly - killed process, power cut,
+ *  network dropped - leaves its socket here indefinitely: TCP has nothing to
+ *  report until it times out, which can take far longer than anyone watching
+ *  the connection count is willing to wait. Those sockets are counted, sent
+ *  every broadcast they subscribed to, and never reaped.
+ *
+ *  A ping/pong sweep is what distinguishes an idle client from a dead one:
+ *  every client is pinged each interval and must have answered the previous
+ *  one to survive. Idle-but-healthy clients answer without sending anything
+ *  themselves, so this never disconnects a quiet application.
+ *
+ *  Note this is the protocol-level ping frame, not the JSON {type:'ping'}
+ *  message a client can send: that one is client-initiated and optional, so it
+ *  cannot detect anything the server needs to know.
+ */
+const WS_HEARTBEAT_MS = 30000;
+
+const heartbeat = setInterval(() => {
+  for (const [ws, client] of clients) {
+    if (!client.alive) {
+      console.warn(`[${SERVICE}] WebSocket client unresponsive, terminating: ${client.appName}`);
+      clients.delete(ws);
+      // terminate(), not close(): close() waits for a handshake reply that a
+      // dead peer is never going to send.
+      ws.terminate();
+      continue;
+    }
+    client.alive = false;
+    try {
+      ws.ping();
+    } catch (e: any) {
+      console.error(`[${SERVICE}] Failed to ping ${client.appName}:`, e.message);
+      clients.delete(ws);
+      ws.terminate();
+    }
+  }
+}, WS_HEARTBEAT_MS);
+
+// Don't hold the process open on this timer alone.
+heartbeat.unref?.();
+
+wss.on('close', () => clearInterval(heartbeat));
 
 // Handle WebSocket messages from clients
 function handleWebSocketMessage(client: AuthenticatedClient, message: string) {

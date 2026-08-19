@@ -105,12 +105,20 @@
     </dl>
     
     <h3>Status Indicators</h3>
+    <p>The status shows whether <i>the device</i> is online. Hub problems take
+       over the badge, because while the hub is unreachable the device's state
+       cannot be observed at all - a remembered "online" would be a guess.</p>
     <ul>
-        <li><b>Yellow ring "connecting"</b> - Establishing connection to Device Hub</li>
-        <li><b>Green dot "connected"</b> - Connected and WebSocket active</li>
-        <li><b>Red ring "disconnected"</b> - Lost connection to Device Hub</li>
+        <li><b>Green dot "&lt;device&gt;: online"</b> - The device is connected to the hub</li>
+        <li><b>Red ring "&lt;device&gt;: offline"</b> - The hub is reachable, but the device is not connected</li>
+        <li><b>Grey ring "&lt;device&gt;: unknown"</b> - Hub reachable, device state not yet established</li>
+        <li><b>Yellow ring "connecting to hub"</b> - Establishing connection to Device Hub</li>
+        <li><b>Red ring "hub unreachable"</b> - Lost connection to Device Hub; device state unknown</li>
         <li><b>Red ring "no config"</b> - Device Hub config node not selected</li>
     </ul>
+    <p>Device state comes from the hub, which tracks it from device heartbeats
+       (sent every 30s), refreshed on connect and polled periodically. Incoming
+       telemetry, events or twin updates mark the device online immediately.</p>
 
     <h3>Inputs</h3>
     <p>Send commands and updates to the device:</p>

@@ -155,6 +155,11 @@ export class DeviceHubAppClient extends EventEmitter {
   private connected: boolean = false;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
+  // Set by disconnect() so the socket's own 'close' handler can tell a
+  // deliberate shutdown from a dropped connection. Without it, closing a client
+  // scheduled a reconnect that brought it straight back - see disconnect().
+  private closing: boolean = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private baseUrl: string;
   private wsUrl: string;
 
@@ -201,6 +206,10 @@ export class DeviceHubAppClient extends EventEmitter {
    * Initialize the client and establish connections
    */
   async connect(): Promise<void> {
+    // Clears any previous disconnect(), so a client that was shut down can be
+    // brought back up deliberately - the flag only suppresses *automatic*
+    // reconnects.
+    this.closing = false;
     try {
       // Test HTTP connection
       await this.httpClient.get('/health');
@@ -247,6 +256,10 @@ export class DeviceHubAppClient extends EventEmitter {
         console.log('WebSocket disconnected');
         this.connected = false;
         this.emit('websocket-disconnected');
+        // A close we asked for is not a failure to recover from. Reconnecting
+        // here resurrected clients their owner had already discarded, and each
+        // revived client held a socket open against the hub for good.
+        if (this.closing) return;
         this.scheduleWebSocketReconnect();
       });
 
@@ -325,6 +338,8 @@ export class DeviceHubAppClient extends EventEmitter {
    * Schedule WebSocket reconnection with exponential backoff
    */
   private scheduleWebSocketReconnect(): void {
+    if (this.closing) return;
+
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max WebSocket reconnection attempts reached');
       return;
@@ -333,7 +348,12 @@ export class DeviceHubAppClient extends EventEmitter {
     const delay = Math.pow(2, this.reconnectAttempts) * 1000;
     this.reconnectAttempts++;
 
-    setTimeout(() => {
+    // Kept so disconnect() can cancel a retry that is already pending -
+    // otherwise a client closed during its backoff window would still open a
+    // socket when the timer fired.
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.closing) return;
       console.log(`Attempting WebSocket reconnection (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
       this.connectWebSocket().catch(() => {
         // Will retry again due to close event
@@ -465,8 +485,38 @@ export class DeviceHubAppClient extends EventEmitter {
     this.removeAllListeners('telemetry');
   }
 
+  /** Every topic the hub broadcasts per device. */
+  static readonly ALL_DEVICE_TOPICS = ['telemetry', 'status', 'events', 'twin', 'swap'];
+
   /**
-   * Subscribe to specific device
+   * Subscribe to a set of devices in one call.
+   *
+   * The hub stores device subscriptions as a set that a `subscribe` message
+   * *replaces* rather than extends, so subscribing per device - calling
+   * subscribeToDevice() once per device - keeps only the last one. Anything
+   * watching several devices over one connection has to send them together,
+   * which is what this is for.
+   *
+   * Re-send the full set after every reconnect: a new socket carries none of
+   * the previous subscriptions.
+   */
+  subscribeToDevices(deviceIds: string[], topics: string[] = DeviceHubAppClient.ALL_DEVICE_TOPICS): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      this.websocket.send(JSON.stringify({
+        type: 'subscribe',
+        topics,
+        devices: deviceIds
+      }));
+    } else {
+      console.warn('WebSocket not connected, cannot subscribe to devices');
+    }
+  }
+
+  /**
+   * Subscribe to specific device.
+   *
+   * Note this *replaces* any previous device subscription on this connection -
+   * see subscribeToDevices() to watch more than one.
    */
   subscribeToDevice(deviceId: string): void {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
@@ -646,6 +696,14 @@ export class DeviceHubAppClient extends EventEmitter {
    */
   async disconnect(): Promise<void> {
     this.connected = false;
+    // Set before closing: the socket's 'close' handler runs off this flag to
+    // know it must not reconnect.
+    this.closing = true;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
 
     if (this.websocket) {
       this.websocket.close();

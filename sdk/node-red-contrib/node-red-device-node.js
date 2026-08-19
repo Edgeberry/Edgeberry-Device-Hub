@@ -13,18 +13,244 @@ module.exports = function(RED) {
 
     /**
      * Device Hub Configuration Node
-     * Stores connection settings for Device Hub
+     *
+     * Owns the single connection to a Device Hub, shared by every device node
+     * that references it.
+     *
+     * This used to hold settings only, and each device node opened a connection
+     * of its own. That made the socket count scale with the *flow* rather than
+     * the fleet: a device appearing in three nodes meant three sockets watching
+     * it, three authentications, three reconnect loops and three copies of every
+     * status poll. The hub already addresses this - its subscription model is a
+     * set of devices per connection - so the fan-out belongs here, on one
+     * socket, with device nodes as subscribers to it.
      */
     function DeviceHubConfigNode(config) {
         RED.nodes.createNode(this, config);
-        this.name = config.name;
-        this.host = config.host;
-        this.port = config.port;
-        this.secure = config.secure;
-        
+        const node = this;
+
+        node.name = config.name;
+        node.host = config.host;
+        node.port = config.port;
+        node.secure = config.secure;
+
         // Build baseUrl from host and port
-        const protocol = this.secure ? 'https' : 'http';
-        this.baseUrl = `${protocol}://${this.host}:${this.port}`;
+        const protocol = node.secure ? 'https' : 'http';
+        node.baseUrl = `${protocol}://${node.host}:${node.port}`;
+
+        // deviceId -> Set of subscriber callbacks. A device may legitimately
+        // appear in several nodes, so each id maps to many subscribers.
+        const subscribers = new Map();
+        let client = null;
+        let hubState = 'idle';      // 'idle' | 'connecting' | 'up' | 'down'
+        let pollTimer = null;
+        const deviceState = new Map();   // deviceId -> 'online' | 'offline' | 'unknown'
+
+        // Device online status is derived from heartbeats the device sends every
+        // 30s, so it is never fresher than that. One poll now covers every
+        // device on this hub rather than one poll per node.
+        const STATUS_POLL_MS = 15000;
+
+        node.getHubState = () => hubState;
+        node.getDeviceState = (deviceId) => deviceState.get(deviceId) || 'unknown';
+        node.getClient = () => client;
+
+        function notify(deviceId) {
+            const set = subscribers.get(deviceId);
+            if (set) for (const sub of set) sub.onStateChange();
+        }
+
+        function notifyAll() {
+            for (const set of subscribers.values()) {
+                for (const sub of set) sub.onStateChange();
+            }
+        }
+
+        function setHubState(next) {
+            if (hubState === next) return;
+            hubState = next;
+            // What we knew about each device was only true while we could see it.
+            if (next !== 'up') deviceState.clear();
+            notifyAll();
+        }
+
+        function setDeviceState(deviceId, next) {
+            if (deviceState.get(deviceId) === next) return;
+            deviceState.set(deviceId, next);
+            if (hubState === 'up') notify(deviceId);
+        }
+
+        function readStatusValue(value) {
+            if (value === 'online' || value === true) return 'online';
+            if (value === 'offline' || value === false) return 'offline';
+            return null;
+        }
+
+        function deliver(kind, data) {
+            const deviceId = data && (data.deviceId || data.device_id);
+            if (!deviceId) return;
+            // Anything arriving from a device is proof it is alive.
+            if (kind === 'status') {
+                const reported = readStatusValue(data.status);
+                if (reported) setDeviceState(deviceId, reported);
+            } else {
+                setDeviceState(deviceId, 'online');
+            }
+            const set = subscribers.get(deviceId);
+            if (set) for (const sub of set) sub.onMessage(kind, data);
+        }
+
+        // The hub replaces the device set on each subscribe rather than adding
+        // to it, so the whole union goes out every time it changes - and again
+        // after any reconnect, since a new socket carries no subscriptions.
+        function pushSubscription() {
+            if (!client || hubState !== 'up') return;
+            const ids = Array.from(subscribers.keys());
+            if (ids.length === 0) return;
+            client.subscribeToDevices(ids);
+            node.log(`Subscribed to ${ids.length} device(s): ${ids.join(', ')}`);
+        }
+
+        /**
+         * Ask the hub about every device this connection cares about, in one
+         * request. This is the only thing that reports a device going *offline*:
+         * silence from a dead device is not an event anyone can push.
+         */
+        async function refreshDeviceStates() {
+            if (!client || hubState !== 'up' || subscribers.size === 0) return;
+            try {
+                const devices = await client.getDevices();
+                const seen = new Set();
+                for (const info of devices || []) {
+                    // A node may name a device by role or by raw name; accept both.
+                    for (const id of [info.deviceId, info.deviceName, info.role]) {
+                        if (id && subscribers.has(id)) {
+                            setDeviceState(id, readStatusValue(info.status) || 'unknown');
+                            seen.add(id);
+                        }
+                    }
+                }
+                // Subscribed to something the hub does not list: it does not exist.
+                for (const id of subscribers.keys()) {
+                    if (!seen.has(id)) setDeviceState(id, 'unknown');
+                }
+            } catch (error) {
+                // Failing to ask says nothing about the devices - only that the
+                // question did not get through.
+                node.debug(`Could not refresh device states: ${error.message}`);
+            }
+        }
+
+        function startPolling() {
+            if (pollTimer) return;
+            pollTimer = setInterval(refreshDeviceStates, STATUS_POLL_MS);
+        }
+
+        function stopPolling() {
+            if (!pollTimer) return;
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+
+        function connect() {
+            if (client) return;
+
+            if (!node.credentials || !node.credentials.token) {
+                node.error('Access token is required in Device Hub config');
+                setHubState('down');
+                return;
+            }
+
+            client = new DeviceHubAppClient({
+                host: node.host,
+                port: parseInt(node.port),
+                secure: node.secure || false,
+                token: node.credentials.token,
+                enableWebSocket: true
+            });
+
+            setHubState('connecting');
+
+            client.on('telemetry', (data) => deliver('telemetry', data));
+            client.on('event',     (data) => deliver('event', data));
+            client.on('status',    (data) => deliver('status', data));
+            client.on('twin',      (data) => deliver('twin', data));
+
+            client.on('websocket-connected', () => {
+                setHubState('up');
+                pushSubscription();
+                refreshDeviceStates();
+                startPolling();
+            });
+
+            client.on('websocket-disconnected', () => {
+                stopPolling();
+                setHubState('down');
+            });
+
+            // 'websocket-error', not 'error': the client emits no bare 'error'
+            // event, so a listener on that name could never fire.
+            client.on('websocket-error', (error) => {
+                node.warn(`Device Hub connection error: ${error && error.message ? error.message : error}`);
+                stopPolling();
+                setHubState('down');
+            });
+
+            client.on('disconnected', () => {
+                stopPolling();
+                setHubState('down');
+            });
+
+            client.connect().catch((error) => {
+                node.error(`Failed to connect to Device Hub: ${error.message}`);
+                stopPolling();
+                setHubState('down');
+            });
+        }
+
+        async function disconnect() {
+            stopPolling();
+            const c = client;
+            client = null;
+            hubState = 'idle';
+            deviceState.clear();
+            if (c) {
+                try { await c.disconnect(); } catch (_e) { /* shutting down anyway */ }
+            }
+        }
+
+        /**
+         * Register a device node's interest in a device.
+         *
+         * The connection is opened by the first registration and closed by the
+         * last, so a hub with no device nodes referencing it holds no socket.
+         */
+        node.register = function(deviceId, subscriber) {
+            if (!subscribers.has(deviceId)) subscribers.set(deviceId, new Set());
+            subscribers.get(deviceId).add(subscriber);
+
+            connect();
+            pushSubscription();
+            // A late joiner gets the state already known for its device.
+            subscriber.onStateChange();
+
+            return function unregister() {
+                const set = subscribers.get(deviceId);
+                if (!set) return;
+                set.delete(subscriber);
+                if (set.size === 0) {
+                    subscribers.delete(deviceId);
+                    deviceState.delete(deviceId);
+                }
+                if (subscribers.size === 0) disconnect();
+                else pushSubscription();
+            };
+        };
+
+        node.on('close', async function() {
+            subscribers.clear();
+            await disconnect();
+        });
     }
 
     /**
@@ -58,108 +284,75 @@ module.exports = function(RED) {
             return;
         }
 
-        let client = null;
-
-        // Initialize connection to Device Hub
-        async function initializeClient() {
-            try {
-                client = new DeviceHubAppClient({
-                    host: hubConfig.host,
-                    port: parseInt(hubConfig.port),
-                    secure: hubConfig.secure || false,
-                    token: hubConfig.credentials.token,
-                    enableWebSocket: true
-                });
-
-                node.status({fill: "yellow", shape: "ring", text: "connecting..."});
-
-                // Set up event listeners BEFORE connecting to avoid race condition
-                setupDeviceListeners();
-
-                // WebSocket connected event
-                client.on('connected', () => {
-                    node.status({fill: "green", shape: "dot", text: `connected: ${node.deviceName}`});
-                });
-
-                client.on('disconnected', () => {
-                    node.status({fill: "red", shape: "ring", text: "disconnected"});
-                });
-
-                client.on('error', (error) => {
-                    node.error(`Device Hub error: ${error.message}`);
-                    node.status({fill: "red", shape: "ring", text: "error"});
-                });
-
-                // Subscribe once WebSocket is fully connected
-                client.on('websocket-connected', () => {
-                    // Small delay to ensure connection is fully established
-                    setTimeout(() => {
-                        node.log(`Subscribing to telemetry for device: ${node.deviceName}`);
-                        client.startTelemetryStream([node.deviceName]);
-                    }, 100);
-                });
-
-                // Now connect (subscription will happen in websocket-connected event)
-                await client.connect();
-
-            } catch (error) {
-                node.error(`Failed to connect to Device Hub: ${error.message}`);
-                node.status({fill: "red", shape: "ring", text: "connection failed"});
+        // Status is rendered from two facts the config node owns: whether the
+        // hub is reachable at all, and what it knows about this device. Hub
+        // trouble takes over the badge, because while the hub is unreachable
+        // the device's state cannot be observed - a remembered "online" would
+        // be a guess.
+        function renderStatus() {
+            const hub = hubConfig.getHubState();
+            if (hub === 'connecting' || hub === 'idle') {
+                node.status({fill: "yellow", shape: "ring", text: "connecting to hub"});
+                return;
+            }
+            if (hub === 'down') {
+                node.status({fill: "red", shape: "ring", text: "hub unreachable"});
+                return;
+            }
+            const state = hubConfig.getDeviceState(node.deviceName);
+            if (state === 'online') {
+                node.status({fill: "green", shape: "dot", text: `${node.deviceName}: online`});
+            } else if (state === 'offline') {
+                node.status({fill: "red", shape: "ring", text: `${node.deviceName}: offline`});
+            } else {
+                node.status({fill: "grey", shape: "ring", text: `${node.deviceName}: unknown`});
             }
         }
 
-        // Set up listeners for device messages
-        // Note: application-service already filters messages based on our subscription,
-        // so we receive only messages for this device
-        function setupDeviceListeners() {
-            // Telemetry data
-            client.on('telemetry', (data) => {
+        // Inbound traffic for this device, fanned out from the shared socket.
+        function onMessage(kind, data) {
+            if (kind === 'telemetry') {
                 node.send({
                     topic: `telemetry/${node.deviceName}`,
                     payload: data,
                     deviceName: node.deviceName,
                     messageType: 'telemetry'
                 });
-            });
-
-            // Device events
-            client.on('event', (data) => {
+            } else if (kind === 'event') {
                 node.send({
                     topic: `event/${node.deviceName}/${data.eventType || 'unknown'}`,
                     payload: data,
                     deviceName: node.deviceName,
                     messageType: 'event'
                 });
-            });
-
-            // Device status changes
-            client.on('status', (data) => {
+            } else if (kind === 'status') {
                 node.send({
                     topic: `status/${node.deviceName}`,
                     payload: data,
                     deviceName: node.deviceName,
                     messageType: 'status'
                 });
-                
-                // Update node status indicator
-                const statusText = data.status === 'online' ? 'online' : 'offline';
-                const statusColor = data.status === 'online' ? 'green' : 'yellow';
-                node.status({fill: statusColor, shape: "dot", text: `${node.deviceName}: ${statusText}`});
-            });
-
-            // Twin updates
-            client.on('twin', (data) => {
+            } else if (kind === 'twin') {
                 node.send({
                     topic: `twin/${node.deviceName}`,
                     payload: data,
                     deviceName: node.deviceName,
                     messageType: 'twin'
                 });
-            });
+            }
         }
+
+        const unregister = hubConfig.register(node.deviceName, {
+            onMessage,
+            onStateChange: renderStatus
+        });
+
 
         // Handle input messages (commands to device)
         node.on('input', async function(msg) {
+            // Borrowed from the config node rather than held: the connection is
+            // shared, and a reference cached here would go stale on reconnect.
+            const client = hubConfig.getClient();
             if (!client || !client.isConnected()) {
                 node.error("Not connected to Device Hub");
                 return;
@@ -240,15 +433,10 @@ module.exports = function(RED) {
             }
         });
 
-        // Initialize on startup
-        node.status({fill: "yellow", shape: "ring", text: "connecting"});
-        initializeClient();
-
-        // Cleanup on close
-        node.on('close', async function() {
-            if (client) {
-                await client.disconnect();
-            }
+        // Cleanup on close. Only this node's interest is dropped; the shared
+        // connection closes once the last device node lets go of it.
+        node.on('close', function() {
+            unregister();
         });
     }
 
