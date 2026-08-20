@@ -5,7 +5,7 @@
  * with system action buttons and integrated health information.
  */
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { Badge, Button, Card, Col, Collapse, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Col, Collapse, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faGears, faChartLine, faTerminal } from '@fortawesome/free-solid-svg-icons';
 import TerminalModal from './TerminalModal';
@@ -773,46 +773,78 @@ export default function SystemWidget() {
 
         {/* Service Detail Modal */}
         <Modal show={!!selectedService} onHide={() => setSelectedService(null)} centered size="xl" scrollable fullscreen="md-down" contentClassName="eb-modal-content">
+          {/* Titled with the service itself, like every other modal here names
+              the thing it is about - "Service details" described the window
+              rather than its subject. */}
           <Modal.Header closeButton closeVariant="white">
-            <Modal.Title><FontAwesomeIcon icon={faGears} />Service details</Modal.Title>
+            <Modal.Title>
+              <FontAwesomeIcon icon={faGears} />{selectedService ? prettyUnitName(selectedService.unit) : 'Service'}
+            </Modal.Title>
           </Modal.Header>
           <Modal.Body>
             {selectedService && (
-              <div>
-                <div style={{ marginBottom: 6 }}><strong>Service:</strong> {prettyUnitName(selectedService.unit)}</div>
-                {selectedService.version ? (
-                  <div style={{ marginBottom: 6 }}><strong>Version:</strong> v{selectedService.version}</div>
-                ) : null}
-                <div style={{ marginBottom: 6, opacity: 0.7 }}><small>Unit id: {selectedService.unit}</small></div>
-                <div style={{ marginBottom: 12 }}><strong>Status:</strong> <Badge bg={statusVariant(selectedService.status)}>{selectedService.status}</Badge></div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
-                  <Button size="sm" variant="success" disabled={actionBusy} onClick={()=>doAction('start', selectedService.unit)}>Start</Button>
-                  <Button size="sm" variant="warning" disabled={actionBusy} onClick={()=>doAction('restart', selectedService.unit)}>Restart</Button>
-                  <Button size="sm" variant="danger" disabled={actionBusy} onClick={()=>doAction('stop', selectedService.unit)}>Stop</Button>
+              <>
+                {/* Identity line under the title, same as the device modal. */}
+                <div className="text-muted small mb-3">Unit: {selectedService.unit}</div>
+
+                {actionError && <Alert variant="danger" className="py-2">{actionError}</Alert>}
+
+                {/* A property table rather than a stack of hand-spaced
+                    <strong>Label:</strong> divs - the same `table table-sm` the
+                    whitelist and device lists use.
+
+                    Only Status and Version appear because that is all
+                    getServicesSnapshot() reports. The Service type also
+                    declares enabled/since/memory/tasks/sub, but nothing ever
+                    fills them in, so rows for those would render never. */}
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="table table-sm">
+                    <tbody>
+                      <tr>
+                        <th style={{ width: 160, fontWeight: 600 }}>Status</th>
+                        <td><Badge bg={statusVariant(selectedService.status)}>{selectedService.status}</Badge></td>
+                      </tr>
+                      {selectedService.version && (
+                        <tr><th style={{ fontWeight: 600 }}>Version</th><td>v{selectedService.version}</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Outline btn-edgeberry like every other action button in the
+                    UI, instead of three saturated solid Bootstrap variants.
+                    Stop is the destructive one, so it gets the red hover. */}
+                <div className="d-flex gap-2 flex-wrap align-items-center mb-3">
+                  <button type="button" className="btn btn-sm btn-edgeberry" disabled={actionBusy}
+                          onClick={()=>doAction('start', selectedService.unit)}>Start</button>
+                  <button type="button" className="btn btn-sm btn-edgeberry" disabled={actionBusy}
+                          onClick={()=>doAction('restart', selectedService.unit)}>Restart</button>
+                  <button type="button" className="btn btn-sm btn-edgeberry btn-edgeberry-danger" disabled={actionBusy}
+                          onClick={()=>doAction('stop', selectedService.unit)}>Stop</button>
                   {actionBusy && <Spinner animation="border" size="sm" />}
                 </div>
-                {actionError && <div style={{ color:'#c00', marginBottom: 8 }}>{actionError}</div>}
-                <div style={{ display:'flex', alignItems:'center', gap:8, fontWeight: 600, marginBottom: 8 }}>
-                  <span>Recent logs</span>
-                  {wsIsConnected() && (
-                    <Badge bg="success">Live</Badge>
-                  )}
+
+                <div className="d-flex align-items-center gap-2 mb-2">
+                  <span style={{ fontWeight: 600 }}>Recent logs</span>
+                  {wsIsConnected() && <Badge bg="success">Live</Badge>}
                 </div>
                 {streamEnded && (
-                  <div style={{ color:'#999', fontSize: 12, marginBottom: 4 }}>{streamEnded}</div>
+                  <div className="text-muted mb-1" style={{ fontSize: 12 }}>{streamEnded}</div>
                 )}
+                {/* Themed from the same tokens as the Terminal, rather than its
+                    own hardcoded near-black - the two are the only dark
+                    surfaces in the UI and should not be different darks. */}
                 <div
                   style={{
-                    background: '#0b0b10',
-                    color: '#e0e6f0',
+                    background: 'var(--eb-navbar-bg)',
+                    color: 'var(--eb-navbar-fg)',
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                     fontSize: 13,
                     lineHeight: 1.4,
-                    borderRadius: 8,
+                    borderRadius: 4,
                     padding: 12,
                     maxHeight: 360,
                     overflow: 'auto',
-                    border: '1px solid rgba(255,255,255,0.08)'
                   }}
                   ref={logsRef}
                   tabIndex={0}
@@ -823,7 +855,7 @@ export default function SystemWidget() {
                     <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{logs}</pre>
                   )}
                 </div>
-              </div>
+              </>
             )}
           </Modal.Body>
           <Modal.Footer>
