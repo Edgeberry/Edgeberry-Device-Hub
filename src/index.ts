@@ -88,7 +88,7 @@ import {
 } from './config.js';
 import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert, ensureCRLExists, revokeCertificatesForUuid, regenerateCRL } from './certs.js';
 import { buildJournalctlArgs } from './logs.js';
-import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
+import { authRequired, clearSessionCookie, getSession, getSessionUserFromHeaders, parseCookies, setSessionCookie } from './auth.js';
 import { createTerminalService } from './terminal.js';
 import { validateDeviceName } from './device-names.js';
 import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents } from './twin-store.js';
@@ -2651,6 +2651,20 @@ server.on('upgrade', (request, socket, head) => {
   } catch { /* malformed target; falls through to the reject below */ }
 
   if (pathname === '/api/ws') {
+    // Refused during the handshake, not after it. This connection used to be
+    // accepted from anyone and then held open with every subscription denied -
+    // which leaked nothing, but meant the server carried a socket, a client
+    // context and a broadcast-loop entry for callers it had already decided to
+    // ignore. A 401 here is also what the browser's WebSocket client can
+    // actually act on.
+    const user = getSessionUserFromHeaders(request.headers.cookie);
+    if (!user) {
+      console.warn('[WS] Rejected unauthenticated upgrade to /api/ws');
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    (request as any).user = user;
     wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
     return;
   }
@@ -2663,64 +2677,43 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 wss.on('connection', (ws: any, req: any) => {
-  console.log(`[WS] Connection event fired, processing...`);
-  
-  // Check authentication via cookies (same as HTTP requests), unless the
-  // operator has delegated auth to a reverse proxy - see auth.ts's
-  // authRequired for the same check on the HTTP side.
-  let authed = isAuthDisabled();
-  if (!authed) {
-    try {
-      const cookies = parseCookies(req.headers.cookie);
-      const token = cookies[SESSION_COOKIE];
-      if (token) {
-        const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string; iat?: number; exp?: number };
-        const user = payload.user || payload.sub;
-        if (user) {
-          authed = true;
-          console.log(`[WS] Authenticated connection for user: ${user}`);
-        }
-      }
-    } catch (error: any) {
-      console.log(`[WS] Authentication failed:`, error?.message || 'unknown error');
-    }
-  }
+  // Authentication already happened, during the upgrade - anything that gets
+  // here carries a valid session, so there is no anonymous case left to
+  // handle. `authenticated: true` stays in the welcome message because the
+  // client reads it.
+  const user: string = req.user || 'unknown';
+  console.log(`[WS] Authenticated connection for user: ${user}`);
 
-  if (!authed) {
-    console.log(`[WS] Anonymous connection established`);
-  }
-  
   // Add error handler to catch any connection issues
   ws.on('error', (error: any) => {
     console.error(`[WS] Connection error:`, error);
   });
-  
+
   // Send immediate welcome message to confirm connection works
   try {
-    ws.send(JSON.stringify({ 
-      type: 'welcome', 
+    ws.send(JSON.stringify({
+      type: 'welcome',
       message: 'WebSocket connected successfully',
-      authenticated: authed
+      authenticated: true
     }));
-    console.log(`[WS] Sent welcome message (authed=${authed})`);
   } catch (error) {
     console.error(`[WS] Failed to send welcome message:`, error);
   }
-  
-  const ctx: ClientCtx = { ws, topics: new Set(), logs: new Map(), authed };
+
+  const ctx: ClientCtx = { ws, topics: new Set(), logs: new Map(), authed: true };
   clients.add(ctx);
 
   ws.on('message', (data: any) => {
     try{
       const msg = JSON.parse(String(data || ''));
       if(msg?.type === 'subscribe' && Array.isArray(msg.topics)){
-        // Login is required for every topic - no anonymous subset. The
-        // connection itself is still accepted (see `authed` above) so an
-        // unauthenticated client gets a clear `{authenticated:false}` welcome
-        // message rather than a bare refused connection, but it is never
-        // handed any subscription.
+        // Login is required for every topic - no anonymous subset. Nothing
+        // should be able to reach this without a session any more: the
+        // upgrade is refused with a 401 before the socket exists. Kept as a
+        // backstop so that a future second way into this handler cannot
+        // quietly hand out subscriptions.
         if(!ctx.authed){
-          console.log(`[WS] Anonymous client denied subscription (login required)`);
+          console.warn(`[WS] Unauthenticated client reached the message handler - denying subscription`);
         } else {
           for(const raw of msg.topics){
             const t = String(raw);

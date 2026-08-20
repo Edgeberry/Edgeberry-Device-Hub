@@ -31,6 +31,31 @@ export function getSession(req: Request): { user: string; exp?: number } | null 
   }
 }
 
+/**
+ * The session behind a raw HTTP request, or null.
+ *
+ * Same rules as getSession(), but reading a plain IncomingMessage rather than
+ * an express Request - WebSocket upgrades never reach express, so both the
+ * admin feed and the terminal authenticate here instead. Kept beside
+ * getSession so the two can't drift into disagreeing about what a valid
+ * session is.
+ *
+ * isAuthDisabled() is honoured for the same reason authRequired honours it:
+ * the operator has delegated auth to something in front of the Hub.
+ */
+export function getSessionUserFromHeaders(cookieHeader?: string): string | null {
+  if (isAuthDisabled()) return 'proxy-authenticated';
+  const token = parseCookies(cookieHeader)[SESSION_COOKIE];
+  if (!token) return null;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string };
+    return payload.user || payload.sub || null;
+  } catch {
+    // Expired, malformed or wrongly signed: all equally "not a session".
+    return null;
+  }
+}
+
 export function setSessionCookie(res: Response, token: string) {
   const isHttps = false; // Note: HTTPS detection could be added via X-Forwarded-Proto or config if needed
   const attrs = [
@@ -60,10 +85,8 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
   // Login is required for everything Device Hub data/control-related - no
   // anonymous "peek" view. What's left public here is deliberately narrow:
   // trivial liveness (health), the device-facing provisioning bootstrap
-  // endpoints (devices don't have a login), the auth flow itself (can't
-  // require a session to *get* a session), and the WS upgrade handshake
-  // (the connection handler itself now requires auth before accepting any
-  // subscription - see index.ts's wss.on('connection', ...)).
+  // endpoints (devices don't have a login), and the auth flow itself (can't
+  // require a session to *get* a session).
   if (req.path === '/healthz' || req.path === '/api/health') {
     return next();
   }
@@ -77,10 +100,10 @@ export function authRequired(req: Request, res: Response, next: NextFunction) {
   ) {
     return next();
   }
-  // Allow WebSocket upgrades to /api/ws - authentication is handled in the WebSocket connection handler
-  if (req.path === '/api/ws' && req.headers.upgrade?.toLowerCase() === 'websocket') {
-    return next();
-  }
+  // WebSocket upgrades never reach express middleware at all - they are
+  // dispatched by the server's own 'upgrade' event (see index.ts's upgrade
+  // router), which authenticates them there and answers a bare 401 on the
+  // socket. Nothing to allow through here.
   if (req.path.startsWith('/api/auth/')) return next();
   const s = getSession(req);
   if (!s) {

@@ -23,37 +23,14 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { Duplex } from 'stream';
-import jwt from 'jsonwebtoken';
-import { JWT_SECRET, SESSION_COOKIE } from './config.js';
-import { parseCookies } from './auth.js';
-import { isAuthDisabled, isWebTerminalEnabled } from './app-settings.js';
+import { getSessionUserFromHeaders } from './auth.js';
+import { isWebTerminalEnabled } from './app-settings.js';
 
 export const TERMINAL_PATH = '/ws/terminal';
 
 /** The shell's starting size, replaced by the client's first 'resize'. */
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
-
-/**
- * Who is asking, or null if nobody we recognise.
- *
- * Same rules as the admin WebSocket: the session cookie carries a JWT, and an
- * operator who has delegated auth to a reverse proxy can turn the check off
- * (isAuthDisabled) - in which case the proxy is doing it instead.
- */
-function authenticate(req: IncomingMessage): string | null {
-  if (isAuthDisabled()) return 'proxy-authenticated';
-  try {
-    const cookies = parseCookies(req.headers.cookie);
-    const token = cookies[SESSION_COOKIE];
-    if (!token) return null;
-    const payload = jwt.verify(token, JWT_SECRET) as { sub?: string; user?: string };
-    return payload.user || payload.sub || null;
-  } catch {
-    // Expired, malformed or wrongly-signed: all equally "not a session".
-    return null;
-  }
-}
 
 export function createTerminalService(): {
   path: string;
@@ -132,7 +109,7 @@ export function createTerminalService(): {
         socket.destroy();
         return;
       }
-      const user = authenticate(req);
+      const user = getSessionUserFromHeaders(req.headers.cookie);
       if (!user) {
         console.warn('[terminal] Rejected unauthenticated terminal upgrade');
         // Answered at the HTTP layer, before the WebSocket exists - the
