@@ -845,30 +845,43 @@ function ensureDeviceHubSchema(){
     // Updated schema: uuid, hardware_version, manufacturer, created_at, used_at
     try {
       const whitelistInfo = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
-      const hasLegacyColumns = whitelistInfo.some((col: any) => col.name === 'device_id' || col.name === 'name' || col.name === 'note');
+      // `note` is deliberately NOT a legacy marker any more, even though the
+      // legacy schema had a column by that name. It is a current column again
+      // (see the additive migration below), and this branch DROPS THE TABLE -
+      // leaving it here would delete every note on the next boot after it was
+      // added. The legacy schema carried device_id and name too, so either of
+      // those still identifies it unambiguously.
+      const hasLegacyColumns = whitelistInfo.some((col: any) => col.name === 'device_id' || col.name === 'name');
       const hasHardwareVersion = whitelistInfo.some((col: any) => col.name === 'hardware_version');
       const hasManufacturer = whitelistInfo.some((col: any) => col.name === 'manufacturer');
       const hasNewColumns = hasHardwareVersion && hasManufacturer;
       
       if (hasLegacyColumns || !hasNewColumns) {
         console.log('[ensureDeviceHubSchema] Migrating uuid_whitelist table to new schema');
+        // The legacy schema had a `note` column meaning exactly what the current
+        // one means, so carry it across rather than dropping it on the floor -
+        // it is the one legacy field a human actually wrote by hand.
+        const hasLegacyNote = whitelistInfo.some((col: any) => col.name === 'note');
         // Backup data, drop table, recreate with correct schema
-        const existingData = db.prepare('SELECT uuid, created_at, used_at FROM uuid_whitelist').all();
+        const existingData = db.prepare(
+          `SELECT uuid, created_at, used_at, ${hasLegacyNote ? 'note' : 'NULL AS note'} FROM uuid_whitelist`
+        ).all();
         db.prepare('DROP TABLE uuid_whitelist').run();
-        
+
         db.prepare(
           'CREATE TABLE uuid_whitelist ('+
           ' uuid TEXT PRIMARY KEY,'+
           ' hardware_version TEXT NOT NULL,'+
           ' manufacturer TEXT NOT NULL,'+
           ' created_at TEXT NOT NULL,'+
-          ' used_at TEXT)'
+          ' used_at TEXT,'+
+          ' note TEXT)'
         ).run();
-        
+
         // Restore data with new schema (set default values for new fields)
-        const insertStmt = db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at, used_at) VALUES (?, ?, ?, ?, ?)');
+        const insertStmt = db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at, used_at, note) VALUES (?, ?, ?, ?, ?, ?)');
         for (const row of existingData) {
-          insertStmt.run(row.uuid, 'Unknown', 'Unknown', row.created_at, row.used_at);
+          insertStmt.run(row.uuid, 'Unknown', 'Unknown', row.created_at, row.used_at, row.note ?? null);
         }
         console.log(`[ensureDeviceHubSchema] Migrated ${existingData.length} whitelist entries`);
       } else {
@@ -907,6 +920,21 @@ function ensureDeviceHubSchema(){
       }
     } catch (e) {
       console.error('[ensureDeviceHubSchema] Failed to add disabled_at column:', e);
+    }
+
+    // Additive migration: a free-text note against a whitelist entry, so a UUID
+    // can be identified by something a human recognises ("Freya's vivarium",
+    // "batch 3, DOA") before it has ever provisioned and earned a device name.
+    // Nullable with no default - existing rows simply have no note.
+    try {
+      const whitelistInfo = db.prepare('PRAGMA table_info(uuid_whitelist)').all();
+      const hasNote = whitelistInfo.some((col: any) => col.name === 'note');
+      if (!hasNote) {
+        db.prepare('ALTER TABLE uuid_whitelist ADD COLUMN note TEXT').run();
+        console.log('[ensureDeviceHubSchema] Added note column to uuid_whitelist');
+      }
+    } catch (e) {
+      console.error('[ensureDeviceHubSchema] Failed to add note column:', e);
     }
 
     // devices: device registry table
@@ -1683,6 +1711,32 @@ app.post('/api/devices/:uuid/actions/identify', authRequired, async (req: Reques
 // Ensure schema exists before exposing routes
 ensureDeviceHubSchema();
 
+/**
+ * The whitelist file format: one entry per line, `<uuid><space><note>`.
+ *
+ * Export writes it and batch upload reads it, so a list can be pulled out of
+ * one hub, edited in any text editor, and pushed into another - which only
+ * holds if exactly one definition of the format exists. These two functions
+ * are it.
+ *
+ * The note is everything after the first run of whitespace, kept verbatim:
+ * notes have spaces in them, so splitting on every space would shred them.
+ * A line with no note is just a UUID, which is what every file written before
+ * notes existed looks like - those still load unchanged.
+ */
+function formatWhitelistLine(uuid: string, note?: string | null): string {
+  const trimmed = (note ?? '').trim();
+  return trimmed ? `${uuid} ${trimmed}` : uuid;
+}
+
+function parseWhitelistLine(line: string): { uuid: string; note: string } | null {
+  const trimmed = String(line ?? '').trim();
+  if (!trimmed) return null;
+  const split = trimmed.search(/\s/);
+  if (split === -1) return { uuid: trimmed, note: '' };
+  return { uuid: trimmed.slice(0, split), note: trimmed.slice(split).trim() };
+}
+
 // GET /api/admin/uuid-whitelist -> list entries
 app.get('/api/admin/uuid-whitelist', authRequired, (_req: Request, res: Response) => {
   const db = openDb(DEVICEHUB_DB);
@@ -1694,7 +1748,7 @@ app.get('/api/admin/uuid-whitelist', authRequired, (_req: Request, res: Response
     // both just carry a used_at - which reads as though the device is still
     // out there. LEFT JOIN so an entry that never provisioned stays listed.
     const rows = db.prepare(
-      'SELECT w.uuid, w.hardware_version, w.manufacturer, w.created_at, w.used_at, w.disabled_at, '+
+      'SELECT w.uuid, w.note, w.hardware_version, w.manufacturer, w.created_at, w.used_at, w.disabled_at, '+
       '  CASE WHEN d.uuid IS NULL THEN 0 ELSE 1 END AS registered '+
       'FROM uuid_whitelist w LEFT JOIN devices d ON d.uuid = w.uuid '+
       'ORDER BY w.created_at DESC'
@@ -1705,17 +1759,39 @@ app.get('/api/admin/uuid-whitelist', authRequired, (_req: Request, res: Response
   }finally{ try{ db.close(); }catch{} }
 });
 
+// GET /api/admin/uuid-whitelist/export -> the whole whitelist as a text file
+// in the same `<uuid> <note>` format batch upload accepts, so exporting from
+// one hub and importing into another is a round trip rather than a conversion.
+// Ordered by creation, oldest first - the reverse of the list route, because a
+// file is read top to bottom and a diff between two exports should be stable.
+app.get('/api/admin/uuid-whitelist/export', authRequired, (_req: Request, res: Response) => {
+  const db = openDb(DEVICEHUB_DB);
+  if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
+  try{
+    const rows = db.prepare('SELECT uuid, note FROM uuid_whitelist ORDER BY created_at ASC').all() as Array<{ uuid: string; note: string | null }>;
+    const body = rows.map(r => formatWhitelistLine(r.uuid, r.note)).join('\n');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="whitelist.txt"');
+    // Trailing newline: POSIX text files end with one, and without it the last
+    // entry concatenates with whatever gets appended to the file later.
+    res.send(body ? body + '\n' : '');
+  }catch(e:any){
+    res.status(500).json({ error: 'export_failed', message: e?.message || 'failed' });
+  }finally{ try{ db.close(); }catch{} }
+});
+
 // POST /api/admin/uuid-whitelist -> add entry
 // UUID is the only thing Device Hub needs to authorize a device; hardware
 // version / manufacturer are manufacturing-side concerns, not tracked here.
 // Still accepted (and stored) if a caller supplies them, for anyone with an
 // existing integration, but neither is required.
 app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response) => {
-  let { uuid, hardware_version, manufacturer } = req.body;
+  let { uuid, note, hardware_version, manufacturer } = req.body;
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   if(!uuid){ res.status(400).json({ error: 'uuid_required' }); return; }
   uuid = String(uuid).trim();
+  note = note != null ? String(note).trim() : '';
   hardware_version = hardware_version != null ? String(hardware_version).trim() : '';
   manufacturer = manufacturer != null ? String(manufacturer).trim() : '';
   if(!uuid){
@@ -1723,8 +1799,8 @@ app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response
   }
   try{
     const now = new Date().toISOString();
-    const stmt = db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at) VALUES (?, ?, ?, ?)');
-    stmt.run(uuid, hardware_version, manufacturer, now);
+    const stmt = db.prepare('INSERT INTO uuid_whitelist (uuid, note, hardware_version, manufacturer, created_at) VALUES (?, ?, ?, ?, ?)');
+    stmt.run(uuid, note, hardware_version, manufacturer, now);
     res.json({ ok: true });
   }catch(e:any){
     if(e?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY'){ res.status(409).json({ error: 'uuid_exists' }); return; }
@@ -1733,7 +1809,11 @@ app.post('/api/admin/uuid-whitelist', authRequired, (req: Request, res: Response
 });
 
 // POST /api/admin/uuid-whitelist/batch -> batch add entries from file
-// Same as the single-entry route above: only a UUID list is required.
+//
+// Each element of `uuids` is one line of the whitelist file format:
+// `<uuid><space><note>`, the same thing GET .../export writes. A bare UUID
+// with no note is a valid line, so files written before notes existed - and
+// hand-written lists that are nothing but UUIDs - keep working untouched.
 app.post('/api/admin/uuid-whitelist/batch', authRequired, (req: Request, res: Response) => {
   let { uuids, hardware_version, manufacturer } = req.body;
   const db = openDb(DEVICEHUB_DB);
@@ -1747,18 +1827,19 @@ app.post('/api/admin/uuid-whitelist/batch', authRequired, (req: Request, res: Re
   const now = new Date().toISOString();
   
   try{
-    const stmt = db.prepare('INSERT INTO uuid_whitelist (uuid, hardware_version, manufacturer, created_at) VALUES (?, ?, ?, ?)');
-    
-    for(const rawUuid of uuids) {
-      const uuid = String(rawUuid).trim();
-      if(!uuid) {
+    const stmt = db.prepare('INSERT INTO uuid_whitelist (uuid, note, hardware_version, manufacturer, created_at) VALUES (?, ?, ?, ?, ?)');
+
+    for(const rawLine of uuids) {
+      const parsed = parseWhitelistLine(rawLine);
+      if(!parsed) {
         results.errors.push(`Empty UUID skipped`);
         results.skipped++;
         continue;
       }
-      
+      const { uuid, note } = parsed;
+
       try {
-        stmt.run(uuid, hardware_version, manufacturer, now);
+        stmt.run(uuid, note, hardware_version, manufacturer, now);
         results.added++;
       } catch(e: any) {
         if(e?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
@@ -1803,22 +1884,38 @@ async function revokeAndPublishCRL(uuid: string): Promise<string | undefined> {
 // revokeAndPublishCRL) - re-enabling does NOT undo that: a revoked cert stays
 // revoked, matching "the board is the passport" - getting access back means
 // reprovisioning for a fresh identity, not un-revoking the old one.
+// Also edits the note. Both fields are optional and independent, so a note can
+// be corrected without touching the entry's enabled state - and, importantly,
+// without tripping the certificate revocation below, which must only ever fire
+// on an actual disable.
 app.patch('/api/admin/uuid-whitelist/:uuid', authRequired, async (req: Request, res: Response) => {
   const { uuid } = req.params;
-  const { disabled } = req.body;
+  const { disabled, note } = req.body;
   if(!uuid){ res.status(400).json({ error: 'invalid_uuid' }); return; }
-  if(typeof disabled !== 'boolean'){ res.status(400).json({ error: 'disabled_boolean_required' }); return; }
+  if(disabled !== undefined && typeof disabled !== 'boolean'){ res.status(400).json({ error: 'disabled_boolean_required' }); return; }
+  const setsDisabled = disabled !== undefined;
+  const setsNote = note !== undefined;
+  if(!setsDisabled && !setsNote){ res.status(400).json({ error: 'disabled_boolean_or_note_required' }); return; }
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.status(500).json({ error: 'db_unavailable' }); return; }
   let changed = false;
   try{
-    const now = disabled ? new Date().toISOString() : null;
-    const info = db.prepare('UPDATE uuid_whitelist SET disabled_at = ? WHERE uuid = ?').run(now, uuid);
+    const assignments: string[] = [];
+    const values: any[] = [];
+    if(setsDisabled){
+      assignments.push('disabled_at = ?');
+      values.push(disabled ? new Date().toISOString() : null);
+    }
+    if(setsNote){
+      assignments.push('note = ?');
+      values.push(note != null ? String(note).trim() : '');
+    }
+    const info = db.prepare(`UPDATE uuid_whitelist SET ${assignments.join(', ')} WHERE uuid = ?`).run(...values, uuid);
     changed = info.changes > 0;
   }catch(e:any){ res.status(500).json({ error: 'update_failed', message: e?.message || 'failed' }); return; }
   finally{ try{ db.close(); }catch{} }
   if(!changed){ res.status(404).json({ error: 'not_found' }); return; }
-  const crlWarning = disabled ? await revokeAndPublishCRL(uuid) : undefined;
+  const crlWarning = disabled === true ? await revokeAndPublishCRL(uuid) : undefined;
   res.json({ ok: true, ...(crlWarning ? { warning: crlWarning } : {}) });
 });
 

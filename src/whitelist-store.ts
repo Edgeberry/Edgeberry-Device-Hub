@@ -32,20 +32,27 @@ export function checkUuid(uuid: string): WhitelistCheck {
   const db = openDb();
   if (!db) return { ok: false, error: 'Database unavailable' };
   try {
-    const row = db.prepare('SELECT uuid, hardware_version, manufacturer, used_at, disabled_at FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
+    const row = db.prepare('SELECT uuid, note, used_at, disabled_at FROM uuid_whitelist WHERE uuid = ?').get(uuid) as any;
     if (!row) return { ok: false, uuid, error: 'UUID not found in whitelist' };
+
+    // The admin's own note for this entry. This used to be synthesised as
+    // `${manufacturer} ${hardware_version}`, which reported the literal
+    // "Unknown Unknown" for every entry the schema migration had backfilled -
+    // and the `|| null` guarding it could never fire, since a template literal
+    // is always a truthy string.
+    const note = row.note || null;
 
     // An admin-disabled entry is rejected the same way a used one is -
     // just reversible, where used_at never clears.
     if (row.disabled_at) {
-      return { ok: false, uuid: row.uuid, note: `${row.manufacturer} ${row.hardware_version}` || null, used_at: row.used_at || null, error: 'UUID disabled' };
+      return { ok: false, uuid: row.uuid, note, used_at: row.used_at || null, error: 'UUID disabled' };
     }
 
     // used_at is informational ("last claimed"), not a gate - a whitelisted
     // UUID is the device's durable hardware identity, not a one-time
     // secret, and it must be able to reprovision itself for as long as it
     // stays whitelisted and not disabled.
-    return { ok: true, uuid: row.uuid, note: `${row.manufacturer} ${row.hardware_version}` || null, used_at: row.used_at || null };
+    return { ok: true, uuid: row.uuid, note, used_at: row.used_at || null };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
   } finally {

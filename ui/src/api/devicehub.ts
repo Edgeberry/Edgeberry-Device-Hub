@@ -142,14 +142,43 @@ export async function deleteWhitelistByDevice(deviceUuid: string){
 /**
  * Batch upload UUIDs to whitelist from array
  */
-export async function batchUploadWhitelist(uuids: string[]){
+/**
+ * Batch-add whitelist entries.
+ * @param lines one per entry, in the whitelist file format `<uuid> <note>`.
+ *              The note is optional, so a bare UUID is a valid line.
+ */
+export async function batchUploadWhitelist(lines: string[]){
   const res = await fetch(base()+'/admin/uuid-whitelist/batch', {
     method:'POST',
     headers:{'content-type':'application/json'},
-    body: JSON.stringify({ uuids }),
+    body: JSON.stringify({ uuids: lines }),
     credentials:'include'
   });
   return jsonOrMessage(res);
+}
+
+/**
+ * Download the whitelist as a text file, in the same `<uuid> <note>` format
+ * batch upload accepts. Fetched rather than linked so the session cookie and
+ * any auth failure are handled like every other call here.
+ */
+export async function downloadWhitelist(){
+  const res = await fetch(base()+'/admin/uuid-whitelist/export', { credentials:'include' });
+  if (!res.ok) throw new Error(`Export failed (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'whitelist.txt';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    // Revoked on the next tick rather than immediately: Safari reads the blob
+    // asynchronously after the click, and revoking too early cancels it.
+    setTimeout(()=>URL.revokeObjectURL(url), 0);
+  }
 }
 /**
  * Issue a short-lived provision token for a device
