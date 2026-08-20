@@ -16,7 +16,7 @@
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,
-    "moduleResolution": "node",
+    "moduleResolution": "node10",
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true
   },
