@@ -475,8 +475,15 @@ app.get('/api/devices/:uuid/twin', authRequired, async (req: Request, res: Respo
   }
 });
 
-// GET /api/config/public -> public configuration and environment info
-app.get('/api/config/public', async (_req: Request, res: Response) => {
+// GET /api/config/public -> host and environment info
+//
+// "public" is a misnomer kept only because the path is baked into the UI's
+// api client. It is authenticated, for the same reason /api/version is, and
+// more urgently: it reports the exact kernel release, OS build, hostname and
+// this process's pid - a ready-made target description for anyone who asks.
+// Its only caller is SystemWidget, which never renders before login, so
+// nothing outside an authenticated session ever wanted it.
+app.get('/api/config/public', authRequired, async (_req: Request, res: Response) => {
   try {
     // Helpers for robust OS + model detection
     const safeRead = (p: string) => {
@@ -600,7 +607,13 @@ async function getMosquittoVersion(): Promise<string> {
 }
 
 // GET /api/version -> service version info
-app.get('/api/version', async (_req: Request, res: Response) => {
+//
+// Authenticated. It names the exact build, Node version, platform and arch,
+// which is precisely what someone needs to look up known vulnerabilities
+// against this host - and it answers no question an anonymous caller has any
+// business asking. Liveness has its own public endpoints (/healthz,
+// /api/health) that report nothing about what is running.
+app.get('/api/version', authRequired, async (_req: Request, res: Response) => {
   try {
     // Try to read version from package.json
     let version = 'unknown';
