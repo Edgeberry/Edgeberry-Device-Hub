@@ -418,53 +418,108 @@ export default function SystemWidget() {
   }, [wsOn]);
 
 
-  // Sparkline components
-  function Sparkline({ values, color = '#0007FF' }: { values: number[]; color?: string }) {
-    const width = 100; const height = 60;
-    const path = useMemo(() => {
-      if (!values || values.length === 0) return '';
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const span = Math.max(1e-9, max - min);
-      const pts = values.map((v, i) => {
-        const x = (i / (values.length - 1)) * (width - 2) + 1;
-        const y = height - (((v - min) / span) * (height - 2) + 1);
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-      });
-      return 'M' + pts[0] + ' L ' + pts.slice(1).join(' ');
-    }, [values]);
-    
+  /*
+   *  Sparkline.
+   *
+   *  `domain` fixes the y-axis. Without it the axis is scaled to the series'
+   *  own min/max, which is actively misleading for a bounded quantity: a disk
+   *  sitting at 56% and creeping by thousandths of a percent gets those
+   *  thousandths stretched across the full height, drawing a dramatic climb
+   *  next to a percentage that never moves. Same for an idle CPU, where noise
+   *  between 3% and 5% fills the chart.
+   *
+   *  So percentages pass [0, 100] and are drawn against the scale they
+   *  actually live on - flat when the value is flat. Auto-scaling remains the
+   *  default for unbounded series, which have no natural ceiling to draw
+   *  against.
+   */
+  const CHART_W = 100; const CHART_H = 60;
+
+  /**
+   * Turn a series into a line path and the closed area beneath it.
+   * Returns viewBox coordinates, so both charts below share one definition.
+   */
+  function chartPaths(values: number[], domain?: [number, number]) {
+    if (!values || values.length < 2) return { line: '', area: '' };
+    const min = domain ? domain[0] : Math.min(...values);
+    const max = domain ? domain[1] : Math.max(...values);
+    const span = Math.max(1e-9, max - min);
+    const pts = values.map((v, i) => {
+      const x = (i / (values.length - 1)) * (CHART_W - 2) + 1;
+      const y = CHART_H - (((v - min) / span) * (CHART_H - 2) + 1);
+      return [x, y] as [number, number];
+    });
+    const line = 'M' + pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' L ');
+    const first = pts[0]; const last = pts[pts.length - 1];
+    const area = `${line} L ${last[0].toFixed(2)},${CHART_H} L ${first[0].toFixed(2)},${CHART_H} Z`;
+    return { line, area };
+  }
+
+  /**
+   * Background grid. Drawn as explicit lines rather than an SVG <pattern>
+   * because the charts stretch to their container with preserveAspectRatio
+   * "none" - a pattern would be stretched with them and stop being square.
+   */
+  function ChartGrid() {
+    const rows = 4; const cols = 4;
+    const lines = [];
+    for (let r = 1; r < rows; r++) {
+      const y = (r / rows) * CHART_H;
+      lines.push(<line key={`h${r}`} x1={0} y1={y} x2={CHART_W} y2={y} vectorEffect="non-scaling-stroke" />);
+    }
+    for (let c = 1; c < cols; c++) {
+      const x = (c / cols) * CHART_W;
+      lines.push(<line key={`v${c}`} x1={x} y1={0} x2={x} y2={CHART_H} vectorEffect="non-scaling-stroke" />);
+    }
+    return <g stroke="var(--eb-line)" strokeWidth={0.5} opacity={0.4}>{lines}</g>;
+  }
+
+  /*
+   *  Every stroke carries vector-effect="non-scaling-stroke".
+   *
+   *  These charts stretch to their container with preserveAspectRatio="none",
+   *  so x and y scale by different factors - and a stroke scaled unevenly gets
+   *  thicker on diagonals than on horizontals, exactly like a calligraphy nib.
+   *  non-scaling-stroke takes the stroke out of that transform and keeps it a
+   *  flat, even line at any width.
+   */
+  function Sparkline({ values, color = 'var(--eb-primary)', domain }: { values: number[]; color?: string; domain?: [number, number] }) {
+    const { line, area } = useMemo(() => chartPaths(values, domain), [values, domain]);
+
     if (!values || values.length < 2) return <div style={{ height: '100%' }} />;
     return (
-      <svg style={{ width: '100%', height: '100%' }} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <path d={path} fill="none" stroke={color} strokeWidth={1} />
+      <svg style={{ width: '100%', height: '100%', display: 'block' }} viewBox={`0 0 ${CHART_W} ${CHART_H}`} preserveAspectRatio="none">
+        <ChartGrid />
+        <path d={area} fill={color} fillOpacity={0.15} stroke="none" />
+        <path d={line} fill="none" stroke={color} strokeWidth={1.5}
+              strokeLinecap="butt" strokeLinejoin="miter" vectorEffect="non-scaling-stroke" />
       </svg>
     );
   }
 
-  function OverlaySparkline({ a, b, colorA = '#0007FF', colorB = '#0007FF' }:{ a: number[]; b: number[]; colorA?: string; colorB?: string }){
-    const width = 100; const height = 60;
-    const mkPath = (values: number[], min: number, max: number) => {
-      if(!values || values.length === 0) return '';
-      const span = Math.max(1e-9, max - min);
-      const pts = values.map((v, i) => {
-        const x = (i/(values.length-1)) * (width-2) + 1;
-        const y = height - (((v - min) / span) * (height-2) + 1);
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-      });
-      return 'M'+pts[0]+' L '+pts.slice(1).join(' ');
-    };
-    const [min, max] = useMemo(()=>{
+  function OverlaySparkline({ a, b, colorA = 'var(--eb-primary)', colorB = 'var(--eb-primary)' }:{ a: number[]; b: number[]; colorA?: string; colorB?: string }){
+    // Anchored at zero. These are throughput rates, and a rate's distance from
+    // "nothing is happening" is the whole point - scaling the floor up to the
+    // series minimum turns a steady 1 MB/s with a few KB of jitter into what
+    // looks like violent spikes.
+    const domain = useMemo(()=>{
       const vals = [...(a||[]), ...(b||[])];
-      if(!vals.length) return [0,1];
-      return [Math.min(...vals), Math.max(...vals)];
+      if(!vals.length) return [0,1] as [number, number];
+      return [0, Math.max(1, ...vals)] as [number, number];
     }, [a, b]);
-    const pA = useMemo(()=>mkPath(a, min, max), [a, min, max]);
-    const pB = useMemo(()=>mkPath(b, min, max), [b, min, max]);
+    const pA = useMemo(()=>chartPaths(a, domain), [a, domain]);
+    const pB = useMemo(()=>chartPaths(b, domain), [b, domain]);
     return (
-      <svg style={{width:'100%', height:'100%'}} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        {pA && <path d={pA} fill="none" stroke={colorA} strokeWidth={1} />}
-        {pB && <path d={pB} fill="none" stroke={colorB} strokeWidth={1} />}
+      <svg style={{width:'100%', height:'100%', display:'block'}} viewBox={`0 0 ${CHART_W} ${CHART_H}`} preserveAspectRatio="none">
+        <ChartGrid />
+        {/* Both fills are faint so the overlap reads as a single shaded region
+            rather than one series hiding the other. */}
+        {pA.area && <path d={pA.area} fill={colorA} fillOpacity={0.12} stroke="none" />}
+        {pB.area && <path d={pB.area} fill={colorB} fillOpacity={0.12} stroke="none" />}
+        {pA.line && <path d={pA.line} fill="none" stroke={colorA} strokeWidth={1.5}
+                          strokeLinecap="butt" strokeLinejoin="miter" vectorEffect="non-scaling-stroke" />}
+        {pB.line && <path d={pB.line} fill="none" stroke={colorB} strokeWidth={1.5}
+                          strokeLinecap="butt" strokeLinejoin="miter" vectorEffect="non-scaling-stroke" />}
       </svg>
     );
   }
@@ -494,15 +549,10 @@ export default function SystemWidget() {
       key: 'cpu', title: 'CPU',
       value: metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-',
       badge: (
-        <div style={{width:'100%'}}>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
-            <span style={{fontSize:'0.9em', color:'#666'}}>Current: {metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}</span>
-            <Badge bg={percentColor(metrics.cpu?.approxUsagePercent)}>{metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}</Badge>
-          </div>
-          <div style={{width:'100%', height:60}}>
-            <OverlaySparkline a={series.cpu} b={[]} />
-          </div>
-        </div>
+        <Badge bg={percentColor(metrics.cpu?.approxUsagePercent)}>{metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}</Badge>
+      ),
+      chart: (
+        <Sparkline values={series.cpu} domain={[0, 100]} />
       ),
       details: (
         <div>
@@ -514,15 +564,10 @@ export default function SystemWidget() {
       key: 'memory', title: 'Memory',
       value: metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-',
       badge: (
-        <div style={{width:'100%'}}>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
-            <span style={{fontSize:'0.9em', color:'#666'}}>Current: {metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}</span>
-            <Badge bg={percentColor(metrics.memory?.usedPercent)}>{metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}</Badge>
-          </div>
-          <div style={{width:'100%', height:60}}>
-            <Sparkline values={series.mem} />
-          </div>
-        </div>
+        <Badge bg={percentColor(metrics.memory?.usedPercent)}>{metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}</Badge>
+      ),
+      chart: (
+        <Sparkline values={series.mem} domain={[0, 100]} />
       ),
       details: (
         <div>
@@ -536,15 +581,10 @@ export default function SystemWidget() {
       key: 'disk', title: 'Disk',
       value: metrics.disk && metrics.disk.mounts && metrics.disk.mounts.length ? `${Math.round((metrics.disk.mounts[0].usedPercent||0))}%` : '-',
       badge: (
-        <div style={{width:'100%'}}>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
-            <span style={{fontSize:'0.9em', color:'#666'}}>Current: {metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}</span>
-            <Badge bg={percentColor(metrics.disk?.mounts?.[0]?.usedPercent)}>{metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}</Badge>
-          </div>
-          <div style={{width:'100%', height:60}}>
-            <Sparkline values={series.disk} />
-          </div>
-        </div>
+        <Badge bg={percentColor(metrics.disk?.mounts?.[0]?.usedPercent)}>{metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}</Badge>
+      ),
+      chart: (
+        <Sparkline values={series.disk} domain={[0, 100]} />
       ),
       details: (
         <div>
@@ -562,16 +602,16 @@ export default function SystemWidget() {
     {
       key: 'network', title: 'Network',
       value: metrics.network ? `${formatBytes(metrics.network.total.rxBytes)} / ${formatBytes(metrics.network.total.txBytes)}` : '-',
+      // The chart plots rates, so the badge reports the current rate - "RX/TX"
+      // named the axes rather than giving a reading, and the cumulative byte
+      // totals underneath it are not what is drawn.
       badge: (
-        <div style={{width:'100%'}}>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
-            <span style={{fontSize:'0.9em', color:'#666'}}>RX/TX Rates</span>
-            <Badge bg={'info'}>RX/TX</Badge>
-          </div>
-          <div style={{width:'100%', height:60}}>
-            <OverlaySparkline a={series.rxRate} b={series.txRate} />
-          </div>
-        </div>
+        <Badge bg="secondary">
+          ↓{formatBytes(series.rxRate[series.rxRate.length - 1] ?? 0)}/s ↑{formatBytes(series.txRate[series.txRate.length - 1] ?? 0)}/s
+        </Badge>
+      ),
+      chart: (
+        <OverlaySparkline a={series.rxRate} b={series.txRate} />
       ),
       details: (
         <div>
@@ -695,22 +735,34 @@ export default function SystemWidget() {
                   <Row className="g-3">
                     {metricsTiles.map((t: any) => (
                       <Col key={t.key} xs={12} sm={6} md={3} lg={3} xl={3}>
+                        {/* Title and value share one line above the chart -
+                            they used to take a row each, which is what made
+                            the tile tall. Sitting over the chart was tried and
+                            rejected: a high value tracks straight through the
+                            labels, and there is no reading of that which is
+                            not slightly wrong. */}
                         <div
                           role="button"
                           onClick={() => setSelectedMetric(t.key)}
                           style={{
-                            border: '1px solid #e0e0e0', 
-                            borderRadius: 8, 
-                            padding: 12, 
+                            border: '1px solid #e0e0e0',
+                            borderRadius: 8,
+                            padding: 10,
                             height: '100%',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)', 
-                            cursor: 'pointer',
-                            display:'flex', 
-                            flexDirection:'column'
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                            cursor: 'pointer'
                           }}
                         >
-                          <div style={{ fontWeight: 600, marginBottom: 8 }}>{t.title}</div>
-                          <div style={{ flex: 1 }}>{t.badge}</div>
+                          <div
+                            style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              gap: 8, marginBottom: 6
+                            }}
+                          >
+                            <span style={{ fontWeight: 600 }}>{t.title}</span>
+                            {t.badge}
+                          </div>
+                          <div style={{ height: 72 }}>{t.chart}</div>
                         </div>
                       </Col>
                     ))}
@@ -880,9 +932,9 @@ export default function SystemWidget() {
                 <div style={{ marginBottom: 16 }}>
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>Historical Trend</div>
                   <div style={{ height: 120, border: '1px solid #e0e0e0', borderRadius: 4, padding: 8 }}>
-                    {selectedMetric === 'cpu' && <Sparkline values={series.cpu} />}
-                    {selectedMetric === 'memory' && <Sparkline values={series.mem} />}
-                    {selectedMetric === 'disk' && <Sparkline values={series.disk} />}
+                    {selectedMetric === 'cpu' && <Sparkline values={series.cpu} domain={[0, 100]} />}
+                    {selectedMetric === 'memory' && <Sparkline values={series.mem} domain={[0, 100]} />}
+                    {selectedMetric === 'disk' && <Sparkline values={series.disk} domain={[0, 100]} />}
                     {selectedMetric === 'network' && <OverlaySparkline a={series.rxRate} b={series.txRate} />}
                   </div>
                 </div>
