@@ -89,10 +89,11 @@ import {
 import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert, ensureCRLExists, revokeCertificatesForUuid, regenerateCRL } from './certs.js';
 import { buildJournalctlArgs } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, parseCookies, setSessionCookie } from './auth.js';
+import { createTerminalService } from './terminal.js';
 import { validateDeviceName } from './device-names.js';
 import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents } from './twin-store.js';
 import { getDevicesListSync, tryParseJson, normalizeGroups, setGroupsForRole, getGroupsForRole, listGroups } from './devices-store.js';
-import { getAppSetting, setAppSetting, isAuthDisabled } from './app-settings.js';
+import { getAppSetting, setAppSetting, isAuthDisabled, isWebTerminalEnabled } from './app-settings.js';
 import { startProvisioning } from './services/provisioning/mqtt.js';
 import { startTwin } from './services/twin/mqtt.js';
 import { startApplication, getConnectionStatus as getApplicationConnectionStatus, notifyIdentityTransfer } from './services/application/index.js';
@@ -568,7 +569,12 @@ app.get('/api/status', authRequired, (_req: Request, res: Response) => {
       processUptimeSeconds: Math.floor(process.uptime()),
       loadAverage: os.loadavg(),
       totalMemory: os.totalmem(),
-      freeMemory: os.freemem()
+      freeMemory: os.freemem(),
+      // Lets the UI show the Terminal button as switched off rather than
+      // broken. Reported on this authenticated route rather than
+      // /api/config/public: whether a host offers a shell is not something to
+      // tell anonymous callers.
+      webTerminalEnabled: isWebTerminalEnabled()
     };
     res.json(status);
   } catch (e: any) {
@@ -2622,19 +2628,38 @@ function send(ws: any, msg: any){
 // Create HTTP server with Express first
 const server = http.createServer(app);
 
-// Add upgrade event logging to debug WebSocket handshake
-server.on('upgrade', (request, socket, head) => {
-  console.log(`[HTTP] Upgrade request: ${request.method} ${request.url}`);
-  console.log(`[HTTP] Upgrade headers:`, request.headers);
-});
-
-// Create WebSocket server attached to the HTTP server
-const wss = new WebSocketServer({ 
-  server,
-  path: '/api/ws',
+// Create WebSocket server. `noServer` rather than { server, path } because
+// this process now serves two WebSocket endpoints: the admin feed here and the
+// terminal's PTY. A `ws` server constructed with { server, path } installs its
+// own upgrade listener that aborts every path it does not own with a 400, and
+// upgrade listeners are additive - so two of them on one HTTP server cannot
+// coexist, whichever runs first killing the other's handshake. Both are
+// noServer, and the router below dispatches by path.
+const wss = new WebSocketServer({
+  noServer: true,
   clientTracking: false,
   perMessageDeflate: false,
   maxPayload: 1024 * 1024
+});
+
+const terminalService = createTerminalService();
+
+server.on('upgrade', (request, socket, head) => {
+  let pathname = '';
+  try {
+    pathname = new URL(request.url || '', 'http://localhost').pathname;
+  } catch { /* malformed target; falls through to the reject below */ }
+
+  if (pathname === '/api/ws') {
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
+    return;
+  }
+  if (pathname === terminalService.path) {
+    terminalService.handleUpgrade(request, socket, head);
+    return;
+  }
+  console.warn(`[HTTP] Rejected WebSocket upgrade for unknown path: ${request.url}`);
+  socket.destroy();
 });
 
 wss.on('connection', (ws: any, req: any) => {

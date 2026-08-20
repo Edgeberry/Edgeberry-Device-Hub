@@ -15,7 +15,7 @@
 import Database from 'better-sqlite3';
 import { DEVICEHUB_DB, ADMIN_USER } from './config.js';
 import { hashPassword, validatePasswordStrength } from './password.js';
-import { isAuthDisabled, setAuthDisabled } from './app-settings.js';
+import { isAuthDisabled, setAuthDisabled, isWebTerminalEnabled, setWebTerminalEnabled } from './app-settings.js';
 
 function openDb(){
   return new (Database as any)(DEVICEHUB_DB);
@@ -102,6 +102,28 @@ function loginStatus(){
   console.log(isAuthDisabled() ? 'Login is DISABLED (open access, no session check).' : 'Login is enabled (default).');
 }
 
+/*
+ *  The browser terminal is off unless switched on here, and can only be
+ *  switched on here. It serves a shell on this host, so enabling it should
+ *  require the access it grants - an admin session alone must not be able to
+ *  widen itself into one. Takes effect immediately; no service restart.
+ */
+function enableWebTerminal(){
+  setWebTerminalEnabled(true);
+  console.log('Web terminal ENABLED. The Terminal button in the System panel now opens a shell on this host.');
+  console.log(`It runs as the user the service runs as (currently ${process.getuid?.() === 0 ? 'root' : 'uid ' + process.getuid?.()}), and is reachable by anyone with an admin session.`);
+  console.log('Disable it again with: devicehub --disable-webterminal');
+}
+
+function disableWebTerminal(){
+  setWebTerminalEnabled(false);
+  console.log('Web terminal DISABLED (default). Existing sessions are unaffected until they disconnect; new ones are refused.');
+}
+
+function webTerminalStatus(){
+  console.log(isWebTerminalEnabled() ? 'Web terminal is ENABLED.' : 'Web terminal is disabled (default).');
+}
+
 function printHelp(){
   console.log(`Edgeberry Device Hub admin CLI
 
@@ -112,6 +134,10 @@ Usage:
                                                reverse proxy that already handles auth)
   devicehub --enable-login                    Re-enable the built-in login (default)
   devicehub --login-status                    Show whether login is currently enabled
+  devicehub --enable-webterminal              Enable the browser terminal in the web UI
+                                               (off by default - it serves a shell on this host)
+  devicehub --disable-webterminal             Disable the browser terminal (default)
+  devicehub --webterminal-status              Show whether the browser terminal is enabled
   devicehub --help                             Show this help
 `);
 }
@@ -153,6 +179,21 @@ async function main(){
 
   if (args.includes('--login-status')) {
     loginStatus();
+    return;
+  }
+
+  if (args.includes('--enable-webterminal')) {
+    enableWebTerminal();
+    return;
+  }
+
+  if (args.includes('--disable-webterminal')) {
+    disableWebTerminal();
+    return;
+  }
+
+  if (args.includes('--webterminal-status')) {
+    webTerminalStatus();
     return;
   }
 

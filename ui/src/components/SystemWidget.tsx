@@ -7,11 +7,11 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { Badge, Button, Card, Col, Collapse, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPowerOff, faGears, faChartLine } from '@fortawesome/free-solid-svg-icons';
+import { faGears, faChartLine, faTerminal } from '@fortawesome/free-solid-svg-icons';
+import TerminalModal from './TerminalModal';
 import {
   getServices, getServiceLogs, startService, stopService, restartService,
-  getMetrics, getHealth, getStatus, getPublicConfig,
-  rebootSystem, shutdownSystem
+  getMetrics, getHealth, getStatus, getPublicConfig
 } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
@@ -138,10 +138,20 @@ export default function SystemWidget() {
   const [expanded, setExpanded] = useState<boolean>(false);
   
   // Modals
-  const [showPower, setShowPower] = useState<boolean>(false);
-  const [powerBusy, setPowerBusy] = useState<boolean>(false);
-  const [powerMsg, setPowerMsg] = useState<string>('');
-  const [powerErr, setPowerErr] = useState<string>('');
+  /*
+   *  No power controls here any more.
+   *
+   *  This is a server, not an appliance: rebooting it drops every device and
+   *  application connected to it, and a control that reachable turns that into
+   *  a slip rather than a decision. Cycling the machine is a deliberate,
+   *  rare act - it belongs at a shell (see the Terminal), not one click from
+   *  a dashboard people leave open all day.
+   */
+  const [showTerminal, setShowTerminal] = useState<boolean>(false);
+  // Off unless the operator switched it on at the console
+  // (`devicehub --enable-webterminal`); assume off until /api/status says
+  // otherwise, so the button never invites a click that would be refused.
+  const terminalEnabled = status?.webTerminalEnabled === true;
 
   // Load functions
   async function loadServices() {
@@ -611,14 +621,23 @@ export default function SystemWidget() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
-          <Button
-            size="sm"
-            variant="outline-danger"
-            title="Power options"
-            onClick={() => { setPowerErr(''); setPowerMsg(''); setShowPower(true); }}
+          {/* The tooltip sits on a wrapping span, not the button: a disabled
+              button fires no pointer events, so a title on it is never shown -
+              and the whole point of this state is explaining how to leave it. */}
+          <span
+            title={terminalEnabled
+              ? 'Terminal'
+              : 'Web terminal is disabled. Enable it on the server with:  devicehub --enable-webterminal'}
           >
-            <i className="fa-solid fa-power-off" aria-hidden="true" />
-          </Button>
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              disabled={!terminalEnabled}
+              onClick={() => setShowTerminal(true)}
+            >
+              <FontAwesomeIcon icon={faTerminal} />
+            </Button>
+          </span>
           <Button
             size="sm"
             variant="outline-secondary"
@@ -750,66 +769,7 @@ export default function SystemWidget() {
         </div>
       </Collapse>
 
-      {/* Power Management Modal */}
-        <Modal show={showPower} onHide={() => { if (!powerBusy) setShowPower(false); }} centered>
-          <Modal.Header closeButton closeVariant="white">
-            <Modal.Title><FontAwesomeIcon icon={faPowerOff} />Power Management</Modal.Title>
-          </Modal.Header>
-          <Modal.Body>
-            <div className="d-grid gap-2">
-              <Button
-                variant="outline-warning"
-                disabled={powerBusy}
-                onClick={async () => {
-                  if (!confirm('Reboot the server now? This will interrupt connectivity.')) return;
-                  setPowerBusy(true); setPowerErr(''); setPowerMsg('');
-                  try {
-                    const data = await rebootSystem();
-                    if (data?.ok) {
-                      setPowerMsg(data?.message || 'Reboot requested');
-                    } else {
-                      setPowerErr(data?.error || 'Failed to request reboot');
-                    }
-                  } catch (e: any) {
-                    setPowerErr(e?.message || 'Failed to request reboot');
-                  } finally {
-                    setPowerBusy(false);
-                  }
-                }}
-              >
-                {powerBusy ? (<><Spinner as="span" animation="border" size="sm" /> Requesting…</>) : 'Reboot Server'}
-              </Button>
-              <Button
-                variant="outline-danger"
-                disabled={powerBusy}
-                onClick={async () => {
-                  if (!confirm('Shutdown the server now? This will power off the device.')) return;
-                  setPowerBusy(true); setPowerErr(''); setPowerMsg('');
-                  try {
-                    const data = await shutdownSystem();
-                    if (data?.ok) {
-                      setPowerMsg(data?.message || 'Shutdown requested');
-                    } else {
-                      setPowerErr(data?.error || 'Failed to request shutdown');
-                    }
-                  } catch (e: any) {
-                    setPowerErr(e?.message || 'Failed to request shutdown');
-                  } finally {
-                    setPowerBusy(false);
-                  }
-                }}
-              >
-                {powerBusy ? (<><Spinner as="span" animation="border" size="sm" /> Requesting…</>) : 'Shutdown server'}
-              </Button>
-            </div>
-            {(powerErr || powerMsg) && (
-              <div style={{ marginTop: 12, color: powerErr ? '#c00' : '#060' }}>{powerErr || powerMsg}</div>
-            )}
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="secondary" onClick={() => setShowPower(false)} disabled={powerBusy}>Close</Button>
-          </Modal.Footer>
-        </Modal>
+        <TerminalModal show={showTerminal} onClose={() => setShowTerminal(false)} />
 
         {/* Service Detail Modal */}
         <Modal show={!!selectedService} onHide={() => setSelectedService(null)} centered size="xl" scrollable fullscreen="md-down" contentClassName="eb-modal-content">

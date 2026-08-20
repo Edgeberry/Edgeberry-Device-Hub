@@ -61,3 +61,21 @@ export function isAuthDisabled(): boolean {
 export function setAuthDisabled(disabled: boolean): void {
   setAppSetting(AUTH_DISABLED_KEY, disabled ? '1' : '0');
 }
+
+const WEB_TERMINAL_KEY = 'web_terminal_enabled';
+
+/**
+ * Whether the browser terminal (/ws/terminal) will serve a shell.
+ *
+ * Off unless switched on at the console, and deliberately not togglable from
+ * the web UI: it hands out a shell on the host, so turning it on should
+ * require the access it grants. An admin session alone is not enough - a
+ * stolen session should not be able to widen itself into a shell.
+ */
+export function isWebTerminalEnabled(): boolean {
+  return getAppSetting(WEB_TERMINAL_KEY, '0') === '1';
+}
+
+export function setWebTerminalEnabled(enabled: boolean): void {
+  setAppSetting(WEB_TERMINAL_KEY, enabled ? '1' : '0');
+}
