@@ -28,13 +28,25 @@ import WhitelistModal from '../components/WhitelistModal';
 import SwapIdentityModal from '../components/SwapIdentityModal';
 import DecommissionModal from '../components/DecommissionModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTrash, faLocationDot, faEye, faSearch, faPen, faListCheck, faCloudArrowDown, faRightLeft } from '@fortawesome/free-solid-svg-icons';
+// faMagnifyingGlass rather than the faSearch alias: the same glyph serves two
+// jobs here - filtering the list and inspecting a device - and naming it twice
+// would read as two different icons.
+import { faTrash, faLocationDot, faMagnifyingGlass, faPen, faListCheck, faCloudArrowDown, faRightLeft } from '@fortawesome/free-solid-svg-icons';
 
 export default function Overview(){
   const [devices, setDevices] = useState<any[]>([]);
   const [filteredDevices, setFilteredDevices] = useState<any[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  /**
+   * Which action is in flight, and on which device.
+   *
+   * This used to be the uuid alone, which was enough to disable the row but not
+   * to say *what* was running - so the spinner was hardcoded into the
+   * decommission button and lit up for every action, including Identify.
+   * Carrying the action name lets each button own its own spinner.
+   */
+  type DeviceAction = 'role' | 'groups' | 'identify' | 'decommission';
+  const [actionBusy, setActionBusy] = useState<{ uuid: string; action: DeviceAction } | null>(null);
   const [showCerts, setShowCerts] = useState(false);
   const [showWhitelist, setShowWhitelist] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -182,7 +194,7 @@ export default function Overview(){
     const uuid = device?.uuid;
     if (!uuid) return;
     try {
-      setActionBusy(uuid);
+      setActionBusy({ uuid, action: 'decommission' });
       const res: any = await decommissionDevice(uuid);
       // If whitelist entries remain, offer to remove them
       const wlCount = Number(res?.whitelist_entries || 0);
@@ -249,7 +261,7 @@ export default function Overview(){
       }
     }
     try {
-      setActionBusy(uuid);
+      setActionBusy({ uuid, action: 'role' });
       await setDeviceRole(uuid, nextRole || null);
       await refreshDevices();
       handleCancelEditRole();
@@ -275,7 +287,7 @@ export default function Overview(){
     // dropped server-side, so a trailing comma is harmless.
     const groups = groupsInput.split(',').map(g => g.trim()).filter(Boolean);
     try {
-      setActionBusy(uuid);
+      setActionBusy({ uuid, action: 'groups' });
       const result = await setDeviceGroups(uuid, groups);
       if (result && result.error === 'no_application_id') {
         alert('Assign a role first - groups attach to a device\'s application ID, not to the hardware.');
@@ -292,7 +304,7 @@ export default function Overview(){
 
   const handleIdentifyDevice = async (uuid: string, name: string) => {
     try {
-      setActionBusy(uuid);
+      setActionBusy({ uuid, action: 'identify' });
       const result = await direct_identifySystem(uuid);
       if (result.ok) {
         // Success - device should now be identifying itself
@@ -316,12 +328,31 @@ export default function Overview(){
       <SystemWidget />
 
       <Card className="mb-4">
-        <Card.Header className="d-flex justify-content-between align-items-center">
-          <div>
+        <Card.Header className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+          <div className="text-nowrap">
             <i className="fa-solid fa-microchip me-2"></i>
             Devices
           </div>
-          <div className="d-flex gap-2">
+          {/* Search sits with the whitelist/provisioning buttons rather than in
+              its own row above the table: it acts on this list, so it belongs
+              in this list's header, and the table starts one row higher. */}
+          <div className="d-flex align-items-center gap-2">
+            <div className="position-relative">
+              <FontAwesomeIcon
+                icon={faMagnifyingGlass}
+                className="text-muted position-absolute"
+                style={{ left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: '0.8em', pointerEvents: 'none' }}
+              />
+              <input
+                type="search"
+                className="form-control form-control-sm"
+                placeholder="Search devices..."
+                aria-label="Search devices"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ width: 220, maxWidth: '50vw', paddingLeft: 30 }}
+              />
+            </div>
             <Button size="sm" variant="outline-secondary" onClick={()=> setShowWhitelist(true)} title="Whitelist">
               <FontAwesomeIcon icon={faListCheck} />
             </Button>
@@ -331,25 +362,12 @@ export default function Overview(){
           </div>
         </Card.Header>
         <Card.Body>
-          {/* Search */}
-          <div className="d-flex align-items-center gap-2 mb-3">
-            <FontAwesomeIcon icon={faSearch} className="text-muted" />
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              placeholder="Search..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ width: '300px' }}
-            />
-          </div>
-
           <Table size="sm" responsive className="device-list-table">
               <thead>
                 <tr>
                   <th>Role</th>
                   <th>Groups</th>
-                  <th>Device ID</th>
+                  <th>Hardware ID</th>
                   <th>Status</th>
                   <th className="text-end">Actions</th>
                 </tr>
@@ -363,7 +381,15 @@ export default function Overview(){
                   const status = d.disabled ? 'disabled' : (d.online ? 'online' : 'offline');
                   const open = () => setSelected(String(uuid));
                   const roleLabel = roleLabelFor(d);
-                  const isBusy = actionBusy === uuid;
+                  // Any action on this row disables the rest of it; `running`
+                  // narrows that to the one button that should show a spinner.
+                  const isBusy = actionBusy?.uuid === uuid;
+                  const running = (action: DeviceAction) => isBusy && actionBusy?.action === action;
+                  // Direct methods travel over MQTT to the device itself, so
+                  // they need it connected - offered to an offline device they
+                  // can only time out. Whitelist-disabled counts as unreachable
+                  // too: `status` already folds that in.
+                  const canRunDirectMethod = status === 'online';
                   const isEditingRole = editingRole === uuid;
                   const isEditingGroups = editingGroups === uuid;
 
@@ -452,17 +478,21 @@ export default function Overview(){
                       </td>
                       <td onClick={(e) => e.stopPropagation()} className="text-end">
                         <div className="btn-group device-actions" role="group">
-                          <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy}>
-                            <FontAwesomeIcon icon={faEye} />
+                          <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy} title="Inspect device">
+                            <FontAwesomeIcon icon={faMagnifyingGlass} />
                           </button>
                           <button
                             type="button"
                             className="btn btn-sm btn-edgeberry"
                             onClick={() => handleIdentifyDevice(uuid, roleLabel)}
-                            disabled={isBusy}
-                            title="Identify Device"
+                            disabled={isBusy || !canRunDirectMethod}
+                            title={canRunDirectMethod
+                              ? 'Identify device'
+                              : `Cannot identify: device is ${status}`}
                           >
-                            <FontAwesomeIcon icon={faLocationDot} />
+                            {running('identify')
+                              ? <Spinner animation="border" size="sm" />
+                              : <FontAwesomeIcon icon={faLocationDot} />}
                           </button>
                           <button
                             type="button"
@@ -477,12 +507,14 @@ export default function Overview(){
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-edgeberry"
+                            className="btn btn-sm btn-edgeberry btn-edgeberry-danger"
                             onClick={() => handleDeleteDevice(d)}
                             disabled={isBusy}
                             title="Decommission"
                           >
-                            {isBusy ? <Spinner animation="border" size="sm" /> : <FontAwesomeIcon icon={faTrash} />}
+                            {running('decommission')
+                              ? <Spinner animation="border" size="sm" />
+                              : <FontAwesomeIcon icon={faTrash} />}
                           </button>
                         </div>
                       </td>
@@ -516,7 +548,7 @@ export default function Overview(){
       <DecommissionModal
         show={!!pendingDecommission}
         device={pendingDecommission}
-        busy={!!actionBusy && actionBusy === pendingDecommission?.uuid}
+        busy={!!pendingDecommission && actionBusy?.uuid === pendingDecommission.uuid && actionBusy?.action === 'decommission'}
         onClose={()=> setPendingDecommission(null)}
         onSwapInstead={handleSwapInstead}
         onDecommission={()=> doDecommission(pendingDecommission)}

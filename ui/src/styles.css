@@ -234,6 +234,29 @@ body {
 }
 
 /*
+ *  Destructive variant of .btn-edgeberry - applied alongside it, overriding
+ *  only the hover/active/focus colours so the two never drift apart.
+ *
+ *  At rest it stays blue like its neighbours: a permanently red icon in a row
+ *  you scan constantly reads as an alarm about the device rather than a
+ *  description of the button. The red arrives under the cursor - the moment
+ *  the click is actually available - which is where the warning is useful.
+ *
+ *  --bs-btn-focus-shadow-rgb must stay a literal "r, g, b" triplet (Bootstrap
+ *  composes it into rgba()); it is --eb-fault #e03131, kept in sync by hand
+ *  like the --bs-danger-rgb at the top of this file.
+ */
+.btn-edgeberry-danger {
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: var(--eb-fault);
+  --bs-btn-hover-border-color: var(--eb-fault);
+  --bs-btn-focus-shadow-rgb: 224, 49, 49;
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: #c92a2a;
+  --bs-btn-active-border-color: #c92a2a;
+}
+
+/*
  *  Portal-rendered dropdown menus (PortalMenu in components/ui.tsx).
  *
  *  Rendered into <body> as a plain <ul>, so it never carries Bootstrap's

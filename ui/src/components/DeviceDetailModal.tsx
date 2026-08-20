@@ -52,20 +52,23 @@ export default function DeviceDetailModal(props:{
 
   return (
     <Modal show={show} onHide={onClose} size="lg" centered scrollable contentClassName="eb-modal-content">
+      {/* Header is a bare Modal.Title, like every other modal here. It used to
+          wrap the title in a div with the Hardware ID beneath it, which made
+          this one header two lines tall while the rest were one - the identity
+          line moved into the body instead.
+
+          No role assigned yet: the hardware uuid is the only identity there is
+          to show, so it takes the title rather than a vague "Unassigned"
+          placeholder (that's fine in a table row of many devices, but this is
+          the one place looking at a single device). */}
       <Modal.Header closeButton closeVariant="white">
-        <div style={{ width: '100%' }}>
-          {/* No role assigned yet: the hardware uuid is the only identity
-              there is to show, so it takes the title rather than a vague
-              "Unassigned" placeholder (that's fine in a table row of many
-              devices, but this is the one place looking at a single device). */}
-          <Modal.Title><FontAwesomeIcon icon={faMicrochip} />{device ? (device.role || device.uuid) : deviceId}</Modal.Title>
-          {device?.uuid && (
-            <div className="text-muted small">Device ID: {device.uuid}</div>
-          )}
-        </div>
+        <Modal.Title><FontAwesomeIcon icon={faMicrochip} />{device ? (device.role || device.uuid) : deviceId}</Modal.Title>
       </Modal.Header>
       <Modal.Body>
         {msg.text && (<Alert variant={msg.type==='danger'?'danger':'success'}>{msg.text}</Alert>)}
+        {device?.uuid && (
+          <div className="text-muted small mb-3">Hardware ID: {device.uuid}</div>
+        )}
         {!device && (<div className="text-center p-4"><Spinner animation="border" size="sm"/> Loading...</div>)}
         {device && (
           <>
