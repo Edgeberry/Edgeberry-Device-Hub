@@ -15,11 +15,11 @@
  *   connection, matching what the previously-separate processes did.
  *
  * Responsibilities (this file)
- * - Serve SPA assets and implement `/api/*` endpoints (health, auth, settings/certs, services, devices, logs, metrics).
+ * - Serve SPA assets and implement `/api/*` endpoints (health, auth, settings/certs, services, devices, metrics).
  * - Single-user admin auth with JWT in HttpOnly cookie `fh_session`.
  * - Apply strict no-cache headers on `/api/*` to avoid stale auth/UI state.
  * - Manage Root CA/provisioning certs and offer downloads (PEM and provisioning bundle `.tgz`).
- * - Provide WebSocket endpoint `/api/ws` for metrics/services/devices/logs streaming.
+ * - Provide WebSocket endpoint `/api/ws` for metrics/services/devices streaming.
  *
  * Environment & Dependencies
  * - PORT: HTTP port (dev default 8080; prod may be 80/443 behind TLS terminator).
@@ -30,7 +30,7 @@
  * - MQTT_URL: included in provisioning bundle config for device convenience.
  * - PROVISIONING_DB, REGISTRY_DB: SQLite files for devices list and events snapshot.
  * - ONLINE_THRESHOLD_SECONDS: window to consider device "online" from last seen event.
- * - External tools: `tar` (for bundle creation), `systemctl` and `journalctl` for services/logs.
+ * - External tools: `tar` (for bundle creation).
  *
  * Operational Notes
  * - ETag disabled to prevent 304 on auth state; explicit no-store headers for `/api/*`.
@@ -87,7 +87,6 @@ import {
   MQTT_TLS_REJECT_UNAUTHORIZED,
 } from './config.js';
 import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert, ensureCRLExists, revokeCertificatesForUuid, regenerateCRL } from './certs.js';
-import { buildJournalctlArgs } from './logs.js';
 import { authRequired, clearSessionCookie, getSession, getSessionUserFromHeaders, parseCookies, setSessionCookie } from './auth.js';
 import { createTerminalService } from './terminal.js';
 import { validateDeviceName } from './device-names.js';
@@ -657,13 +656,6 @@ try {
   console.error('[devicehub] Failed to initialize database schema:', error);
 }
 // Device connection tracking is handled by the twin sub-service via MQTT
-// Unified logs: snapshot and streaming from systemd journal (journalctl)
-// Services are expected to be systemd units like devicehub-*.service
-// DEFAULT_LOG_UNITS now imported from src/logs.ts
-
-// ... (rest of the code remains the same)
-// buildJournalctlArgs moved to src/logs.ts
-
 // ===== Simple single-user admin authentication using JWT =====
 // The UI authenticates via `/api/auth/login` which sets an HttpOnly cookie (`fh_session`).
 // We do not track server-side sessions; JWT is verified on each request.
@@ -2238,90 +2230,6 @@ app.get('/api/metrics/history', authRequired, (req: Request, res: Response) => {
   const data = METRICS_HISTORY.filter(s => s.timestamp >= cutoff);
   res.json({ hours, samples: data });
 });
-// GET /api/logs -> recent logs snapshot
-// Query: units=comma,separated (optional), lines=number (default 200), since=systemd-time (optional)
-app.get('/api/logs', authRequired, (req: Request, res: Response) => {
-  // Support either `units` (comma-separated) or a single `unit` alias
-  let units: string[] | undefined = undefined;
-  if (typeof req.query.units === 'string' && req.query.units) {
-    units = String(req.query.units).split(',').map(s => s.trim()).filter(Boolean);
-  } else if (typeof req.query.unit === 'string' && req.query.unit) {
-    units = [String(req.query.unit).trim()];
-  }
-  
-  // Validate units for security
-  if (units) {
-    units = units.filter(unit => isSafeUnit(unit));
-    if (units.length === 0) {
-      res.status(400).json({ error: 'No valid units specified' });
-      return;
-    }
-  }
-  
-  const lines = req.query.lines ? Number(req.query.lines) : 200;
-  const since = typeof req.query.since === 'string' ? req.query.since : undefined;
-
-  console.log(`[LOGS] Requesting logs for units: ${units ? units.join(', ') : 'default'}, lines: ${lines}`);
-  const args = buildJournalctlArgs({ units, lines, since, output: 'json' });
-  console.log(`[LOGS] journalctl args: ${args.join(' ')}`);
-  const proc = spawn('journalctl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-  const out: string[] = [];
-  const err: string[] = [];
-  proc.stdout.on('data', (chunk: Buffer) => out.push(chunk.toString()));
-  proc.stderr.on('data', (chunk: Buffer) => err.push(chunk.toString()));
-  proc.on('close', (code: number | null) => {
-    if (code !== 0) {
-      res.status(500).json({ error: 'journalctl failed', code, stderr: err.join('') });
-      return;
-    }
-    // journalctl -o json outputs NDJSON (one JSON per line)
-    const linesArr = out.join('').split('\n').filter(Boolean);
-    const entries = linesArr.map((line) => {
-      try { return JSON.parse(line); } catch { return { raw: line }; }
-    });
-    res.json({ entries });
-  });
-});
-
-// POST /api/services/:unit/start|stop|restart -> systemctl control (best-effort; may require privileges)
-async function systemctlAction(unit: string, action: 'start'|'stop'|'restart') {
-  return await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
-    const p = spawn('systemctl', [action, unit], { stdio: ['ignore', 'pipe', 'pipe'] });
-    const out: string[] = [];
-    const err: string[] = [];
-    p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
-    p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
-    p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim(), err: err.join('') }));
-  });
-}
-
-function actionHandler(action: 'start'|'stop'|'restart') {
-  return async (req: Request, res: Response) => {
-    const unit = String(req.params.unit);
-    try {
-      const result = await systemctlAction(unit, action);
-      if (result.code !== 0) {
-        res.status(500).json({ ok: false, action, unit, error: result.err || `systemctl ${action} exited with ${result.code}` });
-        return;
-      }
-      // Return new status snapshot for this unit
-      const check = await new Promise<{ code: number | null; out: string }>((resolve) => {
-        const p = spawn('systemctl', ['is-active', unit], { stdio: ['ignore', 'pipe', 'ignore'] });
-        const out: string[] = [];
-        p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
-        p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim() }));
-      });
-      res.json({ ok: true, action, unit, status: check.out || 'unknown' });
-    } catch (e: any) {
-      res.status(500).json({ ok: false, action, unit, error: e?.message || 'unknown error' });
-    }
-  };
-}
-
-app.post('/api/services/:unit/start', authRequired, actionHandler('start'));
-app.post('/api/services/:unit/stop', authRequired, actionHandler('stop'));
-app.post('/api/services/:unit/restart', authRequired, actionHandler('restart'));
 
 // System power management endpoints (admin-only)
 // POST /api/system/reboot -> reboot the server
@@ -2418,52 +2326,6 @@ app.post('/api/system/shutdown', authRequired, async (req: Request, res: Respons
   }
 });
 
-// GET /api/logs/stream -> SSE stream of logs
-// Query: units=comma,separated (optional), since=systemd-time (optional)
-app.get('/api/logs/stream', authRequired, (req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  const units = typeof req.query.units === 'string' && req.query.units
-    ? String(req.query.units).split(',').map(s => s.trim()).filter(Boolean)
-    : undefined;
-  const since = typeof req.query.since === 'string' ? req.query.since : undefined;
-
-  const args = buildJournalctlArgs({ units, since, follow: true, output: 'json' });
-  const proc = spawn('journalctl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-  const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\n`);
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  proc.stdout.on('data', (chunk: Buffer) => {
-    const lines = chunk.toString().split('\n');
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const obj = JSON.parse(line);
-        send('log', obj);
-      } catch {
-        send('log', { raw: line });
-      }
-    }
-  });
-  proc.stderr.on('data', (chunk: Buffer) => {
-    send('stderr', { message: chunk.toString() });
-  });
-  proc.on('close', (code: number | null) => {
-    send('end', { code });
-    res.end();
-  });
-
-  req.on('close', () => {
-    proc.kill('SIGTERM');
-  });
-});
-
 // Where to serve UI from (imported UI_DIST).
 const UI_EXISTS = fs.existsSync(UI_DIST);
 const UI_INDEX = path.join(UI_DIST, 'index.html');
@@ -2501,16 +2363,11 @@ if (!UI_READY) {
       </div>
       <div id="nav-user" class="muted">Loading user…</div>
     </header>
-    <div class="actions">
-      <button id="emit">Emit demo hello logs</button>
-    </div>
     <h2>Services</h2>
     <table id="svc">
       <thead><tr><th>Unit</th><th>Status</th></tr></thead>
       <tbody></tbody>
     </table>
-    <h2>Recent logs</h2>
-    <pre id="logs">loading…</pre>
     <h2>Server settings</h2>
     <div id="settings">
       <button id="load-settings">Load settings</button>
@@ -2533,22 +2390,6 @@ if (!UI_READY) {
           tr.innerHTML = '<td>' + s.unit + '</td><td class="' + (stOk ? 'ok' : 'bad') + '">' + s.status + '</td>';
           tbody.appendChild(tr);
         }
-      }
-      async function loadLogs(){
-        const res = await fetch('/api/logs?lines=100');
-        const data = await res.json();
-        const el = document.getElementById('logs');
-        const lines = data.entries.map(e => {
-          const t = e.__REALTIME_TIMESTAMP || e._SOURCE_REALTIME_TIMESTAMP || '';
-          const unit = e.SYSLOG_IDENTIFIER || e._SYSTEMD_UNIT || '';
-          const msg = e.MESSAGE || JSON.stringify(e);
-          return '[' + unit + '] ' + msg;
-        });
-        el.textContent = lines.join('\n');
-      }
-      async function emitHello(){
-        await fetch('/api/logs/hello', { method: 'POST' });
-        setTimeout(loadLogs, 500);
       }
       async function whoAmI(){
         try{
@@ -2581,12 +2422,10 @@ if (!UI_READY) {
         alert('Issued: ' + (data.error || data.cert));
         loadSettings();
       }
-      document.getElementById('emit').addEventListener('click', emitHello);
       document.getElementById('load-settings').addEventListener('click', loadSettings);
       document.getElementById('gen-root').addEventListener('click', genRoot);
       document.getElementById('issue-prov').addEventListener('click', issueProv);
       refreshServices();
-      loadLogs();
       whoAmI();
       setInterval(refreshServices, 5000);
     </script>
@@ -2631,7 +2470,7 @@ if (UI_READY) {
 }
 
 // --- WebSocket setup ---
-type ClientCtx = { ws: any; topics: Set<string>; logs?: Map<string, any>; authed: boolean };
+type ClientCtx = { ws: any; topics: Set<string>; authed: boolean };
 const clients = new Set<ClientCtx>();
 
 function send(ws: any, msg: any){
@@ -2713,7 +2552,7 @@ wss.on('connection', (ws: any, req: any) => {
     console.error(`[WS] Failed to send welcome message:`, error);
   }
 
-  const ctx: ClientCtx = { ws, topics: new Set(), logs: new Map(), authed: true };
+  const ctx: ClientCtx = { ws, topics: new Set(), authed: true };
   clients.add(ctx);
 
   ws.on('message', (data: any) => {
@@ -2732,11 +2571,6 @@ wss.on('connection', (ws: any, req: any) => {
             const t = String(raw);
             if(typeof t !== 'string') continue;
             ctx.topics.add(t);
-            // Handle logs.stream:<unit>
-            if(t.startsWith('logs.stream:')){
-              const unit = t.slice('logs.stream:'.length);
-              if(isSafeUnit(unit)) startLogStream(ctx, unit, t);
-            }
           }
           // Send current history snapshot immediately (default 24h) for anyone subscribed
           if (ctx.topics.has('metrics.history')){
@@ -2756,59 +2590,15 @@ wss.on('connection', (ws: any, req: any) => {
         for(const raw of msg.topics){ 
           const t = String(raw);
           ctx.topics.delete(t);
-          if(t.startsWith('logs.stream:')){ stopLogStream(ctx, t); }
         }
       }
     }catch{}
   });
-  ws.on('close', () => { try{ for(const key of ctx.logs?.keys()||[]) stopLogStream(ctx, key); }catch{} clients.delete(ctx); });
+  ws.on('close', () => { clients.delete(ctx); });
 });
 
 function broadcast(topic: string, payload: any){
   for(const c of clients){ if(c.ws.readyState === c.ws.OPEN && c.topics.has(topic)) send(c.ws, payload); }
-}
-
-function isSafeUnit(unit: string){
-  // allow typical systemd unit charset to prevent shell injection
-  return /^[A-Za-z0-9@_.\-]+\.service$/.test(unit) || /^[A-Za-z0-9@_.\-]+$/.test(unit);
-}
-
-function startLogStream(ctx: ClientCtx, unit: string, topicKey: string){
-  try{
-    if(!ctx.logs) ctx.logs = new Map();
-    if(ctx.logs.has(topicKey)) return; // already streaming
-    if((ctx.logs.size||0) >= 3) return; // simple per-conn cap
-    const args = buildJournalctlArgs({ units: [unit], lines: 200, follow: true, output: 'json' });
-    const proc = spawn('journalctl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const onData = (buf: Buffer) => {
-      const str = buf.toString('utf8');
-      const lines = str.split(/\r?\n/).filter(Boolean);
-      for(const ln of lines){
-        try{
-          const entry = JSON.parse(ln);
-          send(ctx.ws, { type: 'logs.line', data: { unit, entry } });
-        }catch{
-          send(ctx.ws, { type: 'logs.line', data: { unit, entry: { MESSAGE: ln } } });
-        }
-      }
-    };
-    proc.stdout?.on('data', onData);
-    proc.stderr?.on('data', ()=>{});
-    proc.on('close', (code: number|null) => { 
-      try{ 
-        ctx.logs?.delete(topicKey);
-        send(ctx.ws, { type: 'logs.stream.end', data: { unit, code } });
-      }catch{}
-    });
-    ctx.logs.set(topicKey, proc);
-  }catch{}
-}
-
-function stopLogStream(ctx: ClientCtx, topicKey: string){
-  try{
-    const p = ctx.logs?.get(topicKey);
-    if(p){ try{ p.kill('SIGTERM'); }catch{} ctx.logs?.delete(topicKey); }
-  }catch{}
 }
 
 // Hook to metrics sampler to push updates

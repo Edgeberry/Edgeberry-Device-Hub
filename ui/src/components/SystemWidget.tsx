@@ -10,8 +10,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faGears, faChartLine, faTerminal } from '@fortawesome/free-solid-svg-icons';
 import TerminalModal from './TerminalModal';
 import {
-  getServices, getServiceLogs, startService, stopService, restartService,
-  getMetrics, getHealth, getStatus, getPublicConfig
+  getServices, getMetrics, getHealth, getStatus, getPublicConfig
 } from '../api/devicehub';
 import { subscribe as wsSubscribe, unsubscribe as wsUnsubscribe, isConnected as wsIsConnected } from '../api/socket';
 
@@ -106,16 +105,6 @@ export default function SystemWidget() {
   const [services, setServices] = useState<Service[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
   const [servicesError, setServicesError] = useState<string>('');
-  const [selectedService, setSelectedService] = useState<Service | null>(null);
-  const [actionBusy, setActionBusy] = useState<boolean>(false);
-  const [actionError, setActionError] = useState<string>('');
-  
-  // Service logs
-  const [logs, setLogs] = useState<string>('');
-  const [logsLoading, setLogsLoading] = useState<boolean>(false);
-  const [streamEnded, setStreamEnded] = useState<string>('');
-  const logsRef = useRef<HTMLDivElement>(null);
-  
   // Metrics state
   const [metrics, setMetrics] = useState<Metrics>({});
   const [metricsLoading, setMetricsLoading] = useState(true);
@@ -188,26 +177,6 @@ export default function SystemWidget() {
     }
   }
 
-  // Service control functions
-  async function doAction(kind: 'start'|'stop'|'restart', unit: string){
-    try{
-      setActionBusy(true);
-      setActionError('');
-      if(kind==='start') await startService(unit);
-      else if(kind==='stop') await stopService(unit);
-      else await restartService(unit);
-      // If WS is disconnected, refresh list to reflect new status; otherwise WS will update us soon
-      if(!wsIsConnected()) await loadServices();
-      // update selected to the refreshed service entry if still open
-      const updated = services.find(s=>s.unit===unit);
-      if(updated) setSelectedService(updated);
-    }catch(e:any){
-      setActionError(e?.message || 'Action failed');
-    }finally{
-      setActionBusy(false);
-    }
-  }
-
   function prettyUnitName(unit: string){
     return unit.replace(/^devicehub-/, '').replace(/\.service$/, '');
   }
@@ -215,87 +184,6 @@ export default function SystemWidget() {
   function statusVariant(s?: string){
     return s === 'active' ? 'success' : (s === 'inactive' ? 'secondary' : 'warning');
   }
-
-  function formatTimestamp(raw: string): string {
-    if (!raw) return '';
-    try {
-      // Handle various timestamp formats
-      let ts: number;
-      if (raw.includes('T') || raw.includes('-')) {
-        // ISO format
-        ts = new Date(raw).getTime();
-      } else if (raw.length > 10) {
-        // Microsecond timestamp
-        ts = parseInt(raw) / 1000;
-      } else {
-        // Second timestamp
-        ts = parseInt(raw) * 1000;
-      }
-      return new Date(ts).toLocaleTimeString();
-    } catch {
-      return '';
-    }
-  }
-
-  // Load logs whenever a selection opens the modal
-  useEffect(()=>{
-    if(!selectedService) return;
-    (async ()=>{
-      try{
-        setStreamEnded('');
-        setLogsLoading(true);
-        const res: any = await getServiceLogs(selectedService.unit, 200);
-        
-        // Process logs from journalctl JSON format to readable Linux-style logs
-        let txt = '';
-        if(res && res.entries && Array.isArray(res.entries)){
-          const lines = res.entries.map((entry: any) => {
-            // Extract timestamp
-            const timestamp = entry.__REALTIME_TIMESTAMP || entry._SOURCE_REALTIME_TIMESTAMP || '';
-            let timeStr = '';
-            if(timestamp){
-              try{
-                // __REALTIME_TIMESTAMP is in microseconds, convert to milliseconds
-                const date = new Date(parseInt(timestamp) / 1000);
-                timeStr = date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
-              }catch{
-                timeStr = timestamp;
-              }
-            }
-            
-            // Extract unit/identifier
-            const unit = entry.SYSLOG_IDENTIFIER || entry._SYSTEMD_UNIT || entry._COMM || 'unknown';
-            
-            // Extract message
-            const message = entry.MESSAGE || JSON.stringify(entry);
-            
-            // Format as Linux-style log: timestamp [unit] message
-            return timeStr ? `${timeStr} [${unit}] ${message}` : `[${unit}] ${message}`;
-          });
-          txt = lines.join('\n');
-        } else if(typeof res === 'string'){
-          const lines = String(res).split(/\r?\n/);
-          txt = lines.join('\n');
-        } else if(Array.isArray(res)){
-          txt = res.map(e => typeof e === 'string' ? e : JSON.stringify(e)).join('\n');
-        } else if(res && typeof res === 'object'){
-          txt = JSON.stringify(res, null, 2);
-        }
-        
-        setLogs(txt);
-        // Auto-scroll to bottom
-        setTimeout(() => {
-          if(logsRef.current){
-            logsRef.current.scrollTop = logsRef.current.scrollHeight;
-          }
-        }, 100);
-      }catch(e:any){
-        setLogs(`Error loading logs: ${e?.message || 'Unknown error'}`);
-      }finally{
-        setLogsLoading(false);
-      }
-    })();
-  }, [selectedService]);
 
   // WebSocket subscriptions for real-time updates
   useEffect(() => {
@@ -358,50 +246,6 @@ export default function SystemWidget() {
       wsUnsubscribe('health', onHealth);
     };
   }, [wsIsConnected()]);
-
-  // Service logs streaming for selected service
-  useEffect(() => {
-    if (!selectedService || !wsIsConnected()) return;
-    let mounted = true;
-    const unit = selectedService.unit;
-    const topicStream = `logs.stream:${unit}`;
-    
-    const onLogLine = (payload: any) => {
-      if (!mounted) return;
-      try {
-        const d = payload;
-        if (!d || d.unit !== unit) return;
-        const e = d.entry;
-        const ts = formatTimestamp(e?.SYSLOG_TIMESTAMP || e?.__REALTIME_TIMESTAMP || '');
-        const ident = e?.SYSLOG_IDENTIFIER || e?._COMM || '';
-        const pid = e?._PID ? `[${e._PID}]` : '';
-        const msg = e?.MESSAGE ?? (typeof e === 'string' ? e : JSON.stringify(e));
-        const line = `${ts} ${ident}${pid} ${msg}`.trim();
-        
-        setLogs(prev => {
-          const next = prev ? `${prev}\n${line}` : line;
-          const arr = next.split('\n');
-          return arr.length > 1000 ? arr.slice(-1000).join('\n') : next;
-        });
-        
-        // Auto-scroll to bottom
-        setTimeout(() => {
-          if (logsRef.current) {
-            logsRef.current.scrollTop = logsRef.current.scrollHeight;
-          }
-        }, 50);
-      } catch (e) {
-        // Log stream parse error - silently ignore
-      }
-    };
-    
-    wsSubscribe(topicStream, onLogLine);
-    
-    return () => {
-      mounted = false;
-      wsUnsubscribe(topicStream, onLogLine);
-    };
-  }, [selectedService, wsIsConnected()]);
 
   // Effects
   useEffect(() => {
@@ -789,15 +633,12 @@ export default function SystemWidget() {
                         return (
                           <Col key={s.unit} xs={12} sm={6} md={4} lg={3} xl={2}>
                             <div
-                              role="button"
-                              onClick={() => setSelectedService(s)}
                               style={{
                                 border: '1px solid #e0e0e0',
                                 borderRadius: 6,
                                 padding: 8,
                                 height: '100%',
                                 boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                                cursor: 'pointer',
                               }}
                             >
                               <div style={{ fontWeight: 600, wordBreak: 'break-all', fontSize: '0.9em' }}>
@@ -822,98 +663,6 @@ export default function SystemWidget() {
       </Collapse>
 
         <TerminalModal show={showTerminal} onClose={() => setShowTerminal(false)} />
-
-        {/* Service Detail Modal */}
-        <Modal show={!!selectedService} onHide={() => setSelectedService(null)} centered size="xl" scrollable fullscreen="md-down" contentClassName="eb-modal-content">
-          {/* Titled with the service itself, like every other modal here names
-              the thing it is about - "Service details" described the window
-              rather than its subject. */}
-          <Modal.Header closeButton closeVariant="white">
-            <Modal.Title>
-              <FontAwesomeIcon icon={faGears} />{selectedService ? prettyUnitName(selectedService.unit) : 'Service'}
-            </Modal.Title>
-          </Modal.Header>
-          <Modal.Body>
-            {selectedService && (
-              <>
-                {/* Identity line under the title, same as the device modal. */}
-                <div className="text-muted small mb-3">Unit: {selectedService.unit}</div>
-
-                {actionError && <Alert variant="danger" className="py-2">{actionError}</Alert>}
-
-                {/* A property table rather than a stack of hand-spaced
-                    <strong>Label:</strong> divs - the same `table table-sm` the
-                    whitelist and device lists use.
-
-                    Only Status and Version appear because that is all
-                    getServicesSnapshot() reports. The Service type also
-                    declares enabled/since/memory/tasks/sub, but nothing ever
-                    fills them in, so rows for those would render never. */}
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="table table-sm">
-                    <tbody>
-                      <tr>
-                        <th style={{ width: 160, fontWeight: 600 }}>Status</th>
-                        <td><Badge bg={statusVariant(selectedService.status)}>{selectedService.status}</Badge></td>
-                      </tr>
-                      {selectedService.version && (
-                        <tr><th style={{ fontWeight: 600 }}>Version</th><td>v{selectedService.version}</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Outline btn-edgeberry like every other action button in the
-                    UI, instead of three saturated solid Bootstrap variants.
-                    Stop is the destructive one, so it gets the red hover. */}
-                <div className="d-flex gap-2 flex-wrap align-items-center mb-3">
-                  <button type="button" className="btn btn-sm btn-edgeberry" disabled={actionBusy}
-                          onClick={()=>doAction('start', selectedService.unit)}>Start</button>
-                  <button type="button" className="btn btn-sm btn-edgeberry" disabled={actionBusy}
-                          onClick={()=>doAction('restart', selectedService.unit)}>Restart</button>
-                  <button type="button" className="btn btn-sm btn-edgeberry btn-edgeberry-danger" disabled={actionBusy}
-                          onClick={()=>doAction('stop', selectedService.unit)}>Stop</button>
-                  {actionBusy && <Spinner animation="border" size="sm" />}
-                </div>
-
-                <div className="d-flex align-items-center gap-2 mb-2">
-                  <span style={{ fontWeight: 600 }}>Recent logs</span>
-                  {wsIsConnected() && <Badge bg="success">Live</Badge>}
-                </div>
-                {streamEnded && (
-                  <div className="text-muted mb-1" style={{ fontSize: 12 }}>{streamEnded}</div>
-                )}
-                {/* Themed from the same tokens as the Terminal, rather than its
-                    own hardcoded near-black - the two are the only dark
-                    surfaces in the UI and should not be different darks. */}
-                <div
-                  style={{
-                    background: 'var(--eb-navbar-bg)',
-                    color: 'var(--eb-navbar-fg)',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                    fontSize: 13,
-                    lineHeight: 1.4,
-                    borderRadius: 4,
-                    padding: 12,
-                    maxHeight: 360,
-                    overflow: 'auto',
-                  }}
-                  ref={logsRef}
-                  tabIndex={0}
-                >
-                  {logsLoading ? (
-                    <Spinner animation="border" size="sm" />
-                  ) : (
-                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{logs}</pre>
-                  )}
-                </div>
-              </>
-            )}
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="secondary" onClick={() => setSelectedService(null)}>Close</Button>
-          </Modal.Footer>
-        </Modal>
 
         {/* Metrics Detail Modal */}
         <Modal show={!!selectedMetric} onHide={() => setSelectedMetric(null)} centered size="lg">

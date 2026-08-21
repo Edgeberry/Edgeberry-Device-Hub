@@ -35,7 +35,7 @@ export async function getVersion(){ return jsonOrMessage(await fetch(base()+"/ve
  */
 export async function getPublicConfig(){ return jsonOrMessage(await fetch(base()+"/config/public", { credentials:'include' })); }
 
-// --- Core-service services and logs ---
+// --- Core-service services and metrics ---
 /**
  * List managed service units and their status
  */
@@ -62,44 +62,6 @@ export async function getMetricsHistory(hours: number = 24){
     return { hours, samples: [] } as any;
   }
 }
-/**
- * Get recent service logs
- * @param unit systemd unit name
- * @param lines number of lines to fetch (default 200)
- */
-// Fetch last N log lines for a systemd unit. The backend validates `unit`.
-export async function getServiceLogs(unit: string, lines: number = 200){
-  const url = base()+`/logs?unit=${encodeURIComponent(unit)}&lines=${encodeURIComponent(lines)}`;
-  return jsonOrMessage(await fetch(url, { credentials:'include' }));
-}
-/**
- * Start service unit
- * @param unit systemd unit name
- */
-export async function startService(unit: string){
-  const url = base()+`/services/${encodeURIComponent(unit)}/start`;
-  const res = await fetch(url, { method:'POST', credentials:'include' });
-  return jsonOrMessage(res);
-}
-/**
- * Stop service unit
- * @param unit systemd unit name
- */
-export async function stopService(unit: string){
-  const url = base()+`/services/${encodeURIComponent(unit)}/stop`;
-  const res = await fetch(url, { method:'POST', credentials:'include' });
-  return jsonOrMessage(res);
-}
-/**
- * Restart service unit
- * @param unit systemd unit name
- */
-export async function restartService(unit: string){
-  const url = base()+`/services/${encodeURIComponent(unit)}/restart`;
-  const res = await fetch(url, { method:'POST', credentials:'include' });
-  return jsonOrMessage(res);
-}
-
 // --- Devices registry (future expansion) ---
 /**
  * List devices
