@@ -59,12 +59,6 @@ export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || DEVICEHUB_
 // Consider a device online if we've seen an event within this window (seconds)
 export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);
 
-export const DEFAULT_LOG_UNITS: string[] = [
-  'devicehub.service',
-  // Infra dependencies
-  'mosquitto.service',
-];
-
 // MQTT configuration (shared by the telemetry capture, provisioning, twin,
 // and application sub-services - each opens its own connection)
 export const MQTT_URL: string = process.env.MQTT_URL || 'mqtt://127.0.0.1:1883';

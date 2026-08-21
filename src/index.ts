@@ -77,7 +77,6 @@ import {
   REGISTRY_DB,
   PROVISIONING_DB,
   ONLINE_THRESHOLD_SECONDS,
-  DEFAULT_LOG_UNITS,
   MQTT_URL,
   MQTT_USERNAME,
   MQTT_PASSWORD,
@@ -1618,47 +1617,34 @@ function bufferToMaybeJson(b: any){
 }
 
 // ===== Helpers reused by REST and WS =====
+/**
+ * Status of the two things the Overview reports on, without asking systemd.
+ *
+ * Both answers are better than `systemctl is-active` could give. The Hub's
+ * own status is a tautology - this code is running, so it is up - and asking
+ * systemd about it got the answer wrong whenever the process was started any
+ * other way (a dev shell, a container), reporting `inactive` while happily
+ * serving the request that asked. The broker's status is reported as what
+ * actually matters to a device: whether the Hub's MQTT connection is live.
+ * A broker that is `active` but unreachable is not a working broker, and
+ * `is-active` could not tell the difference.
+ */
 async function getServicesSnapshot(): Promise<{ services: Array<{ unit: string; status: string; version?: string }> }> {
-  // Defensive guard: exclude any units that contain 'registry' regardless of source
-  // This ensures stale builds/configs cannot surface a registry tile in the UI.
-  const units = DEFAULT_LOG_UNITS.filter(u => !String(u || '').toLowerCase().includes('registry'));
-
-  function unitToPkgPath(u: string): string | null {
-    const map: Record<string, string> = {
-      'devicehub.service': path.resolve(process.cwd(), 'package.json'),
-    };
-    return map[u] || null;
-  }
-
-  function readVersion(pkgPath: string | null): string | undefined {
-    if (!pkgPath) return undefined;
-    try {
-      if (!fs.existsSync(pkgPath)) return undefined;
-      const txt = fs.readFileSync(pkgPath, 'utf8');
-      const json = JSON.parse(txt);
-      const v = json && typeof json.version === 'string' ? json.version : undefined;
-      return v;
-    } catch { return undefined; }
-  }
-
-  const checks = await Promise.all(units.map(async (u) => {
-    try {
-      const result = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
-        const p = spawn('systemctl', ['is-active', u], { stdio: ['ignore', 'pipe', 'pipe'] });
-        const out: string[] = [];
-        const err: string[] = [];
-        p.stdout.on('data', (c: Buffer) => out.push(c.toString()));
-        p.stderr.on('data', (c: Buffer) => err.push(c.toString()));
-        p.on('close', (code: number | null) => resolve({ code, out: out.join('').trim(), err: err.join('') }));
-      });
-      const version = readVersion(unitToPkgPath(u));
-      return { unit: u, status: result.out || 'unknown', ...(version ? { version } : {}) } as any;
-    } catch (e) {
-      const version = readVersion(unitToPkgPath(u));
-      return { unit: u, status: 'error', ...(version ? { version } : {}) } as any;
+  let version: string | undefined;
+  try {
+    const pkgPath = path.resolve(process.cwd(), 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const json = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      if (json && typeof json.version === 'string') version = json.version;
     }
-  }));
-  return { services: checks };
+  } catch { /* version is decorative; a missing package.json is not an error */ }
+
+  return {
+    services: [
+      { unit: 'devicehub', status: 'active', ...(version ? { version } : {}) },
+      { unit: 'mosquitto', status: mqttClient?.connected ? 'active' : 'inactive' },
+    ],
+  };
 }
 
 async function getDevicesList(): Promise<{ devices: Array<{ uuid: string; name: string; role: string | null; token: string; meta: any; created_at: string; last_seen: string | null; online: boolean; disabled: boolean }> }> {
