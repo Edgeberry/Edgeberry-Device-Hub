@@ -39,6 +39,12 @@ function openDb(): any {
       payload BLOB,
       ts TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    -- getAllDeviceStatuses() wants the newest row per device; without this the
+    -- lookup falls back to scanning the whole table. Declared alongside the
+    -- tables rather than as a migration so existing databases pick it up on
+    -- the next open.
+    CREATE INDEX IF NOT EXISTS idx_device_events_device_id_id
+      ON device_events(device_id, id);
   `);
   return db;
 }
@@ -95,12 +101,17 @@ export function recordDeviceConnectionStatus(deviceId: string, isOnline: boolean
 export function getAllDeviceStatuses(): Record<string, DeviceStatus> {
   const db = openDb();
   try {
+    // One pass: the inner query picks the newest connection-status row per
+    // device, the outer fetches just those rows. The previous form correlated
+    // the subquery to each outer row, re-scanning the table once per row -
+    // O(n^2) over a table that is only ever appended to, which was enough to
+    // block the event loop outright once the history got long enough.
     const rows = db.prepare(`
-      SELECT device_id, payload, ts FROM device_events e1
-      WHERE e1.topic LIKE '%clients/%'
-      AND e1.id = (
-        SELECT MAX(e2.id) FROM device_events e2
-        WHERE e2.device_id = e1.device_id AND e2.topic LIKE '%clients/%'
+      SELECT device_id, payload, ts FROM device_events
+      WHERE id IN (
+        SELECT MAX(id) FROM device_events
+        WHERE topic LIKE '%clients/%'
+        GROUP BY device_id
       )
     `).all() as { device_id: string; payload: string; ts: string }[];
     const result: Record<string, DeviceStatus> = {};
