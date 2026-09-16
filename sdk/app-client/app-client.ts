@@ -230,6 +230,13 @@ export class DeviceHubAppClient extends EventEmitter {
       this.emit('connected');
     } catch (error) {
       console.error('Failed to connect to Device Hub:', error);
+      // A socket that opens and later closes arms its own retry from the
+      // 'close' handler. A *first* connect that fails here never opened one,
+      // so nothing was left to try again and the client stayed dead until the
+      // process was restarted - which is what stranded Node-RED for five days
+      // when the hub happened to be down as it started. Arm the same capped,
+      // unlimited backoff before rethrowing, so callers still see the failure.
+      this.scheduleWebSocketReconnect();
       throw error;
     }
   }
