@@ -50,6 +50,39 @@ export function recordEvent(deviceUuid: string, eventType: string, data: any): {
   }
 }
 
+/**
+ * Delete up to `batch` telemetry rows older than `cutoffIso`, returning how
+ * many went. Bounded on purpose: better-sqlite3 runs on the one thread that
+ * also serves HTTP and MQTT, so a single unbounded DELETE over millions of
+ * rows would stall the whole hub. The caller sweeps repeatedly instead.
+ *
+ * Deleting by id from a subquery rather than `DELETE ... LIMIT`, which needs a
+ * SQLite compiled with SQLITE_ENABLE_UPDATE_DELETE_LIMIT and so is not
+ * portable across better-sqlite3 builds.
+ */
+export function pruneTelemetry(retentionDays: number, batch: number): number {
+  if (!(retentionDays > 0)) return 0;
+  const db = openDb();
+  if (!db) return 0;
+  try {
+    // Cutoff built in JS, because recordEvent() stamps ts with
+    // `new Date().toISOString()`. twin.db's same-named table stamps its rows
+    // with SQLite's datetime('now') instead, which is a different string shape
+    // ("... 06:58:39" vs "...T06:58:39.123Z") - so each table has to build its
+    // own cutoff, and a shared one would compare wrongly.
+    const cutoffIso = new Date(Date.now() - retentionDays * 86400_000).toISOString();
+    const info = db.prepare(
+      'DELETE FROM device_events WHERE id IN (SELECT id FROM device_events WHERE ts < ? LIMIT ?)'
+    ).run(cutoffIso, batch);
+    return info?.changes ?? 0;
+  } catch (error) {
+    console.error('[event-store] pruneTelemetry failed:', error instanceof Error ? error.message : error);
+    return 0;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
 export function queryEvents(filter: EventFilter): EventRecord[] {
   const db = openDb();
   if (!db) return [];

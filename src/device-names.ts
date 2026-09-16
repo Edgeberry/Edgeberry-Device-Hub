@@ -12,6 +12,38 @@
 const FORBIDDEN_CHARS_REGEX = /[^a-zA-Z0-9\-_]/;
 const VALID_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9\-_]{3,31}$/;
 
+/** Prefix for every MQTT connection the Hub opens on its own behalf. Used to
+ *  build those clientIds *and* to recognise them again, so the two cannot
+ *  drift apart. */
+export const INTERNAL_MQTT_CLIENT_PREFIX = 'devicehub-';
+/** All clientId prefixes belonging to the Hub rather than to a device: the
+ *  core connection, the application sub-service, and mqtt.js's own generated
+ *  ids (used by the twin and provisioning sub-services, which do not set one). */
+export const INTERNAL_MQTT_CLIENT_PREFIXES = [
+  INTERNAL_MQTT_CLIENT_PREFIX,
+  'application-service-',
+  'mqttjs_',
+];
+
+/**
+ * Whether an MQTT clientId is a device's ongoing identity - the single place
+ * that question is answered, so the twin sub-service (deciding what to record)
+ * and twin-store (deciding what to keep) can never disagree about it.
+ *
+ * Three exclusions, each deliberate:
+ *  - a bare hardware UUID is a device's *provisioning* clientId, a one-time
+ *    claim token rather than the identity anything else uses;
+ *  - the Hub's own backend connections are not devices at all;
+ *  - anything that is not a well-formed device name.
+ */
+export function isDeviceClientId(clientId: string): boolean {
+  if (!clientId) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId)) return false;
+  const lower = clientId.toLowerCase();
+  if (INTERNAL_MQTT_CLIENT_PREFIXES.some(prefix => lower.startsWith(prefix))) return false;
+  return VALID_NAME_REGEX.test(clientId);
+}
+
 export interface DeviceNameValidationResult {
   valid: boolean;
   error?: string;

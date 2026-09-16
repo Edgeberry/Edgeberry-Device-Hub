@@ -7,7 +7,8 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { TWIN_DB } from './config.js';
+import { TWIN_DB, ONLINE_THRESHOLD_SECONDS } from './config.js';
+import { isDeviceClientId } from './device-names.js';
 
 export type Json = Record<string, unknown>;
 export type TwinDoc = { version: number; doc: Json };
@@ -47,6 +48,31 @@ function openDb(): any {
       ON device_events(device_id, id);
   `);
   return db;
+}
+
+/** twin.db stamps rows with SQLite's datetime('now'): UTC, but written with a
+ *  space separator and no zone marker, which Date.parse() reads as *local*
+ *  time. Normalised here so presence does not silently depend on the host's
+ *  timezone. An unparseable stamp yields NaN, which fails the freshness test
+ *  below and reads as offline - the safe direction. */
+function parseUtcTimestamp(ts: string): number {
+  return Date.parse(/[TZ]/.test(ts) ? ts : `${ts.replace(' ', 'T')}Z`);
+}
+
+/** Turn a device's newest connection row into its status.
+ *
+ *  A row saying "online" is believed only while it is recent. Devices heartbeat
+ *  every 30s and each heartbeat rewrites this row, so a genuinely live device is
+ *  never more than one beat stale. Without the age check, a device that vanished
+ *  while this sub-service was down - so its disconnect was never observed -
+ *  reads as online forever. That is the freshness half of what the heartbeat was
+ *  introduced for: the recording was implemented, the checking never was. */
+function rowToStatus(payload: string, ts: string): DeviceStatus {
+  let reportedOnline = false;
+  try { reportedOnline = (JSON.parse(payload) as any)?.status === 'online'; } catch { /* unreadable: offline */ }
+  const fresh = (Date.now() - parseUtcTimestamp(ts)) / 1000 <= ONLINE_THRESHOLD_SECONDS;
+  const online = reportedOnline && fresh;
+  return { online, last_seen: online ? null : ts };
 }
 
 /** Load desired and reported docs for a device (defaults to empty). Keyed
@@ -115,16 +141,96 @@ export function getAllDeviceStatuses(): Record<string, DeviceStatus> {
       )
     `).all() as { device_id: string; payload: string; ts: string }[];
     const result: Record<string, DeviceStatus> = {};
-    for (const row of rows) {
-      try {
-        const payload = JSON.parse(row.payload);
-        const isOnline = payload.status === 'online';
-        result[row.device_id] = { online: isOnline, last_seen: isOnline ? null : row.ts };
-      } catch {
-        result[row.device_id] = { online: false, last_seen: null };
-      }
-    }
+    for (const row of rows) result[row.device_id] = rowToStatus(row.payload, row.ts);
     return result;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/** The one device's current status, same shape as one entry of
+ *  getAllDeviceStatuses(). Presence belongs to connection state, which is what
+ *  this table records - deriving it from telemetry arrival instead (as the
+ *  admin API used to) reports any device that simply doesn't publish telemetry
+ *  as permanently offline. With idx_device_events_device_id_id this is a single
+ *  index seek, so callers needing one device should not build the whole map. */
+export function getDeviceStatus(deviceId: string): DeviceStatus | null {
+  const db = openDb();
+  try {
+    const row = db.prepare(
+      `SELECT payload, ts FROM device_events
+       WHERE device_id = ? AND topic LIKE '%clients/%'
+       ORDER BY id DESC LIMIT 1`
+    ).get(deviceId) as { payload: string; ts: string } | undefined;
+    if (!row) return null;
+    return rowToStatus(row.payload, row.ts);
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Delete up to `batch` connection events older than the retention window,
+ * returning how many went. Bounded per call for the same reason as
+ * pruneTelemetry(): this runs on the thread that serves everything else.
+ *
+ * Never deletes a device's newest row, whatever its age. getAllDeviceStatuses()
+ * reports the latest row per device, so pruning purely by age would erase the
+ * status of any device quiet for longer than the window - it would drop out of
+ * the device list rather than showing its last known state.
+ *
+ * The cutoff is computed by SQLite rather than in JS so it is written in the
+ * same format datetime('now') stored, which is not the ISO string the other
+ * device_events table uses.
+ */
+export function pruneConnectionEvents(retentionDays: number, batch: number): number {
+  if (!(retentionDays > 0)) return 0;
+  const db = openDb();
+  try {
+    const info = db.prepare(
+      `DELETE FROM device_events
+       WHERE id IN (
+         SELECT id FROM device_events
+         WHERE ts < datetime('now', ?)
+           AND id NOT IN (SELECT MAX(id) FROM device_events GROUP BY device_id)
+         LIMIT ?
+       )`
+    ).run(`-${retentionDays} days`, batch);
+    return info?.changes ?? 0;
+  } catch (error) {
+    console.error('[twin-store] pruneConnectionEvents failed:', error instanceof Error ? error.message : error);
+    return 0;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Delete up to `batch` rows whose device_id is not a device identity at all -
+ * the Hub's own MQTT connections, and bare provisioning UUIDs, recorded before
+ * isDeviceClientId() excluded them at the point of writing.
+ *
+ * Unlike pruneConnectionEvents() this does *not* preserve a newest row: these
+ * ids have no device whose status could be lost, so keeping one would just make
+ * the junk immortal. The predicate is the same one the twin sub-service now
+ * filters on, so the two cannot disagree about what counts as a device.
+ */
+export function pruneNonDeviceEvents(batch: number): number {
+  const db = openDb();
+  try {
+    const ids = db.prepare('SELECT DISTINCT device_id FROM device_events').all() as { device_id: string }[];
+    const junk = ids.map(r => r.device_id).filter(id => !isDeviceClientId(id));
+    if (junk.length === 0) return 0;
+    const placeholders = junk.map(() => '?').join(',');
+    const info = db.prepare(
+      `DELETE FROM device_events WHERE id IN (
+         SELECT id FROM device_events WHERE device_id IN (${placeholders}) LIMIT ?
+       )`
+    ).run(...junk, batch);
+    return info?.changes ?? 0;
+  } catch (error) {
+    console.error('[twin-store] pruneNonDeviceEvents failed:', error instanceof Error ? error.message : error);
+    return 0;
   } finally {
     try { db.close(); } catch { /* ignore */ }
   }

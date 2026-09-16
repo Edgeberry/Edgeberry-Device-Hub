@@ -29,7 +29,11 @@
  * - UI_DIST: path to built SPA directory served in production.
  * - MQTT_URL: included in provisioning bundle config for device convenience.
  * - PROVISIONING_DB, REGISTRY_DB: SQLite files for devices list and events snapshot.
- * - ONLINE_THRESHOLD_SECONDS: window to consider device "online" from last seen event.
+ * - ONLINE_THRESHOLD_SECONDS: how recent a device's last connection event must
+ *   be for it to count as online (default 90s = two missed 30s heartbeats).
+ * - TELEMETRY_RETENTION_DAYS, CONNECTION_EVENT_RETENTION_DAYS: how long each
+ *   device_events table keeps rows (0 = keep everything). Swept in batches -
+ *   RETENTION_SWEEP_INTERVAL_MS, RETENTION_SWEEP_BATCH.
  * - External tools: `tar` (for bundle creation).
  *
  * Operational Notes
@@ -76,7 +80,10 @@ import {
   DEVICEHUB_DB,
   REGISTRY_DB,
   PROVISIONING_DB,
-  ONLINE_THRESHOLD_SECONDS,
+  TELEMETRY_RETENTION_DAYS,
+  CONNECTION_EVENT_RETENTION_DAYS,
+  RETENTION_SWEEP_INTERVAL_MS,
+  RETENTION_SWEEP_BATCH,
   MQTT_URL,
   MQTT_USERNAME,
   MQTT_PASSWORD,
@@ -88,8 +95,9 @@ import {
 import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert, ensureCRLExists, revokeCertificatesForUuid, regenerateCRL } from './certs.js';
 import { authRequired, clearSessionCookie, getSession, getSessionUserFromHeaders, parseCookies, setSessionCookie } from './auth.js';
 import { createTerminalService } from './terminal.js';
-import { validateDeviceName } from './device-names.js';
-import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents } from './twin-store.js';
+import { validateDeviceName, INTERNAL_MQTT_CLIENT_PREFIX } from './device-names.js';
+import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents, getDeviceStatus, getAllDeviceStatuses, pruneConnectionEvents, pruneNonDeviceEvents } from './twin-store.js';
+import { pruneTelemetry } from './event-store.js';
 import { getDevicesListSync, tryParseJson, normalizeGroups, setGroupsForRole, getGroupsForRole, listGroups } from './devices-store.js';
 import { getAppSetting, setAppSetting, isAuthDisabled, isWebTerminalEnabled } from './app-settings.js';
 import { startProvisioning } from './services/provisioning/mqtt.js';
@@ -112,7 +120,11 @@ let mqttClient: MqttClient | null = null;
 
 function initMqttClient(): void {
   const hardwareUUID = getHardwareUUID();
-  const clientId = hardwareUUID || `devicehub-${Math.random().toString(36).substring(2, 15)}`;
+  // Always prefixed, even when a hardware UUID is available: on an Edgeberry
+  // HAT the bare UUID is shaped exactly like a device's own clientId, so the
+  // twin sub-service would record this process's connection as a device and
+  // report the Hub itself in the device list.
+  const clientId = `${INTERNAL_MQTT_CLIENT_PREFIX}${hardwareUUID || Math.random().toString(36).substring(2, 15)}`;
   
   const options: IClientOptions = {
     clientId,
@@ -1048,8 +1060,17 @@ function ensureDeviceHubSchema(){
     ).run();
 
     // Create indices for performance
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_device_events_device_id ON device_events(device_id)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_device_events_ts ON device_events(ts)').run();
+    // (device_id, ts) together, not just device_id: every lookup here asks for
+    // one device's events by recency, and with ts outside the index that meant
+    // fetching each matching row to read its timestamp, or sorting all of them
+    // in a temp b-tree. This table is append-only and unbounded, so both costs
+    // grow without limit. Composite makes those lookups index-only.
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_device_events_device_id_ts ON device_events(device_id, ts)').run();
+    // The old device_id-only index is a leftmost prefix of the composite above
+    // and so can serve nothing the composite cannot. Dropped rather than left
+    // costing a second b-tree write on every row inserted.
+    db.prepare('DROP INDEX IF EXISTS idx_device_events_device_id').run();
     // Remove old index that references non-existent status column
     // db.prepare('CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)').run();
 
@@ -1071,18 +1092,6 @@ function ensureDeviceHubSchema(){
   }
 }
 
-function getLastSeenMap(): Record<string,string> {
-  const db = openDb(DEVICEHUB_DB);
-  if(!db) return {};
-  try{
-    const rows = db.prepare('SELECT device_id, MAX(ts) AS last_ts FROM device_events GROUP BY device_id').all();
-    const map: Record<string,string> = {};
-    for(const r of rows){ if(r.device_id && r.last_ts) map[r.device_id] = r.last_ts; }
-    return map;
-  }catch{ return {}; }
-  finally{ try{ db.close(); }catch{} }
-}
-
 // GET /api/devices -> list known devices from provisioning DB
 app.get('/api/devices', authRequired, (req: Request, res: Response) => {
   const list = getDevicesListSync();
@@ -1098,18 +1107,22 @@ app.get('/api/devices/:uuid', authRequired, (req: Request, res: Response) => {
     const row = db.prepare('SELECT uuid, name, token, meta, created_at FROM devices WHERE uuid = ?').get(uuid);
     if(!row){ res.status(404).json({ error: 'not found' }); return; }
     const roleRow = db.prepare('SELECT role FROM device_roles WHERE uuid = ?').get(uuid) as any;
-    const lastSeen = getLastSeenMap();
-    const ls = lastSeen[uuid];
-    const online = ls ? (Date.now() - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
-    res.json({ uuid: row.uuid, name: row.name, role: roleRow?.role ?? null, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at, last_seen: ls || null, online });
-  }catch(e){
-    console.error(`[ensureDeviceHubSchema] Error creating schema:`, e);
-    console.error(`[ensureDeviceHubSchema] Database path: ${DEVICEHUB_DB}`);
-    console.error(`[ensureDeviceHubSchema] Error details:`, {
-      name: (e as Error).name,
-      message: (e as Error).message,
-      code: (e as any).code
-    });
+    // Presence is connection state, read from twin.db - the same source the
+    // device list uses, keyed by name with a uuid fallback exactly as
+    // getDevicesListSync() does, so this panel and the list it was opened from
+    // cannot disagree. It used to be inferred from the newest telemetry row,
+    // which reported any device that does not publish telemetry as offline
+    // forever, and every device as offline whenever telemetry merely paused.
+    const status = getDeviceStatus(row.name) ?? getDeviceStatus(uuid);
+    const ls: string | null = status ? status.last_seen : null;
+    const online = status ? status.online : false;
+    res.json({ uuid: row.uuid, name: row.name, role: roleRow?.role ?? null, token: row.token, meta: tryParseJson(row.meta), created_at: row.created_at, last_seen: ls, online });
+  }catch(e:any){
+    // This used to log a copy-pasted schema-bootstrap message and then fall
+    // through without replying at all, leaving the request open until the
+    // proxy timed it out.
+    console.error('[devicehub] Failed to fetch device:', e?.message || e);
+    if(!res.headersSent) res.status(500).json({ error: 'failed to fetch device' });
   }finally{
     try{ db.close(); }catch{}
   }
@@ -1384,11 +1397,13 @@ app.get('/api/roles', authRequired, (req: Request, res: Response) => {
       'FROM device_roles r LEFT JOIN devices d ON d.uuid = r.uuid '+
       'ORDER BY r.role'
     ).all() as any[];
-    const lastSeen = getLastSeenMap();
+    // Same connection-state source as the device list and the detail panel.
+    const statuses = getAllDeviceStatuses();
     const roles = rows.map(r => {
-      const ls = lastSeen[r.uuid];
-      const online = ls ? (Date.now() - Date.parse(ls)) / 1000 <= ONLINE_THRESHOLD_SECONDS : false;
-      return { role: r.role, uuid: r.uuid, device_name: r.device_name ?? null, online, last_seen: ls || null, created_at: r.created_at, updated_at: r.updated_at };
+      const st = statuses[r.device_name] ?? statuses[r.uuid];
+      const ls = st ? st.last_seen : null;
+      const online = st ? st.online : false;
+      return { role: r.role, uuid: r.uuid, device_name: r.device_name ?? null, online, last_seen: ls, created_at: r.created_at, updated_at: r.updated_at };
     });
     res.json({ roles });
   } catch (e:any) {
@@ -1599,10 +1614,17 @@ app.get('/api/devices/:uuid/events', authRequired, (req: Request, res: Response)
   const db = openDb(DEVICEHUB_DB);
   if(!db){ res.json({ events: [] }); return; }
   try{
-    const rows = db.prepare('SELECT id, device_id, topic, payload, ts FROM device_events WHERE device_id = ? ORDER BY ts DESC LIMIT ?').all(uuid, limit);
-    const events = rows.map((r: any) => ({ id: r.id, device_id: r.device_id, topic: r.topic, payload: bufferToMaybeJson(r.payload), ts: r.ts }));
+    // event_type, not topic: this table (devicehub.db) stores an event type per
+    // row. `topic` belongs to twin.db's identically-named table, so selecting
+    // it here threw on every call - which the silent catch below turned into an
+    // empty list, leaving the modal reporting "No events" no matter what.
+    const rows = db.prepare('SELECT id, device_id, event_type, payload, ts FROM device_events WHERE device_id = ? ORDER BY ts DESC LIMIT ?').all(uuid, limit);
+    const events = rows.map((r: any) => ({ id: r.id, device_id: r.device_id, event_type: r.event_type, payload: bufferToMaybeJson(r.payload), ts: r.ts }));
     res.json({ events });
-  }catch{
+  }catch(e:any){
+    // Still degrades to an empty list rather than an error the modal has no way
+    // to render, but says so - staying quiet is exactly what hid the bug above.
+    console.error('[devicehub] Failed to read device events:', e?.message || e);
     res.json({ events: [] });
   }finally{
     try{ db.close(); }catch{}
@@ -2627,6 +2649,32 @@ setInterval(() => {
     }
   }catch{}
 }, 10000);
+
+// Event retention.
+//
+// Nothing ever removed a row from either device_events table, so both grew
+// until their own queries became the outage. The sweep deletes in bounded
+// batches rather than one statement: better-sqlite3 is synchronous, so a
+// multi-million-row DELETE would block HTTP and MQTT for its whole duration -
+// precisely the failure retention is here to prevent. A backlog therefore
+// drains over several sweeps rather than in one stall.
+function sweepRetention(): void {
+  try {
+    const telemetry = pruneTelemetry(TELEMETRY_RETENTION_DAYS, RETENTION_SWEEP_BATCH);
+    const connection = pruneConnectionEvents(CONNECTION_EVENT_RETENTION_DAYS, RETENTION_SWEEP_BATCH);
+    // Not governed by a retention window: these rows were never device status
+    // to begin with, so there is no history worth keeping for them.
+    const nonDevice = pruneNonDeviceEvents(RETENTION_SWEEP_BATCH);
+    if (telemetry || connection || nonDevice) {
+      console.log(`[devicehub] retention: removed ${telemetry} telemetry, ${connection} connection, ${nonDevice} non-device event(s)`);
+    }
+  } catch (e: any) {
+    console.error('[devicehub] retention sweep failed:', e?.message || e);
+  }
+}
+if (TELEMETRY_RETENTION_DAYS > 0 || CONNECTION_EVENT_RETENTION_DAYS > 0) {
+  setInterval(sweepRetention, RETENTION_SWEEP_INTERVAL_MS);
+}
 
 // Graceful shutdown
 function setupShutdown(){

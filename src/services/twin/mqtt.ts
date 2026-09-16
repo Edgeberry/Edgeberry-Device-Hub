@@ -9,6 +9,7 @@ import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync, existsSync } from 'fs';
 import { MQTT_PASSWORD, MQTT_URL, MQTT_USERNAME, MQTT_TLS_CA, MQTT_TLS_CERT, MQTT_TLS_KEY, MQTT_TLS_REJECT_UNAUTHORIZED } from '../../config.js';
 import { getTwin, setTwinDoc, recordDeviceConnectionStatus } from '../../twin-store.js';
+import { isDeviceClientId } from '../../device-names.js';
 
 const SERVICE = 'twin';
 
@@ -39,23 +40,6 @@ function parseHeartbeatDeviceId(topic: string): string | null {
   if (parts.length !== 4) return null;
   if (parts[0] !== '$devicehub' || parts[1] !== 'devices' || parts[3] !== 'heartbeat') return null;
   return parts[2];
-}
-
-// Filters $SYS connect/disconnect log clientIds down to "this is plausibly a
-// device's assigned identity". Two things are deliberately excluded, not
-// just unmatched by accident: a device's *provisioning* connection uses the
-// bare UUID as its clientId (a one-time claim token, not its ongoing
-// identity - see devices-store.ts's claimDeviceName), so recording "online"
-// under it would misattribute status to an identity nothing else uses; and
-// backend connections on the anonymous loopback listener use mqtt.js's
-// auto-generated `mqttjs_*` clientIds, which are not devices at all.
-function isValidDeviceId(clientId: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidRegex.test(clientId)) return false;
-  if (/^mqttjs_/i.test(clientId)) return false;
-  // Matches device-names.ts's validation rule: alphanumeric/hyphen/
-  // underscore, 4-32 chars, starting alphanumeric.
-  return /^[a-zA-Z0-9][a-zA-Z0-9\-_]{3,31}$/.test(clientId);
 }
 
 function shallowDelta(desired: Json, reported: Json): Json {
@@ -135,9 +119,9 @@ export function startTwin(broadcast: BroadcastFn): MqttClient {
         const connectMatch = message.match(/New client connected from [^\s]+ as ([^\s]+)/);
         const disconnectMatch = message.match(/Client ([^\s]+) (?:closed its connection|disconnected|has exceeded timeout, disconnecting)/);
 
-        if (connectMatch && isValidDeviceId(connectMatch[1])) {
+        if (connectMatch && isDeviceClientId(connectMatch[1])) {
           updateDeviceStatus(connectMatch[1], true);
-        } else if (disconnectMatch && isValidDeviceId(disconnectMatch[1])) {
+        } else if (disconnectMatch && isDeviceClientId(disconnectMatch[1])) {
           updateDeviceStatus(disconnectMatch[1], false);
         }
         return;

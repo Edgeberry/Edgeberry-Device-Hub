@@ -56,8 +56,38 @@ export const CRL_NUMBER_PATH: string = path.join(CERTS_DIR, 'crlnumber');
 // Legacy environment variables for backward compatibility
 export const REGISTRY_DB: string = process.env.REGISTRY_DB || DEVICEHUB_DB;
 export const PROVISIONING_DB: string = process.env.PROVISIONING_DB || DEVICEHUB_DB;
-// Consider a device online if we've seen an event within this window (seconds)
-export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 15);
+// How recent a device's newest connection event must be for it to still count
+// as online. Devices heartbeat every 30s (services/twin/mqtt.ts) and every
+// heartbeat rewrites that row, so this is a multiple of the heartbeat rather
+// than a guess: 90s tolerates two missed beats before calling a device offline.
+//
+// The previous 15s dated from when presence was inferred from telemetry
+// arrival and nothing checked connection-event freshness at all. It is shorter
+// than the heartbeat itself, so applying it to connection state would have made
+// every device flicker offline between beats.
+export const ONLINE_THRESHOLD_SECONDS: number = Number(process.env.ONLINE_THRESHOLD_SECONDS || 90);
+
+// --- Event retention ---
+//
+// Both event tables are append-only and nothing ever removed a row, so they
+// grew without limit: a production hub reached 7.2M telemetry rows (2.7GB) for
+// two devices in four weeks, which was enough to make ordinary queries against
+// them block the service outright.
+//
+// Applied by a chunked background sweep (startRetentionSweep in index.ts)
+// rather than one large DELETE, because better-sqlite3 is synchronous - a
+// multi-million-row delete on this single thread is the same outage in
+// different clothing. Set either to 0 to keep everything and disable pruning.
+export const TELEMETRY_RETENTION_DAYS: number = Number(process.env.TELEMETRY_RETENTION_DAYS ?? 30);
+// Connection events are only ever read as "the newest one per device", so this
+// window can be far shorter than telemetry's. The sweep never deletes a
+// device's most recent row regardless of age - see pruneConnectionEvents().
+export const CONNECTION_EVENT_RETENTION_DAYS: number = Number(process.env.CONNECTION_EVENT_RETENTION_DAYS ?? 7);
+// How often the sweep runs, and how many rows it may delete per table per tick.
+// The batch bounds how long the event loop is blocked at a time; the interval
+// and batch together bound throughput, which must exceed the ingest rate.
+export const RETENTION_SWEEP_INTERVAL_MS: number = Number(process.env.RETENTION_SWEEP_INTERVAL_MS ?? 60_000);
+export const RETENTION_SWEEP_BATCH: number = Number(process.env.RETENTION_SWEEP_BATCH ?? 5_000);
 
 // MQTT configuration (shared by the telemetry capture, provisioning, twin,
 // and application sub-services - each opens its own connection)
