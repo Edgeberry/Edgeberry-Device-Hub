@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
 import Database from 'better-sqlite3';
-import { CA_CRT, CA_KEY, CERTS_DIR, PROV_DIR, ROOT_DIR, DEVICEHUB_DB, CRL_PATH, CRL_NUMBER_PATH, PERSISTENT_CERTS_DIR } from './config.js';
+import { CA_CRT, CA_KEY, CERTS_DIR, PROV_DIR, ROOT_DIR, DEVICEHUB_DB, CRL_PATH, CRL_NUMBER_PATH, PERSISTENT_CERTS_DIR, CRL_VALIDITY_DAYS, CRL_RENEW_BEFORE_RATIO } from './config.js';
 import os from 'os';
 
 export function ensureDirs() {
@@ -223,7 +223,7 @@ export async function regenerateCRL(): Promise<void> {
       `certificate = ${CA_CRT}`,
       `private_key = ${CA_KEY}`,
       `crlnumber = ${crlNumberWorkPath}`,
-      'default_crl_days = 30',
+      `default_crl_days = ${CRL_VALIDITY_DAYS}`,
       'default_md = sha256',
       '',
     ].join('\n');
@@ -254,9 +254,44 @@ export async function regenerateCRL(): Promise<void> {
   await syncCertsToMosquitto();
 }
 
-/** Publish an initial (possibly empty) CRL at boot so Mosquitto's `crlfile` always has something valid to load - an empty revoked-set is itself a valid CRL. */
-export async function ensureCRLExists(): Promise<void> {
-  if (fs.existsSync(CRL_PATH)) return;
+/**
+ * Read the published CRL's nextUpdate. Returns null if there is no CRL, or if
+ * openssl can't parse one (truncated, corrupt) - both mean "not a CRL we can
+ * vouch for", which the caller treats the same as expired.
+ */
+async function readCRLNextUpdate(): Promise<Date | null> {
+  if (!fs.existsSync(CRL_PATH)) return null;
+  const res = await runCmd('openssl', ['crl', '-in', CRL_PATH, '-noout', '-nextupdate']);
+  if (res.code !== 0) return null;
+  const m = /nextUpdate=(.+)/.exec(res.out);
+  if (!m) return null;
+  const when = new Date(m[1].trim());
+  return Number.isNaN(when.getTime()) ? null : when;
+}
+
+/**
+ * Publish a CRL if there isn't a usably-fresh one already, so Mosquitto's
+ * `crlfile` always points at something valid - an empty revoked-set is itself a
+ * valid CRL.
+ *
+ * Checks nextUpdate, not mere existence. Existence was the old test, and it is
+ * the wrong one: a CRL expires on a wall-clock boundary while the file sits
+ * there looking fine, and because CRL checking is fail-closed the broker then
+ * rejects every device in the fleet. Nothing else regenerates the CRL on a
+ * schedule - revocation does, but that's an unrelated event that may never
+ * happen - so this is the only thing standing between a quiet 30-day timer and
+ * a total outage. Renews at half-life rather than at expiry so a run can fail
+ * repeatedly without consequence.
+ */
+export async function ensureCRLFresh(): Promise<void> {
+  const nextUpdate = await readCRLNextUpdate();
+  if (nextUpdate) {
+    const remainingMs = nextUpdate.getTime() - Date.now();
+    const renewBeforeMs = CRL_VALIDITY_DAYS * 24 * 60 * 60 * 1000 * CRL_RENEW_BEFORE_RATIO;
+    if (remainingMs > renewBeforeMs) return;
+    const days = Math.floor(remainingMs / 86_400_000);
+    console.log(`[certs] CRL ${remainingMs < 0 ? `expired ${-days}d ago` : `expires in ${days}d`}; regenerating`);
+  }
   await regenerateCRL();
 }
 

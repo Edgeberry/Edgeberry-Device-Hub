@@ -538,7 +538,7 @@ EOF
 
     # mosquitto.conf references crlfile unconditionally (see config/mosquitto.conf) -
     # if that path does not exist, mosquitto refuses to start. The Device Hub normally
-    # publishes the real CRL itself (certs.ts ensureCRLExists/regenerateCRL) once it
+    # publishes the real CRL itself (certs.ts ensureCRLFresh/regenerateCRL) once it
     # first runs, but on a fresh install mosquitto may start before that ever
     # happens, so seed an initial empty one (nothing revoked yet, still a valid CRL)
     # here as a safety net.
@@ -560,7 +560,7 @@ database = $CRL_WORK_DIR/index.txt
 certificate = $SRC_CA
 private_key = $PERSISTENT_CA_KEY
 crlnumber = $CRL_WORK_DIR/crlnumber
-default_crl_days = 30
+default_crl_days = 365
 default_md = sha256
 EOF
         if openssl ca -config "$CRL_WORK_DIR/openssl.cnf" -gencrl -out "$ETC_CRL" >/dev/null 2>&1; then

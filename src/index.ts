@@ -34,6 +34,9 @@
  * - TELEMETRY_RETENTION_DAYS, CONNECTION_EVENT_RETENTION_DAYS: how long each
  *   device_events table keeps rows (0 = keep everything). Swept in batches -
  *   RETENTION_SWEEP_INTERVAL_MS, RETENTION_SWEEP_BATCH.
+ * - CRL_VALIDITY_DAYS, CRL_REFRESH_INTERVAL_MS, CRL_RENEW_BEFORE_RATIO: how
+ *   long a generated CRL stays valid, how often freshness is re-checked, and
+ *   how much of the window must remain before it is regenerated.
  * - External tools: `tar` (for bundle creation).
  *
  * Operational Notes
@@ -83,6 +86,7 @@ import {
   TELEMETRY_RETENTION_DAYS,
   CONNECTION_EVENT_RETENTION_DAYS,
   RETENTION_SWEEP_INTERVAL_MS,
+  CRL_REFRESH_INTERVAL_MS,
   RETENTION_SWEEP_BATCH,
   MQTT_URL,
   MQTT_USERNAME,
@@ -92,7 +96,7 @@ import {
   MQTT_TLS_KEY,
   MQTT_TLS_REJECT_UNAUTHORIZED,
 } from './config.js';
-import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert, ensureCRLExists, revokeCertificatesForUuid, regenerateCRL } from './certs.js';
+import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisioningCert, ensureCRLFresh, revokeCertificatesForUuid, regenerateCRL } from './certs.js';
 import { authRequired, clearSessionCookie, getSession, getSessionUserFromHeaders, parseCookies, setSessionCookie } from './auth.js';
 import { createTerminalService } from './terminal.js';
 import { validateDeviceName, INTERNAL_MQTT_CLIENT_PREFIX } from './device-names.js';
@@ -2676,6 +2680,8 @@ if (TELEMETRY_RETENTION_DAYS > 0 || CONNECTION_EVENT_RETENTION_DAYS > 0) {
   setInterval(sweepRetention, RETENTION_SWEEP_INTERVAL_MS);
 }
 
+setInterval(refreshCRL, CRL_REFRESH_INTERVAL_MS);
+
 // Graceful shutdown
 function setupShutdown(){
   const onSig = (sig: string) => () => {
@@ -2719,12 +2725,19 @@ async function ensurePki() {
   }
 
   // Mosquitto's crlfile must point at something loadable from the moment it
-  // starts - an empty CRL (nothing revoked yet) satisfies that on first boot.
+  // starts - an empty CRL (nothing revoked yet) satisfies that on first boot -
+  // and at something *unexpired* from then on, or it rejects the whole fleet.
+  await refreshCRL();
+}
+
+// Boot check alone would leave a long-running process to sail past nextUpdate
+// with no second look (this Hub had 31 days of uptime when its CRL died), so
+// the same check also runs on a timer.
+async function refreshCRL(): Promise<void> {
   try {
-    await ensureCRLExists();
-    console.log(`[devicehub] Certificate revocation list ensured`);
+    await ensureCRLFresh();
   } catch (error) {
-    console.warn(`[devicehub] Failed to ensure CRL exists:`, error);
+    console.warn(`[devicehub] Failed to ensure CRL is fresh:`, error);
   }
 }
 

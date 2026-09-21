@@ -52,6 +52,19 @@ export const PERSISTENT_CERTS_DIR: string = process.env.PERSISTENT_CERTS_DIR || 
 );
 export const CRL_PATH: string = path.join(PERSISTENT_CERTS_DIR, 'crl.pem');
 export const CRL_NUMBER_PATH: string = path.join(CERTS_DIR, 'crlnumber');
+// A CRL carries its own validity window, and CRL checking is fail-closed: once
+// a broker's copy is past nextUpdate, OpenSSL stops treating it as an answer to
+// "is this cert revoked?" and rejects *every* client cert, valid or not. So the
+// window is not a security knob here - revocation latency is set by
+// regenerateCRL() running the moment a cert is revoked, not by this. What it
+// actually buys is slack: how long renewal can stay broken before the whole
+// fleet is locked out. Hence a year, renewed daily.
+export const CRL_VALIDITY_DAYS: number = Number(process.env.CRL_VALIDITY_DAYS ?? 365);
+// How often to re-check freshness, and how much of the window must remain
+// before a check regenerates. Renewing at half-life means a regeneration can
+// fail for ~182 consecutive days before anything breaks.
+export const CRL_REFRESH_INTERVAL_MS: number = Number(process.env.CRL_REFRESH_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
+export const CRL_RENEW_BEFORE_RATIO: number = Number(process.env.CRL_RENEW_BEFORE_RATIO ?? 0.5);
 
 // Legacy environment variables for backward compatibility
 export const REGISTRY_DB: string = process.env.REGISTRY_DB || DEVICEHUB_DB;
