@@ -1,6 +1,6 @@
 {
   "name": "devicehub",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Edgeberry Device Hub",
   "license": "AGPL-3.0-or-later",
   "type": "module",
