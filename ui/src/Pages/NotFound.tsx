@@ -12,7 +12,7 @@ export default function NotFound(){
       <div style={{ textAlign:'center' }}>
         <img src={logo} alt="Edgeberry" style={{ height:36, marginBottom:12 }} />
         <div style={{ fontSize:24, fontWeight:700, marginBottom:6 }}>404</div>
-        <div style={{ color:'#555' }}>Page not found</div>
+        <div className="eb-muted">Page not found</div>
       </div>
     </div>
   );

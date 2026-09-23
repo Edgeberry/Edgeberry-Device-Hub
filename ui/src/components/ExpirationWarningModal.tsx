@@ -33,16 +33,16 @@ export default function ExpirationWarningModal({ show, secondsRemaining, onExten
     <Modal show={show} backdrop="static" keyboard={false} centered size="sm">
       <Modal.Header style={{ borderBottom: 'none', paddingBottom: 0 }}>
         <Modal.Title style={{ fontSize: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <FontAwesomeIcon icon={faExclamationTriangle} style={{ color: '#f0ad4e' }} />
+          <FontAwesomeIcon icon={faExclamationTriangle} style={{ color: 'var(--eb-warn)' }} />
           Session Expiring
         </Modal.Title>
       </Modal.Header>
       <Modal.Body style={{ paddingTop: 8 }}>
         <div style={{ textAlign: 'center', marginBottom: 16 }}>
-          <div style={{ fontSize: 14, color: '#555', marginBottom: 12 }}>
+          <div className="eb-muted" style={{ fontSize: 14, marginBottom: 12 }}>
             Your session will expire in:
           </div>
-          <div style={{ fontSize: 32, fontWeight: 'bold', color: variant === 'danger' ? '#d9534f' : '#f0ad4e', marginBottom: 12 }}>
+          <div className="eb-num" style={{ fontSize: 32, fontWeight: 700, color: variant === 'danger' ? 'var(--eb-fault-text)' : 'var(--eb-warn-text)', marginBottom: 12 }}>
             {countdown}s
           </div>
           <ProgressBar 
@@ -51,7 +51,7 @@ export default function ExpirationWarningModal({ show, secondsRemaining, onExten
             style={{ height: 8 }}
           />
         </div>
-        <div style={{ fontSize: 12, color: '#666', textAlign: 'center' }}>
+        <div className="eb-subtle" style={{ fontSize: 12, textAlign: 'center' }}>
           You will be automatically logged out when the timer reaches zero.
         </div>
       </Modal.Body>

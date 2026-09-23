@@ -1,50 +1,164 @@
 /*
  *  Edgeberry theme tokens
  *
- *  Kept in sync with the same tokens in Edgeberry-device-software/webui, so
- *  the Device Hub dashboard and the on-device panel read as one product.
+ *  The Device Hub dashboard and Edgeberry-device-software/webui share this
+ *  vocabulary so the two read as one product. The dashboard is currently
+ *  ahead: the surface/line/status scales below were introduced here first and
+ *  the on-device panel has not adopted them yet. Port this file across when
+ *  that panel is restyled - names are chosen to survive the move.
+ *
+ *  This file is self-contained and meant to be copied across wholesale: the
+ *  --eb-* vocabulary, plus everything needed to make Bootstrap speak it. It
+ *  declares no selectors and paints nothing on its own - styles.css is where
+ *  elements are actually styled - so porting it to another Edgeberry
+ *  interface cannot drag Device Hub's layout along with it.
+ *
+ *  Rules of the road:
+ *   - Never hardcode a colour, radius or shadow in a component. If a value is
+ *     missing here, add it here.
+ *   - A raw value belongs in this file; anything with a selector belongs in
+ *     styles.css. Bootstrap --bs-* mappings count as vocabulary and live here.
+ *   - --eb-bg is the *page*; --eb-surface is what sits on the page. A panel
+ *     painted --eb-bg disappears into it.
  */
 
 :root {
-  /* Brand colours: buttons, links, section headings, icons in modal headers. */
-  --eb-primary:   #0007ff;
-  --eb-secondary: var(--eb-primary);
-
-  /* Page surface. --eb-fg is text ON --eb-bg; never use it as a background. */
-  --eb-bg:     #ffffff;
-  --eb-fg:     #1e1e1e;
-  --eb-line:   #c0c0c0;
+  /*
+   *  Brand.
+   *
+   *  --eb-primary is Edgeberry Blue, and it is loud: it earns its place on
+   *  text, icons, focus rings and one filled button per dialog, not on large
+   *  fills. The -soft variants are the same hue at low alpha, for the tinted
+   *  backgrounds (hovered rows, ghost buttons) where a solid brand fill would
+   *  shout. Alpha rather than a mixed-down hex so they compose over whatever
+   *  surface they land on.
+   */
+  --eb-primary:           #0007ff;
+  --eb-primary-hover:     #0006e0;
+  --eb-primary-active:    #0005c2;
+  --eb-primary-soft:      rgba(0, 7, 255, 0.07);
+  --eb-primary-soft-hover:rgba(0, 7, 255, 0.13);
+  --eb-primary-ring:      rgba(0, 7, 255, 0.18);
 
   /*
-   *  Dark chrome: the top bar. Deliberately independent of --eb-bg/--eb-fg
-   *  so a light or dark page theme does not change the bar.
+   *  Surfaces, in stacking order: the page is faintly tinted, panels are white
+   *  on top of it, sunken areas (table headers, inset panels) step back down.
+   *
+   *  This is the single biggest difference from stock Bootstrap, which paints
+   *  page and card the same white and relies on a hairline to tell them apart.
+   *  A tint of ~3% is enough for panels to read as objects without the page
+   *  looking grey.
+   */
+  --eb-bg:             #f5f6f8;
+  --eb-surface:        #ffffff;
+  --eb-surface-sunken: #f0f2f5;
+
+  /*
+   *  Text. --eb-fg is text ON a surface; never use it as a background.
+   *  -muted is for labels and secondary values, -subtle for placeholders and
+   *  em-dashes standing in for absent data. Both clear 4.5:1 on --eb-surface
+   *  and on --eb-bg.
+   */
+  --eb-fg:        #14171a;
+  --eb-fg-muted:  #5b6470;
+  --eb-fg-subtle: #8a929c;
+
+  /*
+   *  Hairlines. Bootstrap's default (#dee2e6) and the #c0c0c0 this file used
+   *  to carry are both heavy enough to draw the eye to the box rather than its
+   *  contents. --eb-line is the default separator; --eb-line-strong is for the
+   *  few places a division has to be felt (a control's resting border).
+   */
+  --eb-line:        #e4e7ec;
+  --eb-line-strong: #d0d5dd;
+
+  /*
+   *  Dark chrome: the top bar and modal headers. Deliberately independent of
+   *  --eb-bg/--eb-fg so a light or dark page theme does not change the bar.
    */
   --eb-navbar-bg: #1e1e1e;
   --eb-navbar-fg: #f5f5f5;
 
   /*
-   *  Status colours, used for indicators on both the page and the dark bar.
-   *  Replacements should stay legible on both - at least a 3:1 contrast ratio
-   *  against --eb-bg and against --eb-navbar-bg.
+   *  Status.
+   *
+   *  The nominal state is Edgeberry Blue, not green. Blue is this product's
+   *  "working as intended" colour - a device online, a service active, a
+   *  broker connected, a token live - so a healthy fleet reads as the brand
+   *  rather than as a traffic light. Green is not used at all; amber and red
+   *  keep their conventional meanings, and because nothing else on the page
+   *  competes with them, either one is visible immediately.
+   *
+   *  Each state is a trio, because one colour cannot do all three jobs:
+   *   - base: the dot, the chart stroke, a solid fill. Must stay legible on
+   *     --eb-surface *and* on --eb-navbar-bg (at least 3:1 on both).
+   *   - soft: the pill background. Low-alpha base, so it composes anywhere.
+   *   - text: base darkened until it clears 4.5:1 *on its own soft fill* -
+   *     the base colours themselves do not, which is exactly how solid
+   *     Bootstrap badges end up being the only workable option.
    */
-  --eb-ok:     #2ea043;
-  --eb-warn:   #b35c00;
-  --eb-fault:  #e03131;
-  --eb-idle:   #8b8b8b;
+  /* Named -ok rather than -blue: callers ask for the semantic state, so this
+     can be repainted without touching a single component. */
+  --eb-ok:        var(--eb-primary);
+  --eb-ok-soft:   rgba(0, 7, 255, 0.10);
+  --eb-ok-text:   #0005c2;
+
+  --eb-warn:      #b35c00;
+  --eb-warn-soft: rgba(179, 92, 0, 0.12);
+  --eb-warn-text: #8a4700;
+
+  --eb-fault:     #e03131;
+  --eb-fault-soft:rgba(224, 49, 49, 0.12);
+  --eb-fault-text:#b02020;
+
+  --eb-idle:      #8b8b8b;
+  --eb-idle-soft: rgba(20, 23, 26, 0.06);
+  --eb-idle-text: #5b6470;
+
+  /*
+   *  Radius scale. Bootstrap's 0.375rem everywhere is what makes every card,
+   *  input and badge look stamped from the same die. Three steps: controls,
+   *  tiles, panels - plus a pill for status chips.
+   */
+  --eb-radius-sm:   4px;
+  --eb-radius:      6px;
+  --eb-radius-lg:   10px;
+  --eb-radius-pill: 999px;
+
+  /*
+   *  Elevation. Two-layer shadows (a tight contact shadow plus a wider, softer
+   *  one) rather than a single blur - a single blur reads as a grey halo.
+   *  Tinted toward the text colour instead of pure black so it sits on the
+   *  slightly cool page tint without looking muddy.
+   */
+  --eb-shadow-sm: 0 1px 2px rgba(20, 23, 26, 0.04), 0 1px 3px rgba(20, 23, 26, 0.05);
+  --eb-shadow:    0 2px 4px -2px rgba(20, 23, 26, 0.06), 0 6px 12px -4px rgba(20, 23, 26, 0.08);
+  --eb-shadow-lg: 0 4px 8px -4px rgba(20, 23, 26, 0.08), 0 16px 32px -8px rgba(20, 23, 26, 0.16);
 
   /* Lato is bundled with the interface (see main.tsx) rather than deferring
      to whatever system-ui resolves to. The rest of the stack only covers the
      moment before the woff2 lands. */
-  --eb-font:   "Lato", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --eb-font:      "Lato", -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Machine-readable values - UUIDs, tokens, unit names - are set in mono so
+     a hardware ID reads as an identifier to be compared character by
+     character, not as prose. System stack only: no webfont is worth the bytes
+     for this. */
+  --eb-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 /*
  *  Bootstrap draws from its own variables, which default to its light palette
- *  regardless of ours. Point the ones carrying text, surfaces and borders at
- *  our tokens so Bootstrap's components pick up the same theme.
+ *  regardless of ours. Point the ones carrying text, surfaces, borders, radii
+ *  and type at our tokens so Bootstrap's components pick up the same theme
+ *  without every component having to override them by hand.
  */
 :root {
   --bs-body-font-family: var(--eb-font);
+  /* 15px. Bootstrap's 16px body is sized for prose; this is a dense operator
+     view where a table row is the unit of content. */
+  --bs-body-font-size:   0.9375rem;
+  --bs-body-line-height: 1.5;
 
   --bs-body-color:      var(--eb-fg);
   --bs-body-bg:         var(--eb-bg);
@@ -52,11 +166,46 @@
   --bs-heading-color:   var(--eb-fg);
   --bs-border-color:    var(--eb-line);
 
-  /* Muted text: a fraction of the foreground rather than a fixed grey, so it
-     stays legible whichever way round the theme runs. */
-  --bs-secondary-color: color-mix(in srgb, var(--eb-fg) 70%, transparent);
-  --bs-tertiary-bg:     color-mix(in srgb, var(--eb-fg) 8%, var(--eb-bg));
+  --bs-secondary-color: var(--eb-fg-muted);
+  --bs-tertiary-bg:     var(--eb-surface-sunken);
+
+  --bs-border-radius-sm: var(--eb-radius-sm);
+  --bs-border-radius:    var(--eb-radius);
+  --bs-border-radius-lg: var(--eb-radius-lg);
+  --bs-border-radius-xl: var(--eb-radius-lg);
 
   --bs-link-color:       var(--eb-primary);
-  --bs-link-hover-color: var(--eb-primary);
+  --bs-link-hover-color: var(--eb-primary-hover);
+
+  /*
+   *  Semantic variants, pointed at the status tokens above so Bootstrap's own
+   *  components report state in this product's colours. The *-rgb variables
+   *  must stay literal "r, g, b" triplets - Bootstrap composes them into
+   *  rgba() - so they are the one place a token value is repeated, and must be
+   *  changed alongside it by hand.
+   */
+  --bs-primary: var(--eb-primary);
+  --bs-primary-rgb: 0, 7, 255;
+
+  /*
+   *  Only the base colour and its rgb triplet: the *-bg-subtle and
+   *  *-border-subtle overrides that used to sit alongside these were for
+   *  Bootstrap's alert styling, and styles.css's .alert-* rules now set their
+   *  own backgrounds from the --eb-*-soft tokens directly.
+   *
+   *  What still reads these: --bs-warning for the session-expiry ProgressBar,
+   *  --bs-danger for the .btn-outline-danger in the device-detail and
+   *  certificate dialogs, --bs-primary for .btn-primary. --bs-success has no
+   *  consumer left now that every status is a pill, but it stays so a
+   *  `variant="success"` added later lands on --eb-ok rather than Bootstrap's
+   *  green.
+   */
+  --bs-success: var(--eb-ok);
+  --bs-success-rgb: 0, 7, 255;
+
+  --bs-warning: var(--eb-warn);
+  --bs-warning-rgb: 179, 92, 0;
+
+  --bs-danger: var(--eb-fault);
+  --bs-danger-rgb: 224, 49, 49;
 }

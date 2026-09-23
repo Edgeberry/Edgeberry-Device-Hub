@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Modal, Alert, Spinner } from 'react-bootstrap';
+import { SectionLabel, Field } from './ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faMicrochip } from '@fortawesome/free-solid-svg-icons';
 import { getDevice, getDeviceEvents, decommissionDevice, deleteWhitelistByDevice } from '../api/devicehub';
@@ -66,28 +67,41 @@ export default function DeviceDetailModal(props:{
       </Modal.Header>
       <Modal.Body>
         {msg.text && (<Alert variant={msg.type==='danger'?'danger':'success'}>{msg.text}</Alert>)}
-        {device?.uuid && (
-          <div className="text-muted small mb-3">Hardware ID: {device.uuid}</div>
-        )}
-        {!device && (<div className="text-center p-4"><Spinner animation="border" size="sm"/> Loading...</div>)}
+        {device?.uuid && <Field label="Hardware ID" value={device.uuid} mono />}
+        {!device && (<div className="text-center p-4"><Spinner animation="border" size="sm"/> Loading…</div>)}
         {device && (
           <>
-            <h6>Device</h6>
-            <pre style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(device, null, 2)}</pre>
-            <h6>Events ({events.length||0})</h6>
+            <div className="mt-3"><SectionLabel>Device</SectionLabel></div>
+            <pre className="eb-inset eb-mono mt-0" style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(device, null, 2)}</pre>
+
+            <div className="mt-4"><SectionLabel>Events ({events.length||0})</SectionLabel></div>
             <div>
               {(events||[]).slice().reverse().map((e:any, i:number)=> (
-                <pre key={i} className="mb-2" style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(e,null,2)}</pre>
+                <pre key={i} className="eb-inset eb-mono mb-2" style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(e,null,2)}</pre>
               ))}
-              {!events?.length && <div className="text-muted">No events</div>}
+              {!events?.length && <div className="eb-subtle">No events</div>}
+            </div>
+
+            {/* Decommissioning lives with the content it acts on, not in the
+                footer next to a dismiss button. "Close" is gone entirely -
+                the header's X already does that, and a dialog does not need
+                two ways to be dismissed. */}
+            <div className="eb-danger-zone">
+              <div>
+                <div className="eb-section-title mb-1">Decommission</div>
+                <div className="eb-muted" style={{ fontSize: '0.85rem' }}>
+                  Removes this device from the registry. Its hardware ID can be whitelisted again later.
+                </div>
+              </div>
+              <Button variant="outline-danger" onClick={onDecommission} disabled={busy}>
+                {busy
+                  ? <><Spinner animation="border" size="sm" className="me-2" />Removing…</>
+                  : 'Decommission'}
+              </Button>
             </div>
           </>
         )}
       </Modal.Body>
-      <Modal.Footer>
-        <Button variant={'outline-danger'} onClick={onDecommission} disabled={busy}>Decommission</Button>
-        <Button variant={'secondary'} onClick={onClose} disabled={busy}>Close</Button>
-      </Modal.Footer>
     </Modal>
   );
 }

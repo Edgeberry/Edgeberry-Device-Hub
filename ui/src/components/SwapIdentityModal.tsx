@@ -16,7 +16,8 @@
  *    hardware that produced them and are not rewritten
  */
 import { useMemo, useState } from 'react';
-import { Alert, Badge, Button, Modal, Spinner } from 'react-bootstrap';
+import { Alert, Button, Modal, Spinner } from 'react-bootstrap';
+import { StatusPill, Chip } from './ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRightLeft } from '@fortawesome/free-solid-svg-icons';
 import { setDeviceRole } from '../api/devicehub';
@@ -105,7 +106,7 @@ export default function SwapIdentityModal(props:{
             {groups.length > 0 && (
               <p className="mb-2">
                 Its groups come along: {groups.map(g => (
-                  <Badge bg="secondary" key={g} className="me-1" style={{fontWeight:400}}>{g}</Badge>
+                  <span className="me-1" key={g}><Chip>{g}</Chip></span>
                 ))}
               </p>
             )}
@@ -135,14 +136,15 @@ export default function SwapIdentityModal(props:{
                         onChange={()=> setTargetUuid(d.uuid)}
                       />
                       <span className="flex-grow-1">
-                        <span className="font-monospace" style={{fontSize:'0.9em'}}>{d.uuid}</span>
+                        <span className="eb-mono">{d.uuid}</span>
                         {d.role
-                          ? <Badge bg="warning" text="dark" className="ms-2" style={{fontWeight:400}}>{d.role}</Badge>
+                          ? <span className="ms-2"><StatusPill tone="warn" label={d.role} /></span>
                           : <span className="text-muted ms-2" style={{fontSize:'0.9em'}}>unassigned</span>}
                       </span>
-                      <Badge bg={d.pending ? 'info' : d.online ? 'success' : 'secondary'}>
-                        {d.pending ? 'not provisioned' : d.online ? 'online' : 'offline'}
-                      </Badge>
+                      <StatusPill
+                        tone={d.pending ? 'warn' : d.online ? 'ok' : 'idle'}
+                        label={d.pending ? 'Not provisioned' : d.online ? 'Online' : 'Offline'}
+                      />
                     </label>
                   ))}
                 </div>

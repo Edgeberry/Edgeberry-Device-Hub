@@ -13,7 +13,8 @@
  * and only offer the choice when the device actually holds an identity worth
  * preserving.
  */
-import { Alert, Badge, Button, Modal, Spinner } from 'react-bootstrap';
+import { Alert, Button, Modal, Spinner } from 'react-bootstrap';
+import { Chip } from './ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRightLeft, faTrash } from '@fortawesome/free-solid-svg-icons';
 
@@ -40,7 +41,7 @@ export default function DecommissionModal(props:{
       </Modal.Header>
       <Modal.Body>
         <p className="mb-2">
-          Remove <span className="font-monospace">{device?.uuid}</span> from the registry.
+          Remove <span className="eb-mono">{device?.uuid}</span> from the registry.
         </p>
 
         {role ? (
@@ -49,7 +50,7 @@ export default function DecommissionModal(props:{
               This device answers to <strong>{role}</strong>
               {groups.length > 0 && (
                 <> in {groups.map(g => (
-                  <Badge bg="secondary" key={g} className="me-1" style={{fontWeight:400}}>{g}</Badge>
+                  <span className="me-1" key={g}><Chip>{g}</Chip></span>
                 ))}</>
               )}.
               {' '}Decommissioning retires that application ID — anything addressing it stops resolving.

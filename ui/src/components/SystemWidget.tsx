@@ -5,7 +5,8 @@
  * with system action buttons and integrated health information.
  */
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { Alert, Badge, Button, Card, Col, Collapse, Modal, Row, Spinner, Tab, Tabs } from 'react-bootstrap';
+import { Button, Card, Col, Collapse, Modal, Row, Spinner } from 'react-bootstrap';
+import { StatusPill } from './ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faGears, faChartLine, faTerminal } from '@fortawesome/free-solid-svg-icons';
 import TerminalModal from './TerminalModal';
@@ -45,11 +46,19 @@ function formatBytes(n?: number){
   return `${v.toFixed(1)} ${units[i]}`;
 }
 
-function percentColor(p?: number){
-  if(p == null) return 'secondary';
-  if(p < 60) return 'success';
-  if(p < 85) return 'warning';
-  return 'danger';
+/**
+ * Threshold for a bounded percentage: idle below 60, warn to 85, fault above.
+ *
+ * Returns a semantic tone, not a colour or a Bootstrap variant - a healthy
+ * figure is deliberately NOT green. Painting every normal reading green means
+ * four permanently green tiles, against which an amber one is a change of hue
+ * rather than the only colour on screen.
+ */
+function percentTone(p?: number): 'idle' | 'warn' | 'fault' {
+  if(p == null) return 'idle';
+  if(p < 60) return 'idle';
+  if(p < 85) return 'warn';
+  return 'fault';
 }
 
 function plural(n: number, s: string){
@@ -175,14 +184,6 @@ export default function SystemWidget() {
     } finally {
       setMetricsLoading(false);
     }
-  }
-
-  function prettyUnitName(unit: string){
-    return unit.replace(/^devicehub-/, '').replace(/\.service$/, '');
-  }
-
-  function statusVariant(s?: string){
-    return s === 'active' ? 'success' : (s === 'inactive' ? 'secondary' : 'warning');
   }
 
   // WebSocket subscriptions for real-time updates
@@ -391,10 +392,8 @@ export default function SystemWidget() {
   const metricsTiles = [
     {
       key: 'cpu', title: 'CPU',
-      value: metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-',
-      badge: (
-        <Badge bg={percentColor(metrics.cpu?.approxUsagePercent)}>{metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}</Badge>
-      ),
+      value: metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '—',
+      tone: percentTone(metrics.cpu?.approxUsagePercent),
       chart: (
         <Sparkline values={series.cpu} domain={[0, 100]} />
       ),
@@ -406,10 +405,8 @@ export default function SystemWidget() {
     },
     {
       key: 'memory', title: 'Memory',
-      value: metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-',
-      badge: (
-        <Badge bg={percentColor(metrics.memory?.usedPercent)}>{metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}</Badge>
-      ),
+      value: metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '—',
+      tone: percentTone(metrics.memory?.usedPercent),
       chart: (
         <Sparkline values={series.mem} domain={[0, 100]} />
       ),
@@ -423,10 +420,8 @@ export default function SystemWidget() {
     },
     {
       key: 'disk', title: 'Disk',
-      value: metrics.disk && metrics.disk.mounts && metrics.disk.mounts.length ? `${Math.round((metrics.disk.mounts[0].usedPercent||0))}%` : '-',
-      badge: (
-        <Badge bg={percentColor(metrics.disk?.mounts?.[0]?.usedPercent)}>{metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}</Badge>
-      ),
+      value: metrics.disk && metrics.disk.mounts && metrics.disk.mounts.length ? `${Math.round((metrics.disk.mounts[0].usedPercent||0))}%` : '—',
+      tone: percentTone(metrics.disk?.mounts?.[0]?.usedPercent),
       chart: (
         <Sparkline values={series.disk} domain={[0, 100]} />
       ),
@@ -445,24 +440,22 @@ export default function SystemWidget() {
     },
     {
       key: 'network', title: 'Network',
-      value: metrics.network ? `${formatBytes(metrics.network.total.rxBytes)} / ${formatBytes(metrics.network.total.txBytes)}` : '-',
-      // The chart plots rates, so the badge reports the current rate - "RX/TX"
-      // named the axes rather than giving a reading, and the cumulative byte
-      // totals underneath it are not what is drawn.
-      badge: (
-        <Badge bg="secondary">
-          ↓{formatBytes(series.rxRate[series.rxRate.length - 1] ?? 0)}/s ↑{formatBytes(series.txRate[series.txRate.length - 1] ?? 0)}/s
-        </Badge>
-      ),
+      // The chart plots rates, so the headline is the current rate - the
+      // cumulative byte totals that used to sit here are not what is drawn.
+      // They are still one click away, in the tile's detail.
+      value: `↓${formatBytes(series.rxRate[series.rxRate.length - 1] ?? 0)}/s`,
+      secondary: `↑${formatBytes(series.txRate[series.txRate.length - 1] ?? 0)}/s`,
+      tone: 'idle' as const,
       chart: (
         <OverlaySparkline a={series.rxRate} b={series.txRate} />
       ),
       details: (
         <div>
           <div style={{maxHeight:200, overflow:'auto'}}>
+            <div className="mb-2">Total since boot: RX {formatBytes(metrics.network?.total?.rxBytes)} &nbsp; TX {formatBytes(metrics.network?.total?.txBytes)}</div>
             {Object.entries(metrics.network?.interfaces || {}).map(([name, v])=> (
               <div key={name} style={{marginBottom:6}}>
-                <div style={{fontWeight:600}}>{name}</div>
+                <div className="eb-mono fw-semibold">{name}</div>
                 <div>RX: {formatBytes(v.rxBytes)} &nbsp; TX: {formatBytes(v.txBytes)}</div>
               </div>
             ))}
@@ -472,35 +465,68 @@ export default function SystemWidget() {
     },
   ];
 
-  const healthStatus = (health?.health === 'ok' || health?.ok === true) ? 'Healthy' : 'Degraded';
-  const healthColor = (health?.health === 'ok' || health?.ok === true) ? 'success' : 'danger';
-  const activeServicesCount = services.filter(s => s.status === 'active').length;
+  /*
+   *  One state, not two.
+   *
+   *  The bar used to carry a "Healthy" pill and an "MQTT connected" pill side
+   *  by side, and the first of them could never say anything else: /api/health
+   *  is `res.json({ ok: true })` - a constant. It only reads false when the
+   *  request fails outright, which means the page is not talking to the hub at
+   *  all. The broker is the one dependency of this service that can actually
+   *  be down while everything else answers.
+   *
+   *  So the two are folded into a single pill that reports the worst thing
+   *  true of the system: unreachable beats broker-down beats healthy. The
+   *  broker still gets its own labelled row in the expanded panel, which is
+   *  where you look when you want the detail rather than the summary.
+   */
+  const reachable = (health?.health === 'ok' || health?.ok === true);
+
+  /*
+   *  The MQTT broker, which is the whole of what /api/services reports.
+   *
+   *  That endpoint returns two hardcoded entries (see getServicesSnapshot in
+   *  src/index.ts): 'mosquitto', whose status mirrors mqttClient.connected,
+   *  and 'devicehub', which is a literal 'active' - the process writing that
+   *  word is the one answering the request, so it can never say anything
+   *  else. A dead hub is a 502 from nginx, or a 504 on a wedged event loop,
+   *  and this page does not render at all.
+   *
+   *  So there was never a grid of services here, only one bit of information
+   *  wearing a grid: is the broker connected. It is reported as that, once,
+   *  beside the other facts about the machine. The hub's own version is a
+   *  build identifier rather than a health signal and sits with the
+   *  environment.
+   */
+  const brokerService = services.find(s => s.unit === 'mosquitto');
+  const brokerUp = brokerService?.status === 'active';
+  const brokerKnown = !!brokerService;
+  const hubVersion = services.find(s => s.unit === 'devicehub')?.version;
+
+  const systemTone: 'ok' | 'fault' = (!reachable || (brokerKnown && !brokerUp)) ? 'fault' : 'ok';
+  const systemStatus = !reachable ? 'Unreachable'
+                     : (brokerKnown && !brokerUp) ? 'MQTT down'
+                     : 'Healthy';
 
   return (
     <Card className="mb-3" data-testid="system-widget">
       <Card.Header
-        className="d-flex justify-content-between align-items-center flex-wrap"
+        className="justify-content-between flex-wrap"
         style={{ gap: 8, cursor: 'pointer' }}
         onClick={() => setExpanded(v => !v)}
       >
-        <div className="d-flex align-items-center flex-wrap" style={{ gap: 14 }}>
-          <span><i className="fa-solid fa-server me-2"></i>System</span>
+        <div className="d-flex align-items-center flex-wrap" style={{ gap: 12 }}>
+          <span className="eb-panel-title"><i className="fa-solid fa-server"></i>System</span>
           {/* Compact status strip: what you'd want to know without expanding. */}
           {!metricsLoading && !servicesLoading && (
-            <div
-              className="d-flex align-items-center flex-wrap"
-              style={{ gap: 10, fontSize: '0.8rem', fontWeight: 400, textTransform: 'none', letterSpacing: 'normal' }}
-            >
-              <Badge bg={healthColor}>{healthStatus}</Badge>
-              <span className="text-muted">up {humanizedUptime(status, metrics)}</span>
-              <span className="text-muted">
-                CPU {metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '-'}
-                {' · '}MEM {metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '-'}
-                {' · '}DISK {metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '-'}
+            <div className="d-flex align-items-center flex-wrap" style={{ gap: 10, fontSize: '0.8rem' }}>
+              <StatusPill tone={systemTone} label={systemStatus} />
+              <span className="eb-muted eb-num">up {humanizedUptime(status, metrics)}</span>
+              <span className="eb-muted eb-num">
+                CPU {metrics.cpu ? `${Math.round(metrics.cpu.approxUsagePercent)}%` : '—'}
+                {' · '}MEM {metrics.memory ? `${Math.round(metrics.memory.usedPercent)}%` : '—'}
+                {' · '}DISK {metrics.disk?.mounts?.[0]?.usedPercent != null ? `${Math.round(metrics.disk.mounts[0].usedPercent)}%` : '—'}
               </span>
-              <Badge bg={activeServicesCount === services.length ? 'success' : 'warning'}>
-                {activeServicesCount}/{services.length} services
-              </Badge>
             </div>
           )}
         </div>
@@ -544,26 +570,31 @@ export default function SystemWidget() {
                   <Spinner animation="border" size="sm" />
                 ) : (
                   <Row>
-                    <Col md="4" sm="6" xs="12">
-                      <div><strong>Status</strong></div>
-                      <Badge bg={healthColor}>{healthStatus}</Badge>
+                    <Col md="3" sm="6" xs="12">
+                      <div className="eb-section-title mb-1">Status</div>
+                      <StatusPill tone={systemTone} label={systemStatus} />
                     </Col>
-                    <Col md="4" sm="6" xs="12">
-                      <div><strong>Uptime</strong></div>
-                      <div>{humanizedUptime(status, metrics)}</div>
+                    <Col md="3" sm="6" xs="12">
+                      <div className="eb-section-title mb-1">MQTT broker</div>
+                      {brokerKnown
+                        ? <StatusPill tone={brokerUp ? 'ok' : 'fault'} label={brokerUp ? 'Connected' : 'Disconnected'} />
+                        : <span className="eb-subtle">—</span>}
                     </Col>
-                    <Col md="4" sm="6" xs="12">
-                      <div><strong>Environment</strong></div>
-                      <div>
-                        {config ? (
-                          <div>
-                            <div>{config.osDistribution || config.platform || 'Unknown OS'}</div>
-                            <div style={{fontSize: '0.85em', color: '#666'}}>
-                              {config.nodeVersion ? `Node.js ${config.nodeVersion}` : 'Node.js'}
-                            </div>
+                    <Col md="3" sm="6" xs="12">
+                      <div className="eb-section-title mb-1">Uptime</div>
+                      <div className="eb-num">{humanizedUptime(status, metrics)}</div>
+                    </Col>
+                    <Col md="3" sm="6" xs="12">
+                      <div className="eb-section-title mb-1">Environment</div>
+                      {config ? (
+                        <div>
+                          <div>{config.osDistribution || config.platform || 'Unknown OS'}</div>
+                          <div className="eb-subtle" style={{fontSize: '0.85em'}}>
+                            {config.nodeVersion ? `Node.js ${config.nodeVersion}` : 'Node.js'}
+                            {hubVersion ? ` · Device Hub ${hubVersion}` : ''}
                           </div>
-                        ) : '-'}
-                      </div>
+                        </div>
+                      ) : <span className="eb-subtle">—</span>}
                     </Col>
                   </Row>
                 )}
@@ -574,39 +605,31 @@ export default function SystemWidget() {
                 {metricsLoading ? (
                   <Spinner animation="border" size="sm" />
                 ) : metricsError ? (
-                  <div style={{ color: '#c00' }}>{metricsError}</div>
+                  <div className="alert alert-danger mb-0">{metricsError}</div>
                 ) : (
                   <Row className="g-3">
                     {metricsTiles.map((t: any) => (
                       <Col key={t.key} xs={12} sm={6} md={3} lg={3} xl={3}>
-                        {/* Title and value share one line above the chart -
-                            they used to take a row each, which is what made
-                            the tile tall. Sitting over the chart was tried and
-                            rejected: a high value tracks straight through the
-                            labels, and there is no reading of that which is
-                            not slightly wrong. */}
+                        {/* Label, then the reading at display size, then the
+                            chart. The value used to be printed twice - once as
+                            text and again inside a coloured badge - which is
+                            how a number ends up with less presence than the
+                            chrome around it. Sitting the value over the chart
+                            was tried and rejected: a high value tracks
+                            straight through the label. */}
                         <div
                           role="button"
                           onClick={() => setSelectedMetric(t.key)}
-                          style={{
-                            border: '1px solid #e0e0e0',
-                            borderRadius: 8,
-                            padding: 10,
-                            height: '100%',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                            cursor: 'pointer'
-                          }}
+                          className="eb-tile eb-tile-interactive"
                         >
-                          <div
-                            style={{
-                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                              gap: 8, marginBottom: 6
-                            }}
-                          >
-                            <span style={{ fontWeight: 600 }}>{t.title}</span>
-                            {t.badge}
+                          <div className="eb-metric-label">{t.title}</div>
+                          <div className="d-flex align-items-baseline gap-2 mb-1">
+                            <span className={`eb-metric-value${t.tone === 'idle' ? '' : ` eb-metric-value-${t.tone}`}`}>
+                              {t.value}
+                            </span>
+                            {t.secondary && <span className="eb-metric-unit eb-num">{t.secondary}</span>}
                           </div>
-                          <div style={{ height: 72 }}>{t.chart}</div>
+                          <div style={{ height: 56 }}>{t.chart}</div>
                         </div>
                       </Col>
                     ))}
@@ -615,48 +638,6 @@ export default function SystemWidget() {
               </div>
             </div>
             
-            {/* Services section */}
-            <div className="mt-4">
-              <h6 className="mb-3">Services</h6>
-              {servicesLoading ? (
-                <Spinner animation="border" size="sm" />
-              ) : servicesError ? (
-                <div style={{ color: '#c00' }}>{servicesError}</div>
-              ) : (
-                <>
-                  {services.length === 0 ? (
-                    <div>No services found.</div>
-                  ) : (
-                    <Row className="g-2">
-                      {services.map((s) => {
-                        const variant = s.status === 'active' ? 'success' : (s.status === 'inactive' ? 'secondary' : 'warning');
-                        return (
-                          <Col key={s.unit} xs={12} sm={6} md={4} lg={3} xl={2}>
-                            <div
-                              style={{
-                                border: '1px solid #e0e0e0',
-                                borderRadius: 6,
-                                padding: 8,
-                                height: '100%',
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                              }}
-                            >
-                              <div style={{ fontWeight: 600, wordBreak: 'break-all', fontSize: '0.9em' }}>
-                                {prettyUnitName(s.unit)}{' '}
-                                {s.version ? <span style={{ fontWeight: 400, fontSize: 11, color:'#666' }}>v{s.version}</span> : null}
-                              </div>
-                              <div style={{ marginTop: 6 }}>
-                                <Badge bg={variant} style={{ fontSize: '0.75em' }}>{s.status}</Badge>
-                              </div>
-                            </div>
-                          </Col>
-                        );
-                      })}
-                    </Row>
-                  )}
-                </>
-              )}
-            </div>
         </div>
         </Card.Body>
         </div>
@@ -668,19 +649,20 @@ export default function SystemWidget() {
         <Modal show={!!selectedMetric} onHide={() => setSelectedMetric(null)} centered size="lg">
           <Modal.Header closeButton closeVariant="white">
             <Modal.Title>
-              <FontAwesomeIcon icon={faChartLine} />{selectedMetric ? metricsTiles.find((t: any) => t.key === selectedMetric)?.title : 'Metrics'} Details
+              <FontAwesomeIcon icon={faChartLine} />
+              {selectedMetric ? metricsTiles.find((t: any) => t.key === selectedMetric)?.title : 'Metrics'} details
             </Modal.Title>
           </Modal.Header>
           <Modal.Body>
             {selectedMetric && (
               <div>
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Current Value</div>
-                  <div>{metricsTiles.find((t: any) => t.key === selectedMetric)?.value}</div>
+                  <div className="eb-section-title mb-1">Current value</div>
+                  <div className="eb-metric-value">{metricsTiles.find((t: any) => t.key === selectedMetric)?.value}</div>
                 </div>
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Historical Trend</div>
-                  <div style={{ height: 120, border: '1px solid #e0e0e0', borderRadius: 4, padding: 8 }}>
+                  <div className="eb-section-title mb-2">Historical trend</div>
+                  <div className="eb-tile" style={{ height: 120 }}>
                     {selectedMetric === 'cpu' && <Sparkline values={series.cpu} domain={[0, 100]} />}
                     {selectedMetric === 'memory' && <Sparkline values={series.mem} domain={[0, 100]} />}
                     {selectedMetric === 'disk' && <Sparkline values={series.disk} domain={[0, 100]} />}
@@ -688,7 +670,7 @@ export default function SystemWidget() {
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Details</div>
+                  <div className="eb-section-title mb-2">Details</div>
                   {metricsTiles.find((t: any) => t.key === selectedMetric)?.details}
                 </div>
               </div>

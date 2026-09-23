@@ -1,41 +1,25 @@
-:root {
-  /*
-   *  Unify every "primary action" affordance onto Edgeberry Blue rather than
-   *  letting Bootstrap's default blue (--bs-primary), a hijacked --bs-success,
-   *  and the bespoke .btn-edgeberry class all compete for the role. Success and
-   *  danger point at the same status tokens Edgeberry-device-software uses, so
-   *  "online"/"active" reads as --eb-ok green (not brand blue) and destructive
-   *  actions read as --eb-fault red. The *-rgb variables must stay literal
-   *  "r, g, b" triplets - Bootstrap composes them into rgba() - so keep them in
-   *  sync with theme.css by hand.
-   */
-  --bs-primary: var(--eb-primary);
-  --bs-primary-rgb: 0, 7, 255;
+/*
+ *  Device Hub component layer.
+ *
+ *  Selectors only. Every rule here either restyles a Bootstrap component or
+ *  defines a small named pattern (.eb-*) used in more than one place, and
+ *  every value it uses comes from a token. No raw colours, radii or shadows,
+ *  and no :root block - the vocabulary, including the Bootstrap --bs-*
+ *  mappings, lives entirely in theme.css so that file can be ported on its
+ *  own. If a value is missing, add it there.
+ *
+ *  The through-line: stock Bootstrap signals state with solid, saturated fills
+ *  (badges, buttons, alerts) and separates structure with one mid-grey
+ *  hairline at one radius. That reads as "a page with Bootstrap on it". This
+ *  layer swaps fills for soft tints plus a coloured dot, gives surfaces a real
+ *  stacking order, and keeps saturated colour for the few things that are
+ *  genuinely a call to action or a fault.
+ */
 
-  --bs-success: var(--eb-ok);
-  --bs-success-rgb: 46, 160, 67;
-  --bs-success-bg-subtle: rgba(46, 160, 67, 0.12);
-  --bs-success-border-subtle: rgba(46, 160, 67, 0.35);
+/* ===========================================================================
+ *  Shell
+ * ======================================================================== */
 
-  --bs-danger: var(--eb-fault);
-  --bs-danger-rgb: 224, 49, 49;
-  --bs-danger-bg-subtle: rgba(224, 49, 49, 0.12);
-  --bs-danger-border-subtle: rgba(224, 49, 49, 0.35);
-}
-
-.alert-success {
-  --bs-alert-bg: var(--bs-success-bg-subtle);
-  --bs-alert-border-color: var(--bs-success-border-subtle);
-  --bs-alert-color: #145a28;
-}
-
-.alert-danger {
-  --bs-alert-bg: var(--bs-danger-bg-subtle);
-  --bs-alert-border-color: var(--bs-danger-border-subtle);
-  --bs-alert-color: #7a1f1f;
-}
-
-/* Global sizing and background */
 html, body, #root {
   height: 100%;
   width: 100%;
@@ -46,124 +30,421 @@ html, body, #root {
 
 body {
   background-color: var(--eb-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* App container. The faint Laika illustration in the corner is a deliberate
-   Edgeberry touch - kept, but the busy tiled cardboard texture that used to
-   sit behind everything is gone in favour of the flat --eb-bg surface the
-   rest of the theme assumes. */
 .App {
   height: 100vh;
   width: 100vw;
   display: flex;
   flex-direction: column;
-  background-image: url('/Laika_Guevara.png');
-  background-size: 15vw;
-  background-repeat: no-repeat;
-  background-position: bottom right;
 }
 
 /*
- *  Panels. Bootstrap's default card is a plain white box with a hairline
- *  border; give it the same quiet, flat treatment as Edgeberry-device-software
- *  and turn the header into a SectionLabel-style strip (small caps, brand-blue
- *  icon) instead of a heavy grey bar.
+ *  The faint Laika illustration in the corner is a deliberate Edgeberry touch.
+ *  It moved off `.App`'s own background onto a pseudo-element so it can carry
+ *  an opacity of its own: at full strength a photographic PNG behind a data
+ *  table competes with the data, and on the page tint it was the loudest thing
+ *  on screen. z-index -1 drops it behind the content without giving `.App` a
+ *  stacking context, and `fixed` keeps it pinned while the content scrolls.
+ */
+.App::after {
+  content: '';
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 15vw;
+  height: 15vw;
+  background: url('/Laika_Guevara.png') no-repeat right bottom / contain;
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/*
+ *  Scrollbars. The default chrome scrollbar is a wide grey slab that, on a
+ *  panel that scrolls internally, reads as part of the design. Thin, on the
+ *  hairline colour, transparent track.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--eb-line-strong) transparent;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--eb-line-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--eb-radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover { background-color: var(--eb-fg-subtle); background-clip: content-box; }
+
+/*
+ *  Snappier chrome. Bootstrap's defaults (.3s modal slide, .35s collapse) feel
+ *  sluggish on a dashboard whose panels are opened and closed constantly.
+ *  Behind a no-preference query so Bootstrap's reduced-motion rules still win.
+ *  Same values as Edgeberry-device-software/webui.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .modal.fade .modal-dialog { transition: transform 0.12s ease-out; }
+  .fade { transition: opacity 0.08s linear; }
+  .collapsing { transition: height 0.15s ease; }
+}
+
+
+/* ===========================================================================
+ *  Navbar
+ * ======================================================================== */
+
+/*
+ *  A shadow rather than a border: the bar is darker than everything under it,
+ *  so a hairline would be invisible, but without *some* separation a sticky
+ *  bar and the content scrolling under it merge at the seam.
+ */
+.navbar {
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+  box-shadow: 0 1px 3px rgba(20, 23, 26, 0.2);
+}
+
+/*
+ *  Product line under the wordmark, set the way the Edgeberry banner artwork
+ *  sets it (brand/GitHub-organization: blue EDGEBERRY, then the product in
+ *  light grey caps beneath, ranged right to the wordmark's edge). Same
+ *  relationship here, so the bar and the banners read as one identity.
+ *
+ *  Grey rather than --eb-navbar-fg: this names the product, it is not a label
+ *  to be read every time. The version rides along because this is the one
+ *  place in the interface that identifies the build.
+ */
+/*
+ *  Icon-only action in the dark bar (logout).
+ *
+ *  A square target rather than a bare glyph: an icon with no label needs a
+ *  hit area and something that reacts to the pointer, or there is nothing to
+ *  tell you it is a control. The name lives in title/aria-label, so it still
+ *  announces itself to a screen reader and on hover.
+ */
+.eb-navbar-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--eb-radius-sm);
+  color: var(--eb-navbar-fg);
+  font-size: 1.05rem;
+  text-decoration: none;
+  transition: background-color 0.12s ease;
+}
+
+.eb-navbar-action:hover,
+.eb-navbar-action:focus-visible {
+  background-color: rgba(255, 255, 255, 0.12);
+  color: var(--eb-navbar-fg);
+}
+
+.eb-navbar-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--eb-primary-ring);
+}
+
+.eb-brand-subtext {
+  display: block;
+  /*
+   *  Negative, to sit the product line up under the wordmark's baseline the
+   *  way the banner artwork locks the two together.
+   *
+   *  The logo SVG's viewBox runs ~26% taller than its baseline (text baseline
+   *  at y=98.27 of 132.29), so at 30px there is ~7.7px of empty image below
+   *  the final letters. Left alone, that whitespace plus the line box pushed
+   *  the two apart by 11px and they read as two separate things stacked,
+   *  rather than one lockup.
+   */
+  margin-top: -6.5px;
+  /* ~70% of the wordmark's cap height, the proportion the banner artwork
+     uses between EDGEBERRY and the product line. */
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: rgba(245, 245, 245, 0.72);
+  white-space: nowrap;
+  /*
+   *  Optically ranged right to the last letter of the wordmark, not to the
+   *  image's box. Two things sit between them: the logo SVG carries ~3.8px of
+   *  transparent margin past the final Y at this height, and letter-spacing
+   *  adds a trailing gap after the last character that belongs to no glyph.
+   *  This cancels the difference. It is tuned to EdgeBerry_Logo_text.svg at
+   *  30px - re-measure if either the asset or the logo height changes.
+   */
+  margin-right: 2.5px;
+}
+
+
+/* ===========================================================================
+ *  Panels
+ *
+ *  Bootstrap's card is a white box on a white page, told apart by a hairline.
+ *  Here the page is tinted and the card is the white surface on top of it, so
+ *  the panel is legible as an object even before the border is noticed - and
+ *  the border can then be a genuine hairline instead of doing all the work.
+ * ======================================================================== */
+
+/*
+ *  One rule for every rounded container in this interface: the CONTAINER
+ *  carries the radius and clips, its children carry none.
+ *
+ *  Bootstrap does the opposite - each child re-rounds its own corners from a
+ *  `--bs-*-inner-border-radius` it derives from the DEFAULT radius rather than
+ *  from whatever the container was actually set to. Two curves then get drawn
+ *  over one another and the container's fill fringes past the child's, which
+ *  is where the pale slivers in the corners come from. Here the card is set to
+ *  --eb-radius-lg while Bootstrap's inner radius stays on the base token, so
+ *  every child was rounding 5px inside a 10px box.
+ *
+ *  Zeroing the inner radius and clipping means one curve, drawn once. Nothing
+ *  inside a card needs to escape it: PortalMenu renders into document.body.
  */
 .card {
-  border-color: var(--eb-line);
-}
-
-.card-header {
-  background-color: var(--bs-tertiary-bg);
-  border-bottom-color: var(--eb-line);
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.card-header i.fa-solid,
-.card-header i.fa-regular {
-  color: var(--eb-primary);
+  --bs-card-inner-border-radius: 0;
+  background-color: var(--eb-surface);
+  border: 1px solid var(--eb-line);
+  border-radius: var(--eb-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--eb-shadow-sm);
 }
 
 /*
- *  Modals. Dark header matching the navbar, same as every modal in
- *  Edgeberry-device-software (ModalShell for big content, PowerModal for
- *  small confirms), so a settings dialog and the top bar read as one surface
- *  rather than two different products. Sizing/spacing values (header padding,
- *  title size) are copied from that project's inline styles rather than
- *  Bootstrap's defaults, for the same reason.
+ *  The header is a bar of controls, not a heading: it carries a title, and
+ *  usually a search box, status strip or action buttons beside it. So it is a
+ *  flex row with no fill of its own - a grey strip here would add a third
+ *  surface for no information - and the title carries its own typography via
+ *  .eb-panel-title rather than the header restyling whatever lands in it.
+ *  (The old rule set text-transform on the header itself, which every input
+ *  placeholder inside it inherited.)
  */
-.modal-content {
-  background-color: var(--eb-bg);
-  border-color: var(--eb-line);
-}
-
-.modal-header {
-  background-color: var(--eb-navbar-bg);
-  color: var(--eb-navbar-fg);
-  border-bottom: none;
-  padding: 0.5rem 1rem;
-}
-
-.modal-title {
-  color: var(--eb-navbar-fg);
-  font-size: 0.9rem;
-  font-weight: 600;
+.card-header {
   display: flex;
   align-items: center;
+  gap: 0.75rem;
+  min-height: 3rem;
+  padding: 0.625rem 1rem;
+  background-color: transparent;
+  border-bottom: 1px solid var(--eb-line);
+  color: var(--eb-fg);
 }
 
-.modal-title .fa-solid,
-.modal-title .fa-regular,
-.modal-title svg {
+.card-body { padding: 1rem; }
+
+/* A body holding nothing but a full-bleed table: the table supplies its own
+   edge padding (.eb-table), so the body must not add a second inset that
+   stops row hover/selection short of the panel edge. */
+.card-body.eb-body-flush { padding: 0; }
+
+/*
+ *  A panel title is a title, not a micro-label.
+ *
+ *  It used to be 13px uppercase with 0.07em tracking - the same treatment as
+ *  the table column headers inside the panel, only two pixels larger. So the
+ *  top of the hierarchy and the bottom of it looked alike, and the count
+ *  beside it, sitting at full body size, ended up the largest thing in the
+ *  bar: the heading was outweighed by its own footnote.
+ *
+ *  Sentence case at 1rem instead, matching .modal-title, which gives three
+ *  distinct ranks - panel title, then the small-caps section/column labels,
+ *  then body text - rather than two that collide.
+ */
+.eb-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--eb-fg);
+  white-space: nowrap;
+}
+
+.eb-panel-title > i,
+.eb-panel-title > svg {
   color: var(--eb-primary);
-  margin-right: 0.5rem;
+  font-size: 0.9em;
 }
 
 /*
- *  Fixed-shape modal, for content that varies a lot in length (device detail:
- *  a "Loading..." spinner one moment, a full JSON dump the next). react-
- *  bootstrap's `scrollable` prop only caps height with max-height, so a short
- *  state still shrinks the dialog - a real height keeps the window the same
- *  size regardless of what's showing, and the body scrolls inside it. Same
- *  convention as Edgeberry-device-software's .eb-modal-content. Borderless,
- *  matching that project's big content modals (ModalShell) - the plain
- *  `.modal-content` border above is for small confirm dialogs (PowerModal),
- *  which have no surrounding page content to set themselves apart from.
+ *  The counts beside a panel title ("8 registered · 5 online"). A sibling of
+ *  the title rather than a child: as a child it inherited the title's weight,
+ *  case and tracking and had to undo all three inline at every call site.
  */
-.eb-modal-content {
-  height: 85vh;
-  border: none;
+.eb-panel-meta {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--eb-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-@media (max-width: 575.98px) {
-  .eb-modal-content {
-    height: 100%;
-  }
+/* Small caps heading introducing a sub-section *inside* a panel - one step
+   below .eb-panel-title, and in muted grey rather than brand blue so the two
+   are not competing for the same rank. */
+.eb-section-title {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--eb-fg-muted);
 }
 
-/* Bootstrap's .btn-close is dark-on-transparent by default, which disappears
-   against the dark header above. Edgeberry-device-software's modals use
-   Bootstrap's own .btn-close-white class for this (via react-bootstrap's
-   `closeVariant="white"` prop on every Modal.Header here) - this fallback
-   filter only matters for a close button that forgets the prop. */
-.modal-header .btn-close {
-  filter: invert(1) grayscale(100%) brightness(200%);
+
+/* ===========================================================================
+ *  Status
+ *
+ *  A soft-tinted tag with a dot, replacing the solid Bootstrap badge. Three
+ *  reasons:
+ *  a wall of saturated fills down a Status column makes every row shout
+ *  equally loudly; the fills leave no colour left over for a state that is
+ *  actually urgent; and the dot survives being read by someone who cannot
+ *  separate the hues, because the label is right there in dark text rather
+ *  than reversed out of the colour.
+ * ======================================================================== */
+
+.eb-status {
+  --eb-status-dot: var(--eb-idle);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  /* Padding, line-height, radius and box size are deliberately identical to
+     .eb-chip: the two sit in adjacent columns of the device list, so a
+     difference in either shape or height reads as one of them being broken.
+     The transparent border is what makes the heights match exactly - the chip
+     has a real one. */
+  padding: 0.1rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--eb-radius-sm);
+  background-color: var(--eb-idle-soft);
+  color: var(--eb-idle-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
-/* Table headers get the same small-caps treatment as card headers, for the
-   same reason - one consistent "this is a label" convention across the app. */
-.table > thead {
-  font-size: 0.72rem;
+.eb-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background-color: var(--eb-status-dot);
+}
+
+.eb-status-ok    { background-color: var(--eb-ok-soft);    color: var(--eb-ok-text);    --eb-status-dot: var(--eb-ok); }
+.eb-status-warn  { background-color: var(--eb-warn-soft);  color: var(--eb-warn-text);  --eb-status-dot: var(--eb-warn); }
+.eb-status-fault { background-color: var(--eb-fault-soft); color: var(--eb-fault-text); --eb-status-dot: var(--eb-fault); }
+
+/*
+ *  Tag chip - group names, and anything else that is a label the user typed
+ *  rather than a state the system is reporting. Deliberately uncoloured: a
+ *  group is not a status, and Bootstrap's grey .badge made it look like one.
+ */
+.eb-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--eb-line);
+  border-radius: var(--eb-radius-sm);
+  background-color: var(--eb-surface-sunken);
+  color: var(--eb-fg-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* Any Bootstrap badge still in play (third-party markup, one-offs) at least
+   picks up the shape and weight of the labels around it. */
+.badge {
+  border-radius: var(--eb-radius-sm);
+  padding: 0.28em 0.65em;
+  font-weight: 700;
+}
+
+
+/* ===========================================================================
+ *  Typography utilities
+ * ======================================================================== */
+
+/* Identifiers - UUIDs, unit names, tokens. Mono, one step down in size
+   (mono digits run wide) and muted, because a hardware ID is a thing you
+   match against a value you already have, not a thing you read. */
+.eb-mono {
+  font-family: var(--eb-font-mono);
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+}
+
+/* Anything that updates in place: metric readouts, countdowns, "offline for
+   N seconds". Proportional digits change width as they tick, which makes the
+   whole line jitter once a second. */
+.eb-num { font-variant-numeric: tabular-nums; }
+
+.eb-muted { color: var(--eb-fg-muted); }
+.eb-subtle { color: var(--eb-fg-subtle); }
+
+
+/* ===========================================================================
+ *  Tables
+ * ======================================================================== */
+
+.table {
+  --bs-table-bg: transparent;
+  margin-bottom: 0;
+  color: var(--eb-fg);
+}
+
+.table > thead > tr > th {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--eb-line);
+  font-size: 0.6875rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--bs-secondary-color);
+  color: var(--eb-fg-muted);
+  white-space: nowrap;
 }
 
+.table > tbody > tr > td {
+  padding: 0.5rem 0.75rem;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--eb-line);
+}
+
+/* The last row's rule would otherwise double up with the panel's own bottom
+   edge, or float in space when the table is the last thing in a card body. */
+.table > tbody > tr:last-child > td { border-bottom: 0; }
+
 /*
- *  Device list interactivity.
+ *  Full-bleed table: the rows run the whole width of the panel (its body
+ *  drops its padding via .eb-body-flush) and the first and last cells carry
+ *  the inset instead. A hovered or selected row then reads as a band across
+ *  the panel rather than a floating stripe with gaps at both ends.
+ */
+.eb-table > thead > tr > th:first-child,
+.eb-table > tbody > tr > td:first-child { padding-left: 1rem; }
+
+.eb-table > thead > tr > th:last-child,
+.eb-table > tbody > tr > td:last-child { padding-right: 1rem; }
+
+/*
+ *  Row interactivity.
  *
  *  Per-row actions (view/identify/edit/delete/replace) stay out of the way
  *  until the row is actually being looked at - hidden by default, revealed on
@@ -178,11 +459,22 @@ body {
   transition: background-color 0.15s ease, border-left-color 0.15s ease;
 }
 
+/*
+ *  Hover is a neutral wash, not a blue one. Blue is the nominal-state colour
+ *  now (see theme.css), and an "Online" pill sitting on a blue-tinted row put
+ *  the same hue behind and inside the same badge - the pill dissolved into the
+ *  row under the cursor. The brand-blue left edge still marks the active row;
+ *  it is on the boundary, not behind the content.
+ */
 .device-row:hover,
 .device-row:focus-within {
-  background-color: color-mix(in srgb, var(--eb-primary) 8%, transparent) !important;
+  background-color: var(--eb-surface-sunken) !important;
   border-left-color: var(--eb-primary);
 }
+
+/* The accent eats 2px off the left inset, so the text in a hovered row would
+   otherwise shift by 2px against its neighbours. */
+.eb-table > tbody > tr.device-row > td:first-child { padding-left: calc(1rem - 2px); }
 
 .device-actions {
   opacity: 0;
@@ -190,83 +482,432 @@ body {
 }
 
 .device-row:hover .device-actions,
-.device-row:focus-within .device-actions,
-.device-tile:hover .device-actions,
-.device-tile:focus-within .device-actions {
+.device-row:focus-within .device-actions {
   opacity: 1;
-}
-
-/* Tile view gets the same quiet-until-hovered treatment as the list rows. */
-.device-tile {
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.device-tile:hover {
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
 /* Actions are keyboard/touch-reachable even without hover support (coarse
    pointers, some assistive tech) - a real :hover never fires there. */
 @media (hover: none) {
-  .device-actions {
-    opacity: 1;
-  }
+  .device-actions { opacity: 1; }
 }
 
-/* Edgeberry blue button styling (outline, filled solid Edgeberry blue on
-   hover/active) - used where a filled .btn-primary would be too heavy, e.g.
-   the per-row action icon buttons in the device list. */
+
+/* ===========================================================================
+ *  Tiles (metrics, services)
+ * ======================================================================== */
+
+.eb-tile {
+  height: 100%;
+  padding: 0.75rem 0.875rem;
+  border: 1px solid var(--eb-line);
+  border-radius: var(--eb-radius);
+  background-color: var(--eb-surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.eb-tile-interactive { cursor: pointer; }
+
+.eb-tile-interactive:hover,
+.eb-tile-interactive:focus-visible {
+  border-color: var(--eb-line-strong);
+  box-shadow: var(--eb-shadow-sm);
+}
+
+/*
+ *  A metric readout: micro-caps label, then the number at display size.
+ *
+ *  The tiles used to print the value twice - once as text and again inside a
+ *  coloured badge - which is how a number ends up with less presence than the
+ *  chrome around it. One number, large, tabular, and coloured only when it has
+ *  crossed a threshold; at rest it is plain foreground, so a tile that has
+ *  gone amber is visible from across the room.
+ */
+.eb-metric-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--eb-fg-muted);
+}
+
+.eb-metric-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--eb-fg);
+}
+
+.eb-metric-value-warn  { color: var(--eb-warn-text); }
+.eb-metric-value-fault { color: var(--eb-fault-text); }
+
+.eb-metric-unit {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--eb-fg-muted);
+}
+
+/* Subtle panel used for inline confirmations, expanded detail, or grouped
+   forms (InsetPanel in components/ui.tsx). */
+.eb-inset {
+  padding: 0.875rem 1rem;
+  border-radius: var(--eb-radius);
+  background-color: var(--eb-surface-sunken);
+}
+
+
+/* ===========================================================================
+ *  Controls
+ * ======================================================================== */
+
+.btn { --bs-btn-font-weight: 600; }
+
+/* One focus ring for every control, in brand blue, instead of Bootstrap's
+   per-variant coloured glow (which tints itself to the button and so changes
+   meaning from button to button). */
+.btn:focus-visible,
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus {
+  box-shadow: 0 0 0 3px var(--eb-primary-ring);
+}
+
+.btn-primary {
+  --bs-btn-bg: var(--eb-primary);
+  --bs-btn-border-color: var(--eb-primary);
+  --bs-btn-hover-bg: var(--eb-primary-hover);
+  --bs-btn-hover-border-color: var(--eb-primary-hover);
+  --bs-btn-active-bg: var(--eb-primary-active);
+  --bs-btn-active-border-color: var(--eb-primary-active);
+  --bs-btn-disabled-bg: var(--eb-primary);
+  --bs-btn-disabled-border-color: var(--eb-primary);
+}
+
+/*
+ *  Neutral button.
+ *
+ *  .btn-secondary and .btn-outline-secondary are Bootstrap's #6c757d grey,
+ *  which is both darker and cooler than anything else on this page - it is one
+ *  of the loudest "this is Bootstrap" signals in the whole interface. Both are
+ *  re-pointed at the surface/hairline tokens so a "Close", a "Cancel" and the
+ *  whitelist/provisioning/terminal icon buttons all read as the same quiet
+ *  control. Re-pointed rather than replaced with a new class so existing
+ *  markup keeps working.
+ */
+.btn-secondary,
+.btn-outline-secondary {
+  --bs-btn-color: var(--eb-fg);
+  --bs-btn-bg: var(--eb-surface);
+  --bs-btn-border-color: var(--eb-line-strong);
+  --bs-btn-hover-color: var(--eb-fg);
+  --bs-btn-hover-bg: var(--eb-surface-sunken);
+  --bs-btn-hover-border-color: var(--eb-line-strong);
+  --bs-btn-active-color: var(--eb-fg);
+  --bs-btn-active-bg: var(--eb-surface-sunken);
+  --bs-btn-active-border-color: var(--eb-line-strong);
+  --bs-btn-active-shadow: none;
+  --bs-btn-disabled-color: var(--eb-fg-subtle);
+  --bs-btn-disabled-bg: var(--eb-surface);
+  --bs-btn-disabled-border-color: var(--eb-line);
+}
+
+/*
+ *  Ghost icon button - the per-row actions in the device and application
+ *  lists.
+ *
+ *  These live in a column that repeats once per row, so at rest they carry no
+ *  border and no fill at all: five outlined blue boxes per row, times twenty
+ *  rows, is a pattern that competes with the data even when it is only
+ *  revealed on hover. The affordance arrives under the cursor - tint plus
+ *  brand colour on the button actually being pointed at.
+ */
+.btn-ghost {
+  --bs-btn-color: var(--eb-fg-muted);
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: transparent;
+  --bs-btn-hover-color: var(--eb-primary);
+  --bs-btn-hover-bg: var(--eb-primary-soft-hover);
+  --bs-btn-hover-border-color: transparent;
+  --bs-btn-active-color: var(--eb-primary-active);
+  --bs-btn-active-bg: var(--eb-primary-soft-hover);
+  --bs-btn-active-border-color: transparent;
+  --bs-btn-active-shadow: none;
+  --bs-btn-disabled-color: var(--eb-fg-subtle);
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: transparent;
+  --bs-btn-focus-shadow-rgb: 0, 7, 255;
+  border-radius: var(--eb-radius-sm);
+}
+
+/*
+ *  Destructive variant, applied alongside .btn-ghost and overriding only the
+ *  hover/active colours so the two never drift apart.
+ *
+ *  At rest it stays neutral like its neighbours: a permanently red icon in a
+ *  row you scan constantly reads as an alarm about the device rather than a
+ *  description of the button. The red arrives under the cursor - the moment
+ *  the click is actually available - which is where the warning is useful.
+ */
+.btn-ghost-danger {
+  --bs-btn-hover-color: var(--eb-fault-text);
+  --bs-btn-hover-bg: var(--eb-fault-soft);
+  --bs-btn-active-color: var(--eb-fault-text);
+  --bs-btn-active-bg: var(--eb-fault-soft);
+  --bs-btn-focus-shadow-rgb: 224, 49, 49;
+}
+
+/*
+ *  Outlined Edgeberry-blue button, for a secondary action that still needs to
+ *  read as an action (inside dialogs, mainly). The row actions that used to
+ *  use this have moved to .btn-ghost.
+ */
 .btn-edgeberry {
   --bs-btn-color: var(--eb-primary);
   --bs-btn-bg: transparent;
   --bs-btn-border-color: var(--eb-primary);
+  /* Literal white, not --eb-surface: this is text reversed out of a filled
+     brand-blue button, which stays white whatever the page surface becomes. */
   --bs-btn-hover-color: #fff;
-  --bs-btn-hover-bg: var(--eb-primary);
-  --bs-btn-hover-border-color: var(--eb-primary);
+  --bs-btn-hover-bg: var(--eb-primary-hover);
+  --bs-btn-hover-border-color: var(--eb-primary-hover);
   --bs-btn-focus-shadow-rgb: 0, 7, 255;
   --bs-btn-active-color: #fff;
-  --bs-btn-active-bg: #0006e6;
-  --bs-btn-active-border-color: #0006e6;
-  --bs-btn-active-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.125);
+  --bs-btn-active-bg: var(--eb-primary-active);
+  --bs-btn-active-border-color: var(--eb-primary-active);
+  --bs-btn-active-shadow: none;
   --bs-btn-disabled-color: var(--eb-primary);
   --bs-btn-disabled-bg: transparent;
   --bs-btn-disabled-border-color: var(--eb-primary);
 }
 
+.form-control,
+.form-select {
+  border-color: var(--eb-line-strong);
+  border-radius: var(--eb-radius-sm);
+  background-color: var(--eb-surface);
+  color: var(--eb-fg);
+}
+
+.form-control::placeholder { color: var(--eb-fg-subtle); }
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--eb-primary);
+}
+
+.form-control:disabled { background-color: var(--eb-surface-sunken); }
+
+.form-label {
+  margin-bottom: 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--eb-fg-muted);
+}
+
+.form-text { color: var(--eb-fg-subtle); }
+
+/* Search field with a leading magnifier (device list). The icon is absolutely
+   positioned by the component; this reserves the room for it so the two do
+   not have to agree on a number in two places. */
+.eb-search { padding-left: 2rem; }
+
+.progress { background-color: var(--eb-surface-sunken); border-radius: var(--eb-radius-pill); }
+
+
+/* ===========================================================================
+ *  Alerts
+ *
+ *  Left-accented rather than a fully tinted box with a matching border all the
+ *  way round: at this size Bootstrap's version is a large field of colour for
+ *  what is usually one line of text.
+ * ======================================================================== */
+
+.alert {
+  border: 1px solid var(--eb-line);
+  border-left: 3px solid var(--eb-idle);
+  border-radius: var(--eb-radius);
+  padding: 0.625rem 0.875rem;
+  color: var(--eb-fg);
+}
+
+.alert-success { border-left-color: var(--eb-ok);    background-color: var(--eb-ok-soft);    color: var(--eb-ok-text); }
+
+.alert-warning { border-left-color: var(--eb-warn);  background-color: var(--eb-warn-soft);  color: var(--eb-warn-text); }
+.alert-danger  { border-left-color: var(--eb-fault); background-color: var(--eb-fault-soft); color: var(--eb-fault-text); }
+
+.alert-heading { font-size: 1rem; font-weight: 700; color: inherit; }
+
+
+/* ===========================================================================
+ *  Danger zone
+ *
+ *  A destructive action that belongs to a panel of read-only detail, rather
+ *  than to the dialog as a whole. It sits at the end of the content, set off
+ *  by a fault-coloured edge and carrying its own explanation of what it does.
+ *
+ *  Not in the footer: a footer button sits beside "Close" in the place muscle
+ *  memory expects a dismiss, which is the last place an irreversible action
+ *  should be. Here it has to be read past to be reached.
+ * ======================================================================== */
+
+.eb-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--eb-line);
+  border-left: 3px solid var(--eb-fault);
+  border-radius: var(--eb-radius);
+}
+
+
+/* ===========================================================================
+ *  Modals
+ *
+ *  Dark header matching the navbar, same as every modal in
+ *  Edgeberry-device-software (ModalShell for big content, PowerModal for small
+ *  confirms), so a settings dialog and the top bar read as one surface rather
+ *  than two different products.
+ * ======================================================================== */
+
 /*
- *  Destructive variant of .btn-edgeberry - applied alongside it, overriding
- *  only the hover/active/focus colours so the two never drift apart.
- *
- *  At rest it stays blue like its neighbours: a permanently red icon in a row
- *  you scan constantly reads as an alarm about the device rather than a
- *  description of the button. The red arrives under the cursor - the moment
- *  the click is actually available - which is where the warning is useful.
- *
- *  --bs-btn-focus-shadow-rgb must stay a literal "r, g, b" triplet (Bootstrap
- *  composes it into rgba()); it is --eb-fault #e03131, kept in sync by hand
- *  like the --bs-danger-rgb at the top of this file.
+ *  A dialog is a sheet of paper, not a card floating in a list: it reads
+ *  squarer than the panels behind it. Same container-clips-its-children rule
+ *  as .card above - the dark header paints a square corner and .modal-content
+ *  cuts it to the curve, so there is one antialiased edge instead of two.
+ *  (Bootstrap already clips `scrollable` modals, which is why only the plain
+ *  ones - sign-in, decommission, terminal - ever showed the seam.)
  */
-.btn-edgeberry-danger {
-  --bs-btn-hover-color: #fff;
-  --bs-btn-hover-bg: var(--eb-fault);
-  --bs-btn-hover-border-color: var(--eb-fault);
-  --bs-btn-focus-shadow-rgb: 224, 49, 49;
-  --bs-btn-active-color: #fff;
-  --bs-btn-active-bg: #c92a2a;
-  --bs-btn-active-border-color: #c92a2a;
+.modal {
+  --bs-modal-border-radius: var(--eb-radius);
+  --bs-modal-inner-border-radius: 0;
+  --bs-modal-border-width: 0;
 }
 
 /*
- *  Portal-rendered dropdown menus (PortalMenu in components/ui.tsx).
+ *  .modal-content paints NO background of its own - its children do.
  *
- *  Rendered into <body> as a plain <ul>, so it never carries Bootstrap's
- *  .dropdown-menu class - but its children are .dropdown-item, and every rule
- *  for that is written against --bs-dropdown-* variables Bootstrap only
- *  declares ON .dropdown-menu. With no such ancestor those items get no
- *  padding, no hover and an invisible divider. Declaring the variables here
- *  restores Bootstrap's own rules, tuned for the dark navbar chrome. Mirrors
- *  Edgeberry-device-software's index.css.
+ *  Clipping a child to a rounded parent is not pixel-exact: the parent's own
+ *  fill and the clipped child edge are antialiased separately, and Chrome
+ *  composites the dialog on its own layer (.modal-dialog is transformed), so
+ *  a hairline of the parent's colour survives along the curve. With a white
+ *  parent under a near-black header that hairline is a pale arc around each
+ *  top corner - faint, but exactly the kind of thing that reads as sloppy.
+ *
+ *  There is nothing to bleed if the parent paints nothing. The surface colour
+ *  moves onto .modal-body, the footer already has its own, and the header is
+ *  the dark chrome - so every corner is the child's colour clipped over the
+ *  backdrop, with one antialiased edge.
  */
+.modal-content {
+  background-color: transparent;
+  border: none;
+  border-radius: var(--eb-radius);
+  overflow: hidden;
+  box-shadow: var(--eb-shadow-lg);
+}
+
+/* .eb-modal-content fixes a height so the dialog does not resize as its
+   content changes; with the clip above, a body that outgrows that height must
+   scroll rather than be cut off. Bootstrap only sets this for `scrollable`
+   modals, and two of these are not. */
+.eb-modal-content > .modal-body {
+  overflow-y: auto;
+}
+
+.modal-header {
+  background-color: var(--eb-navbar-bg);
+  color: var(--eb-navbar-fg);
+  border-bottom: none;
+  padding: 0.75rem 1rem;
+}
+
+/* Sized against the body text under it rather than treated as a caption: at
+   0.9rem the title was smaller than the content it introduced, which made the
+   dark bar read as a toolbar rather than as the dialog's name. */
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--eb-navbar-fg);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.modal-title .fa-solid,
+.modal-title .fa-regular,
+.modal-title svg {
+  color: var(--eb-primary);
+}
+
+.modal-body {
+  padding: 1rem;
+  background-color: var(--eb-surface);
+}
+
+.modal-footer {
+  border-top: 1px solid var(--eb-line);
+  padding: 0.75rem 1rem;
+  /* Not transparent: .modal-content paints nothing, so the backdrop would
+     show through the bottom of the dialog. Same surface as the body - the
+     hairline is what separates them. */
+  background-color: var(--eb-surface);
+}
+
+/*
+ *  Fixed-shape modal, for content that varies a lot in length (device detail:
+ *  a "Loading..." spinner one moment, a full JSON dump the next). react-
+ *  bootstrap's `scrollable` prop only caps height with max-height, so a short
+ *  state still shrinks the dialog - a real height keeps the window the same
+ *  size regardless of what's showing, and the body scrolls inside it. Same
+ *  convention as Edgeberry-device-software's .eb-modal-content.
+ */
+.eb-modal-content {
+  height: 85vh;
+  border: none;
+}
+
+@media (max-width: 575.98px) {
+  .eb-modal-content { height: 100%; }
+}
+
+/*
+ *  Bootstrap's .btn-close is dark-on-transparent by default, which disappears
+ *  against the dark header. Every Modal.Header here passes react-bootstrap's
+ *  `closeVariant="white"`, and that class IS `filter: invert(1) …`. This rule
+ *  used to apply the same filter unconditionally, so the two inverted each
+ *  other and the X came out mid-grey - dimmer than the title beside it. Scoped
+ *  now to a header that forgot the prop, which is all it was ever for.
+ */
+.modal-header .btn-close:not(.btn-close-white) {
+  filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+/* Bootstrap rests .btn-close at 0.5 opacity; on the dark chrome that reads as
+   disabled rather than quiet. */
+.modal-header .btn-close { opacity: 0.75; }
+.modal-header .btn-close:hover { opacity: 1; }
+
+
+/* ===========================================================================
+ *  Portal dropdowns
+ *
+ *  PortalMenu (components/ui.tsx) renders into <body> as a plain <ul>, so it
+ *  never carries Bootstrap's .dropdown-menu class - but its children are
+ *  .dropdown-item, and every rule for that is written against --bs-dropdown-*
+ *  variables Bootstrap only declares ON .dropdown-menu. With no such ancestor
+ *  those items get no padding, no hover and an invisible divider. Declaring
+ *  the variables here restores Bootstrap's own rules, tuned for the dark
+ *  navbar chrome. Mirrors Edgeberry-device-software's index.css.
+ * ======================================================================== */
+
 .eb-menu {
   --bs-dropdown-item-padding-y: 0.5rem;
   --bs-dropdown-item-padding-x: 1rem;
@@ -275,16 +916,10 @@ body {
   --bs-dropdown-link-hover-bg: rgba(255, 255, 255, 0.1);
 }
 
-.eb-menu .dropdown-item {
-  cursor: pointer;
-}
+.eb-menu .dropdown-item { cursor: pointer; }
 
-.eb-menu .dropdown-item i {
-  font-size: 0.875em;
-}
+.eb-menu .dropdown-item i { font-size: 0.875em; }
 
 @media (prefers-reduced-motion: no-preference) {
-  .eb-menu .dropdown-item {
-    transition: background-color 0.1s ease;
-  }
+  .eb-menu .dropdown-item { transition: background-color 0.1s ease; }
 }

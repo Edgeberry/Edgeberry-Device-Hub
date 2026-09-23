@@ -14,7 +14,8 @@
  */
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Badge, Button, Card, Table, Spinner } from 'react-bootstrap';
+import { Button, Card, Table, Spinner } from 'react-bootstrap';
+import { StatusPill } from '../components/ui';
 import SystemWidget from '../components/SystemWidget';
 import ApplicationsWidget from '../components/ApplicationsWidget';
 import { getDevices, decommissionDevice, deleteWhitelistByDevice, setDeviceRole, setDeviceGroups, getWhitelist } from '../api/devicehub';
@@ -31,7 +32,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 // faMagnifyingGlass rather than the faSearch alias: the same glyph serves two
 // jobs here - filtering the list and inspecting a device - and naming it twice
 // would read as two different icons.
-import { faTrash, faLocationDot, faMagnifyingGlass, faPen, faListCheck, faCloudArrowDown, faRightLeft } from '@fortawesome/free-solid-svg-icons';
+import { faTrash, faLocationDot, faMagnifyingGlass, faPen, faListCheck, faCloudArrowDown, faRightLeft, faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 
 export default function Overview(){
   const [devices, setDevices] = useState<any[]>([]);
@@ -302,6 +303,8 @@ export default function Overview(){
     }
   };
 
+  const onlineCount = devices.filter((d: any) => !d.disabled && d.online).length;
+
   const handleIdentifyDevice = async (uuid: string, name: string) => {
     try {
       setActionBusy({ uuid, action: 'identify' });
@@ -328,10 +331,15 @@ export default function Overview(){
       <SystemWidget />
 
       <Card className="mb-4">
-        <Card.Header className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-          <div className="text-nowrap">
-            <i className="fa-solid fa-microchip me-2"></i>
-            Devices
+        <Card.Header className="justify-content-between flex-wrap">
+          <div className="d-flex align-items-baseline gap-2 flex-wrap">
+            <span className="eb-panel-title">
+              <i className="fa-solid fa-microchip"></i>
+              Devices
+            </span>
+            <span className="eb-panel-meta">
+              {devices.length} registered · {onlineCount} online
+            </span>
           </div>
           {/* Search sits with the whitelist/provisioning buttons rather than in
               its own row above the table: it acts on this list, so it belongs
@@ -345,12 +353,12 @@ export default function Overview(){
               />
               <input
                 type="search"
-                className="form-control form-control-sm"
+                className="form-control form-control-sm eb-search"
                 placeholder="Search devices..."
                 aria-label="Search devices"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ width: 220, maxWidth: '50vw', paddingLeft: 30 }}
+                style={{ width: 220, maxWidth: '50vw' }}
               />
             </div>
             <Button size="sm" variant="outline-secondary" onClick={()=> setShowWhitelist(true)} title="Whitelist">
@@ -361,8 +369,8 @@ export default function Overview(){
             </Button>
           </div>
         </Card.Header>
-        <Card.Body>
-          <Table size="sm" responsive className="device-list-table">
+        <Card.Body className="eb-body-flush">
+          <Table responsive className="eb-table">
               <thead>
                 <tr>
                   <th>Role</th>
@@ -410,19 +418,19 @@ export default function Overview(){
                               }}
                               autoFocus
                             />
-                            <button className="btn btn-sm btn-success" onClick={() => handleSaveRole(uuid, d.role)} disabled={isBusy}>
-                              ✓
+                            <button className="btn btn-sm btn-primary" onClick={() => handleSaveRole(uuid, d.role)} disabled={isBusy} title="Save">
+                              <FontAwesomeIcon icon={faCheck} />
                             </button>
-                            <button className="btn btn-sm btn-secondary" onClick={handleCancelEditRole} disabled={isBusy}>
-                              ✗
+                            <button className="btn btn-sm btn-ghost" onClick={handleCancelEditRole} disabled={isBusy} title="Cancel">
+                              <FontAwesomeIcon icon={faXmark} />
                             </button>
                           </div>
                         ) : (
                           <>
-                            <span className={d.role ? undefined : 'text-muted'}>{roleLabel}</span>
+                            <span className={d.role ? 'fw-semibold' : 'eb-subtle'}>{roleLabel}</span>
                             <button
                               type="button"
-                              className="btn btn-sm btn-edgeberry device-actions ms-1"
+                              className="btn btn-sm btn-ghost device-actions ms-1"
                               style={{padding:'0 6px'}}
                               onClick={(e) => { e.stopPropagation(); handleEditRole(uuid, d.role); }}
                               title="Edit role"
@@ -447,19 +455,23 @@ export default function Overview(){
                               }}
                               autoFocus
                             />
-                            <button className="btn btn-sm btn-success" onClick={() => handleSaveGroups(uuid)} disabled={isBusy}>✓</button>
-                            <button className="btn btn-sm btn-secondary" onClick={handleCancelEditGroups} disabled={isBusy}>✗</button>
+                            <button className="btn btn-sm btn-primary" onClick={() => handleSaveGroups(uuid)} disabled={isBusy} title="Save">
+                              <FontAwesomeIcon icon={faCheck} />
+                            </button>
+                            <button className="btn btn-sm btn-ghost" onClick={handleCancelEditGroups} disabled={isBusy} title="Cancel">
+                              <FontAwesomeIcon icon={faXmark} />
+                            </button>
                           </div>
                         ) : (
                           <>
                             {(d.groups && d.groups.length)
                               ? d.groups.map((g: string) => (
-                                  <Badge bg="secondary" key={g} className="me-1" style={{fontWeight: 400}}>{g}</Badge>
+                                  <span className="eb-chip me-1" key={g}>{g}</span>
                                 ))
-                              : <span className="text-muted">—</span>}
+                              : <span className="eb-subtle">—</span>}
                             <button
                               type="button"
-                              className="btn btn-sm btn-edgeberry device-actions ms-1"
+                              className="btn btn-sm btn-ghost device-actions ms-1"
                               style={{padding:'0 6px'}}
                               onClick={(e) => { e.stopPropagation(); handleEditGroups(uuid, d.groups); }}
                               title={d.role ? 'Edit groups' : 'Assign a role first - groups attach to the application ID'}
@@ -470,20 +482,21 @@ export default function Overview(){
                           </>
                         )}
                       </td>
-                      <td>{uuid || '-'}</td>
+                      <td className="eb-mono eb-muted">{uuid || '—'}</td>
                       <td>
-                        <Badge bg={status === 'online' ? 'success' : status === 'disabled' ? 'danger' : 'secondary'}>
-                          {status || 'unknown'}
-                        </Badge>
+                        <StatusPill
+                          tone={status === 'online' ? 'ok' : status === 'disabled' ? 'fault' : 'idle'}
+                          label={status === 'online' ? 'Online' : status === 'disabled' ? 'Disabled' : 'Offline'}
+                        />
                       </td>
                       <td onClick={(e) => e.stopPropagation()} className="text-end">
-                        <div className="btn-group device-actions" role="group">
-                          <button type="button" className="btn btn-sm btn-edgeberry" onClick={open} disabled={isBusy} title="Inspect device">
+                        <div className="d-inline-flex gap-1 device-actions" role="group">
+                          <button type="button" className="btn btn-sm btn-ghost" onClick={open} disabled={isBusy} title="Inspect device">
                             <FontAwesomeIcon icon={faMagnifyingGlass} />
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-edgeberry"
+                            className="btn btn-sm btn-ghost"
                             onClick={() => handleIdentifyDevice(uuid, roleLabel)}
                             disabled={isBusy || !canRunDirectMethod}
                             title={canRunDirectMethod
@@ -496,7 +509,7 @@ export default function Overview(){
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-edgeberry"
+                            className="btn btn-sm btn-ghost"
                             onClick={() => handleOpenSwap(d)}
                             disabled={isBusy || !d.role}
                             title={d.role
@@ -507,7 +520,7 @@ export default function Overview(){
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-edgeberry btn-edgeberry-danger"
+                            className="btn btn-sm btn-ghost btn-ghost-danger"
                             onClick={() => handleDeleteDevice(d)}
                             disabled={isBusy}
                             title="Decommission"
@@ -525,7 +538,7 @@ export default function Overview(){
             </Table>
 
           {filteredDevices.length === 0 && (
-            <div className="text-center text-muted py-4">
+            <div className="text-center eb-muted py-5 px-3">
               {searchQuery ? 'No devices match your search.' : 'No devices found.'}
             </div>
           )}

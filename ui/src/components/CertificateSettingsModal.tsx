@@ -131,7 +131,7 @@ export default function CertificateSettingsModal(props:{ show:boolean; onClose:(
                   <div>Subject: {root?.subject}</div>
                   <div>Valid until: {root?.notAfter}</div>
                   <div style={{marginTop:8}}>
-                    <a className='btn btn-outline-primary btn-sm' href='/api/settings/certs/root/download'>Download CA certificate</a>
+                    <a className='btn btn-edgeberry btn-sm' href='/api/settings/certs/root/download'>Download CA certificate</a>
                   </div>
                 </div>
               ) : (
@@ -164,7 +164,7 @@ export default function CertificateSettingsModal(props:{ show:boolean; onClose:(
           )}
           <div className='mt-2 d-flex gap-2'>
             {claim?.exists && (
-              <a className='btn btn-outline-primary btn-sm' href='/api/settings/certs/provisioning/provisioning/download'>Download</a>
+              <a className='btn btn-edgeberry btn-sm' href='/api/settings/certs/provisioning/provisioning/download'>Download</a>
             )}
             <Button size='sm' variant={claim?.exists ? 'outline-danger' : 'primary'} disabled={renewing} onClick={renewClaim}>
               {renewing ? <Spinner animation='border' size='sm'/> : (claim?.exists ? 'Renew' : 'Generate')}

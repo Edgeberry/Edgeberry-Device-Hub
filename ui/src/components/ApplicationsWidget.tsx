@@ -10,7 +10,8 @@
  * - WebSocket connections for real-time telemetry
  */
 import { useEffect, useState } from 'react';
-import { Alert, Badge, Button, Card, Form, Modal, Spinner, Table } from 'react-bootstrap';
+import { Alert, Button, Card, Form, Modal, Spinner } from 'react-bootstrap';
+import { StatusPill, SectionLabel, Field } from './ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faKey, faToggleOn, faToggleOff, faTrash, faCopy, faPlus } from '@fortawesome/free-solid-svg-icons';
 
@@ -190,13 +191,18 @@ export default function ApplicationsWidget() {
   return (
     <>
       <Card className="mb-3">
-        <Card.Header className="d-flex justify-content-between align-items-center">
-          <div>
-            <i className="fa-solid fa-cloud me-2"></i>
-            Applications
-            <small className="text-muted ms-2">
-              ({tokens.filter(t => t.active).length} configured · {connections.activeApplications} connected)
-            </small>
+        <Card.Header className="justify-content-between">
+          {/* One summary line beside the title, matching the Devices panel:
+              how many there are, how many are up. These counts used to be
+              stated twice - here, and again as a strip under the table. */}
+          <div className="d-flex align-items-baseline gap-2 flex-wrap">
+            <span className="eb-panel-title">
+              <i className="fa-solid fa-cloud"></i>
+              Applications
+            </span>
+            <span className="eb-panel-meta">
+              {tokens.filter(t => t.active).length} configured · {connections.activeApplications} connected
+            </span>
           </div>
           <Button
             size="sm"
@@ -212,27 +218,26 @@ export default function ApplicationsWidget() {
             <FontAwesomeIcon icon={faPlus} />
           </Button>
         </Card.Header>
-        <Card.Body>
+        <Card.Body className="eb-body-flush">
           {loading ? (
-            <div className="text-center">
+            <div className="text-center py-4">
               <Spinner animation="border" size="sm" />
             </div>
           ) : error ? (
-            <Alert variant="danger" className="mb-0">
-              <i className="fa fa-exclamation-triangle me-2"></i>
+            <Alert variant="danger" className="m-3">
               {error}
             </Alert>
           ) : tokens.length === 0 ? (
-            <div className="text-muted text-center py-3">
-              <i className="fa fa-info-circle me-2"></i>
-              No applications configured. Click "New Application" to create one.
-              <div className="small mt-2">
-                Applications like Node-RED, custom dashboards, or other tools can connect via API tokens.
+            <div className="eb-muted text-center py-5 px-3">
+              No applications configured yet.
+              <div className="small eb-subtle mt-2">
+                Node-RED, custom dashboards and other tools connect with an API token.
+                Add one with the <FontAwesomeIcon icon={faPlus} /> button above.
               </div>
             </div>
           ) : (
             <div className="table-responsive">
-              <table className="table table-sm mb-0">
+              <table className="table eb-table">
                 <thead>
                   <tr>
                     <th>Name</th>
@@ -251,41 +256,38 @@ export default function ApplicationsWidget() {
                     
                     return (
                       <tr key={token.id} className="device-row">
-                        <td className="align-middle">
+                        <td className="fw-semibold">
                           {token.name}
                         </td>
-                        <td className="align-middle">
-                          <Badge bg={!token.active ? 'secondary' : isExpired ? 'danger' : 'success'}>
-                            {!token.active ? 'Inactive' : isExpired ? 'Expired' : 'Active'}
-                          </Badge>
+                        <td>
+                          <StatusPill
+                            tone={!token.active ? 'idle' : isExpired ? 'fault' : 'ok'}
+                            label={!token.active ? 'Inactive' : isExpired ? 'Expired' : 'Active'}
+                          />
                         </td>
-                        <td className="align-middle">
-                          {isConnected ? (
-                            <div>
-                              <Badge bg="success" className="me-1">
-                                Connected
-                              </Badge>
-                              <small className="text-muted">
-                                {connInfo.connectionCount} {connInfo.connectionCount === 1 ? 'session' : 'sessions'}
-                              </small>
-                            </div>
-                          ) : (
-                            <Badge bg="secondary">
-                              Disconnected
-                            </Badge>
-                          )}
+                        <td>
+                          {/* Connected or not, and nothing more. The socket
+                              count that used to sit here answered a question
+                              nobody asks: one token belongs to one
+                              application, so how many WebSockets that
+                              application happens to hold open is its own
+                              business. */}
+                          <StatusPill
+                            tone={isConnected ? 'ok' : 'idle'}
+                            label={isConnected ? 'Connected' : 'Disconnected'}
+                          />
                         </td>
-                        <td className="align-middle">
+                        <td className="eb-muted eb-num">
                           <small>{new Date(token.created_at).toLocaleDateString()}</small>
                         </td>
-                        <td className="align-middle">
+                        <td className="eb-muted eb-num">
                           <small>{token.last_used ? new Date(token.last_used).toLocaleDateString() : 'Never'}</small>
                         </td>
-                        <td className="align-middle text-end">
-                          <div className="btn-group device-actions" role="group">
+                        <td className="text-end">
+                          <div className="d-inline-flex gap-1 device-actions" role="group">
                             <button
                               type="button"
-                              className="btn btn-sm btn-edgeberry"
+                              className="btn btn-sm btn-ghost"
                               onClick={() => viewToken(token.id, token.name)}
                               title="View Token"
                             >
@@ -293,7 +295,7 @@ export default function ApplicationsWidget() {
                             </button>
                             <button
                               type="button"
-                              className="btn btn-sm btn-edgeberry"
+                              className="btn btn-sm btn-ghost"
                               onClick={() => toggleTokenStatus(token)}
                               title={token.active ? 'Disable' : 'Enable'}
                             >
@@ -301,7 +303,7 @@ export default function ApplicationsWidget() {
                             </button>
                             <button
                               type="button"
-                              className="btn btn-sm btn-edgeberry"
+                              className="btn btn-sm btn-ghost btn-ghost-danger"
                               onClick={() => deleteToken(token)}
                               title="Delete"
                             >
@@ -316,35 +318,25 @@ export default function ApplicationsWidget() {
               </table>
             </div>
           )}
-          {connections.totalConnections > 0 && (
-            <div className="mt-3 p-2 bg-light rounded">
-              <small className="text-muted">
-                <i className="fa fa-info-circle me-1"></i>
-                <strong>{connections.totalConnections}</strong> active WebSocket connection{connections.totalConnections !== 1 ? 's' : ''} 
-                from <strong>{connections.activeApplications}</strong> application{connections.activeApplications !== 1 ? 's' : ''}
-              </small>
-            </div>
-          )}
+
         </Card.Body>
       </Card>
 
       {/* View Token Modal */}
       <Modal show={viewTokenModal} onHide={() => setViewTokenModal(false)} centered>
         <Modal.Header closeButton closeVariant="white">
-          <Modal.Title><FontAwesomeIcon icon={faKey} />View Token</Modal.Title>
+          <Modal.Title><FontAwesomeIcon icon={faKey} />View token</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {viewingToken && (
             <>
-              <p className="mb-2">
-                <strong>Application:</strong> {viewingToken.name}
-              </p>
-              <div className="mb-3">
-                <label className="form-label"><strong>Token:</strong></label>
+              <Field label="Application" value={viewingToken.name} />
+              <div className="mt-3 mb-3">
+                <label className="form-label">Token</label>
                 <div className="input-group">
                   <input 
                     type="text" 
-                    className="form-control font-monospace" 
+                    className="form-control eb-mono" 
                     value={viewingToken.token} 
                     readOnly
                     style={{ fontSize: '0.875rem' }}
@@ -361,8 +353,7 @@ export default function ApplicationsWidget() {
               </div>
               <Alert variant="warning" className="mb-0">
                 <small>
-                  <i className="fa fa-exclamation-triangle me-1"></i>
-                  Keep this token secure. Anyone with this token can access your Device Hub data.
+                  Keep this token secure. Anyone holding it can read and control this Device Hub.
                 </small>
               </Alert>
             </>
@@ -378,40 +369,38 @@ export default function ApplicationsWidget() {
       {/* Create Application Token Modal */}
       <Modal show={showCreateModal} onHide={() => !creating && setShowCreateModal(false)}>
         <Modal.Header closeButton closeVariant="white">
-          <Modal.Title><FontAwesomeIcon icon={faPlus} />Add New Application</Modal.Title>
+          <Modal.Title><FontAwesomeIcon icon={faPlus} />Add new application</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {generatedToken ? (
             <div>
               <Alert variant="success">
-                <Alert.Heading>Application Token Created!</Alert.Heading>
-                <p>Copy this token now. You won't be able to see it again.</p>
+                <Alert.Heading>Application token created</Alert.Heading>
+                <p className="mb-0">Copy this token now — you won't be able to see it again.</p>
               </Alert>
-              <Form.Group>
-                <Form.Label>API Token:</Form.Label>
+              <Form.Group className="mt-3">
+                <Form.Label>API token</Form.Label>
                 <Form.Control
                   type="text"
                   value={generatedToken}
                   readOnly
                   onClick={(e) => (e.target as HTMLInputElement).select()}
                 />
-                <Form.Text className="text-muted">
-                  Use this token in the Authorization header: Bearer {generatedToken.substring(0, 10)}...
+                <Form.Text>
+                  Sent as <code>Authorization: Bearer {generatedToken.substring(0, 10)}…</code>
                 </Form.Text>
               </Form.Group>
-              <div className="mt-3">
-                <strong>How to use this token:</strong>
-                <ul className="small">
-                  <li><strong>REST API:</strong> Add header <code>Authorization: Bearer TOKEN</code></li>
-                  <li><strong>WebSocket:</strong> Connect to <code>ws://devicehub:8090/ws?token=TOKEN</code></li>
-                  <li><strong>Node-RED:</strong> Use the Edgeberry Device Hub nodes with this token</li>
-                </ul>
+              <div className="mt-4">
+                <SectionLabel>How to use it</SectionLabel>
+                <Field label="REST API" value={<code>Authorization: Bearer TOKEN</code>} />
+                <Field label="WebSocket" value={<code>ws://devicehub:8090/ws?token=TOKEN</code>} />
+                <Field label="Node-RED" value="Edgeberry Device Hub nodes, with this token" />
               </div>
             </div>
           ) : (
             <div>
               <Form.Group className="mb-3">
-                <Form.Label>Application Name</Form.Label>
+                <Form.Label>Application name</Form.Label>
                 <Form.Control
                   type="text"
                   placeholder="e.g., Node-RED Production, Custom Dashboard, Analytics Tool"
@@ -419,7 +408,7 @@ export default function ApplicationsWidget() {
                   onChange={(e) => setNewTokenName(e.target.value)}
                   disabled={creating}
                 />
-                <Form.Text className="text-muted">
+                <Form.Text>
                   A descriptive name to identify this application
                 </Form.Text>
               </Form.Group>
@@ -432,7 +421,7 @@ export default function ApplicationsWidget() {
                   onChange={(e) => setNewTokenExpiry(e.target.value)}
                   disabled={creating}
                 />
-                <Form.Text className="text-muted">
+                <Form.Text>
                   Leave empty for tokens that never expire
                 </Form.Text>
               </Form.Group>
@@ -450,7 +439,7 @@ export default function ApplicationsWidget() {
                 Cancel
               </Button>
               <Button variant="primary" onClick={createToken} disabled={creating || !newTokenName}>
-                {creating ? <><Spinner animation="border" size="sm" /> Creating...</> : 'Create Application Token'}
+                {creating ? <><Spinner animation="border" size="sm" className="me-2" />Creating…</> : 'Create token'}
               </Button>
             </>
           )}

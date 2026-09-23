@@ -9,22 +9,42 @@ import { createPortal } from 'react-dom';
 
 /** Small caps heading used inside a panel to introduce a sub-section. */
 export function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <div
-      className="text-uppercase fw-semibold mb-2"
-      style={{ fontSize: '0.7rem', letterSpacing: '0.08em', color: 'var(--eb-primary)' }}
-    >
-      {children}
-    </div>
-  );
+  return <div className="eb-section-title mb-2">{children}</div>;
+}
+
+/**
+ * Status indicator: a soft-tinted pill with a coloured dot.
+ *
+ * Replaces the solid Bootstrap badge everywhere a state is reported. A column
+ * of saturated fills makes every row shout at the same volume and leaves no
+ * colour in reserve for the one row that is actually in trouble; a tint plus a
+ * dot keeps the label in dark, readable text and lets `fault` stand out.
+ *
+ * `tone` is the semantic state, not a colour - callers map their own
+ * vocabulary (online/offline/disabled, active/inactive/failed) onto it, so
+ * there is one place to change what "degraded" looks like.
+ */
+export function StatusPill({ tone, label }: {
+  tone:  'ok' | 'warn' | 'fault' | 'idle';
+  label: ReactNode;
+}) {
+  // 'idle' is the base .eb-status styling, so it adds no modifier class.
+  const toneClass = tone === 'idle' ? '' : ` eb-status-${tone}`;
+  return <span className={`eb-status${toneClass}`}>{label}</span>;
+}
+
+/** A user-authored label (a group name, a tag) - deliberately uncoloured, so
+ *  it is not mistaken for a state the system is reporting. */
+export function Chip({ children }: { children: ReactNode }) {
+  return <span className="eb-chip">{children}</span>;
 }
 
 /** Label/value row for read-only detail lists (server info, cert metadata, ...). */
 export function Field({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="d-flex gap-3 py-1" style={{ fontSize: '0.85rem' }}>
-      <span className="text-muted" style={{ minWidth: 130, flexShrink: 0 }}>{label}</span>
-      <span style={{ fontFamily: mono ? 'monospace' : undefined, wordBreak: 'break-all' }}>{value}</span>
+      <span className="eb-muted" style={{ minWidth: 130, flexShrink: 0 }}>{label}</span>
+      <span className={mono ? 'eb-mono' : undefined} style={{ wordBreak: 'break-all' }}>{value}</span>
     </div>
   );
 }
@@ -32,9 +52,7 @@ export function Field({ label, value, mono = false }: { label: string; value: Re
 /** Subtle panel used for inline confirmations, expanded detail, or grouped forms. */
 export function InsetPanel({ children }: { children: ReactNode }) {
   return (
-    <div className="mt-3 p-3" style={{ background: 'var(--bs-tertiary-bg)', borderRadius: 8 }}>
-      {children}
-    </div>
+    <div className="eb-inset mt-3">{children}</div>
   );
 }
 

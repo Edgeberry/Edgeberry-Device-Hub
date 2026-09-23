@@ -4,7 +4,8 @@
  * Admin-only modal to manage provisioning UUID whitelist entries.
  */
 import React, { useEffect, useState, useRef } from 'react';
-import { Alert, Badge, Button, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
+import { Alert, Button, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
+import { StatusPill } from './ui';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faToggleOn, faToggleOff, faTrash, faListCheck, faDownload, faUpload, faPlus, faPen, faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { batchUploadWhitelist, downloadWhitelist } from '../api/devicehub';
@@ -175,7 +176,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
               />
             </Col>
             <Col md={2} className='d-grid'>
-              <Button type='submit' disabled={wlBusy || !wlUuid.trim()} variant='success'>
+              <Button type='submit' disabled={wlBusy || !wlUuid.trim()} variant='primary'>
                 {wlBusy ? <Spinner animation='border' size='sm'/> : <><FontAwesomeIcon icon={faPlus} /> Add</>}
               </Button>
             </Col>
@@ -243,7 +244,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
           )}
           {loading && entries.length===0 ? <Spinner animation='border' size='sm'/> : (
             <div style={{overflowX:'auto'}}>
-              <table className='table table-sm'>
+              <table className='table'>
                 <thead>
                   <tr>
                     <th>UUID</th>
@@ -255,7 +256,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
                 </thead>
                 <tbody>
                   {entries.length===0 ? (
-                    <tr><td colSpan={5} style={{color:'#666'}}>No whitelist entries.</td></tr>
+                    <tr><td colSpan={5} className="eb-subtle">No whitelist entries.</td></tr>
                   ) : entries.map((entry:any)=> (
                     <tr key={entry.uuid} className='device-row'>
                       <td style={{fontFamily:'monospace', fontSize:'0.85em'}}>{entry.uuid}</td>
@@ -277,7 +278,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
                             role='button'
                             onClick={()=>startEditNote(entry.uuid, entry.note)}
                             title='Click to edit'
-                            style={{color: entry.note ? undefined : '#888'}}
+                            style={{color: entry.note ? undefined : 'var(--eb-fg-subtle)'}}
                           >
                             {entry.note || <em>Add a note</em>} <FontAwesomeIcon icon={faPen} style={{fontSize:'0.75em', opacity:0.5}} />
                           </span>
@@ -292,23 +293,23 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
                             decommissioned. That last one used to read "In use",
                             which described a device that no longer exists. */}
                         {entry.disabled_at ? (
-                          <Badge bg='danger' title={`Disabled ${fmtDate(entry.disabled_at)}`}>Disabled</Badge>
+                          <span title={`Disabled ${fmtDate(entry.disabled_at)}`}><StatusPill tone='fault' label='Disabled' /></span>
                         ) : entry.used_at && entry.registered ? (
-                          <Badge bg='secondary' title={`Last claimed ${fmtDate(entry.used_at)}`}>In use</Badge>
+                          <span title={`Last claimed ${fmtDate(entry.used_at)}`}><StatusPill tone='ok' label='In use' /></span>
                         ) : entry.used_at ? (
-                          <Badge bg='warning' text='dark' title={`Claimed ${fmtDate(entry.used_at)}, no longer registered. This UUID may provision again.`}>Decommissioned</Badge>
+                          <span title={`Claimed ${fmtDate(entry.used_at)}, no longer registered. This UUID may provision again.`}><StatusPill tone='warn' label='Decommissioned' /></span>
                         ) : (
-                          <Badge bg='success'>Unused</Badge>
+                          <StatusPill tone='idle' label='Unused' />
                         )}
                       </td>
                       <td className='text-end'>
-                        <div className="btn-group device-actions" role="group">
+                        <div className="d-inline-flex gap-1 device-actions" role="group">
                           {editingUuid === entry.uuid ? (
                             <>
-                              <button type="button" className="btn btn-sm btn-edgeberry" onClick={()=>saveNote(entry.uuid)} title="Save note">
+                              <button type="button" className="btn btn-sm btn-ghost" onClick={()=>saveNote(entry.uuid)} title="Save note">
                                 <FontAwesomeIcon icon={faCheck} />
                               </button>
-                              <button type="button" className="btn btn-sm btn-edgeberry" onClick={()=>setEditingUuid(null)} title="Cancel">
+                              <button type="button" className="btn btn-sm btn-ghost" onClick={()=>setEditingUuid(null)} title="Cancel">
                                 <FontAwesomeIcon icon={faXmark} />
                               </button>
                             </>
@@ -316,7 +317,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
                             <>
                               <button
                                 type="button"
-                                className="btn btn-sm btn-edgeberry"
+                                className="btn btn-sm btn-ghost"
                                 onClick={()=>toggleDisabled(entry.uuid, !entry.disabled_at)}
                                 title={entry.disabled_at ? 'Enable' : 'Disable'}
                               >
@@ -324,7 +325,7 @@ export default function WhitelistModal(props:{ show:boolean; onClose:()=>void })
                               </button>
                               <button
                                 type="button"
-                                className="btn btn-sm btn-edgeberry"
+                                className="btn btn-sm btn-ghost btn-ghost-danger"
                                 onClick={()=>deleteEntry(entry.uuid)}
                                 title="Delete"
                               >
