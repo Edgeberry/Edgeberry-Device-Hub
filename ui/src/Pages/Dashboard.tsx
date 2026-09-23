@@ -25,7 +25,7 @@ export default function Dashboard(props:{user:any, loading:boolean, onLoggedIn: 
         )}
       </div>
       <footer style={{ padding: '12px 0', background: 'transparent', borderTop: '1px solid var(--eb-line)' }}>
-        <Container style={{ fontSize: '12px', color: 'var(--eb-fg-muted)' }}>
+        <Container style={{ fontSize: '12px', color: 'var(--eb-fg-muted)', textAlign: 'center' }}>
           <p style={{ margin: 0 }}>
             <a
               href="https://github.com/Edgeberry"
