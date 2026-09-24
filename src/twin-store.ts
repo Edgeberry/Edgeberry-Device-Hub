@@ -3,6 +3,41 @@
  * desired/reported twin docs and device connection-status events. Called
  * from the twin sub-service (services/twin/), the application sub-service,
  * and the admin/decommission paths in index.ts.
+ *
+ * ---------------------------------------------------------------------------
+ * What a twin is, against what the registry is
+ *
+ * The registry (devicehub.db, devices-store.ts) is what the HUB decided about
+ * a device: identity, certificate, role, lifecycle. A twin is what the DEVICE
+ * says about itself, over MQTT. The two are different sources of truth with
+ * different trust and different freshness - a twin can be stale or absent
+ * while the registry row is perfectly fine, and a consumer that blurs them
+ * ends up presenting provisioning-time data as live device state.
+ *
+ * Keyed by the device's assigned MQTT name, never its uuid. Why that is right,
+ * and why re-keying would be a mistake: device-names.ts.
+ *
+ * ---------------------------------------------------------------------------
+ * Shape of a reported document
+ *
+ * setTwinDoc() merges SHALLOWLY, one top-level key at a time, so a top-level
+ * key is the atomic unit: it is replaced whole, and keys update independently
+ * of each other. Devices running the Edgeberry device software use one key per
+ * section - `system`, `connection`, `application`, `network` - and publish all
+ * of them in a single MQTT message, so one state change is one merge here
+ * rather than four.
+ *
+ * Deprecated, still readable: older device software published the entire state
+ * document under the single key `system`, putting the real values at
+ * `system.system.version` and `system.connection.wifi`. Current firmware nests
+ * the sections inside `system` as well for one release, so both resolve.
+ * Consumers should read the flat keys.
+ *
+ * A twin holds LATEST-VALUE and no history. Anything that needs a series -
+ * signal strength over time, say - is telemetry, not twin state. It also
+ * carries no freshness of its own, which is why devices stamp their own
+ * `updatedAt` into sections that have one: without it, a dead device's last
+ * state is indistinguishable from a live reading.
  */
 import Database from 'better-sqlite3';
 import fs from 'fs';
@@ -20,6 +55,11 @@ function openDb(): any {
   } catch { /* ignore */ }
   const db: any = new (Database as any)(TWIN_DB);
   db.pragma('journal_mode = WAL');
+  // Only bites on a database created from scratch - auto_vacuum cannot be
+  // changed on a populated file without a full VACUUM. It is set here so a
+  // fresh install never accumulates the freelist that incrementalVacuum()
+  // below exists to drain on the ones that already have.
+  db.pragma('auto_vacuum = INCREMENTAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS twin_desired (
       device_id TEXT PRIMARY KEY,
@@ -231,6 +271,72 @@ export function pruneNonDeviceEvents(batch: number): number {
   } catch (error) {
     console.error('[twin-store] pruneNonDeviceEvents failed:', error instanceof Error ? error.message : error);
     return 0;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Return up to `pages` freed pages to the filesystem.
+ *
+ * Deleting rows does not shrink a SQLite file - the pages go on a freelist and
+ * are reused, but never handed back. Pruning alone therefore leaves a database
+ * that is mostly empty and still enormous: before this existed, devicehub.db
+ * had reached 531 MB of which 530.6 MB was free, and twin.db 35 MB at 83% free.
+ *
+ * Bounded per call, for the same reason the prunes above are batched:
+ * better-sqlite3 is synchronous, so an unbounded reclaim would block HTTP and
+ * MQTT for its whole duration - the very stall retention exists to avoid.
+ *
+ * Silently does nothing unless the database was created with, or has since been
+ * converted to, `auto_vacuum = INCREMENTAL`. Converting an existing file needs a
+ * one-off `PRAGMA auto_vacuum = INCREMENTAL; VACUUM;` with the service stopped;
+ * the pragma in openDb() only takes effect on a database created from scratch.
+ */
+export function incrementalVacuum(pages: number): number {
+  const db = openDb();
+  try {
+    const before = db.pragma('freelist_count', { simple: true }) as number;
+    if (!(before > 0)) return 0;
+    db.pragma(`incremental_vacuum(${Math.max(1, Math.floor(pages))})`);
+    const after = db.pragma('freelist_count', { simple: true }) as number;
+    return Math.max(0, before - after);
+  } catch (error) {
+    console.error('[twin-store] incrementalVacuum failed:', error instanceof Error ? error.message : error);
+    return 0;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Remove a device's twin documents (decommission cleanup).
+ *
+ * Nothing deleted these before this existed, so a decommissioned device's last
+ * reported state - including the SSID, BSSID, IP address and MAC it was last
+ * seen on - stayed on the hub for good, and a row accumulated for every device
+ * ever provisioned. The registry owns the device's lifecycle even though the
+ * twin is stored apart from it, so decommission is where that ends.
+ *
+ * Takes every identifier the device has been known by rather than just its
+ * current one. Twin rows written before devices were keyed by their assigned
+ * MQTT name are keyed by hardware uuid instead, and nothing reads those - every
+ * lookup here resolves uuid to name first - so decommission is the only moment
+ * they can still be found and cleared.
+ *
+ * Returns how many rows were removed across both tables.
+ */
+export function deleteTwinDocs(deviceIds: string[]): number {
+  const ids = deviceIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  if (ids.length === 0) return 0;
+  const db = openDb();
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    let removed = 0;
+    for (const table of ['twin_reported', 'twin_desired'] as const) {
+      removed += db.prepare(`DELETE FROM ${table} WHERE device_id IN (${placeholders})`).run(...ids).changes || 0;
+    }
+    return removed;
   } finally {
     try { db.close(); } catch { /* ignore */ }
   }

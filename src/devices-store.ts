@@ -3,6 +3,16 @@
  * provisioning sub-service (services/provisioning/), and the application
  * sub-service (services/application/). One implementation so every surface
  * agrees on device shape, online-status resolution, and role precedence.
+ *
+ * This is what the HUB decided about a device - identity, certificate, role,
+ * lifecycle - as opposed to what the device says about itself, which is its
+ * twin (twin-store.ts). Keyed by hardware uuid; the twin is keyed by the
+ * device's assigned name, and device-names.ts explains why that split exists
+ * and why it should stay.
+ *
+ * Note that `online` and `last_seen` on a device are NOT registry facts: they
+ * are resolved out of twin.db's connection events, so presence here and in the
+ * device list cannot disagree.
  */
 import Database from 'better-sqlite3';
 import fs from 'fs';
@@ -20,6 +30,18 @@ export type DeviceListEntry = {
    *  group exists only as long as some device references it. */
   groups: string[];
   token: string;
+  /**
+   * Free-form blob the device sent in its provisioning request, stored once at
+   * enrollment and never updated. Nothing in the Hub reads it - it informs no
+   * decision anywhere, and for a device that has reported a twin, the twin is
+   * both live and more accurate.
+   *
+   * It is kept for the one case the twin cannot cover: a device that
+   * provisioned and never reported has no twin at all, so this is the only
+   * record of what it claimed to be. Treat it as an enrollment record, not as
+   * device state - `platform` in particular is a hardcoded constant on the
+   * device side and describes the platform family, not the hardware.
+   */
   meta: any;
   created_at: string;
   last_seen: string | null;
@@ -39,6 +61,10 @@ function openDb(file: string): any {
   try {
     const db: any = new (Database as any)(file);
     db.pragma('journal_mode = WAL');
+    // Same rationale as twin-store's: only takes effect on a database
+    // created from scratch, so a fresh install never grows the freelist
+    // that incrementalVacuum() drains on existing ones.
+    db.pragma('auto_vacuum = INCREMENTAL');
     return db;
   } catch {
     return null;

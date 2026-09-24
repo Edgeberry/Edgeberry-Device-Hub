@@ -101,6 +101,11 @@ export const CONNECTION_EVENT_RETENTION_DAYS: number = Number(process.env.CONNEC
 // and batch together bound throughput, which must exceed the ingest rate.
 export const RETENTION_SWEEP_INTERVAL_MS: number = Number(process.env.RETENTION_SWEEP_INTERVAL_MS ?? 60_000);
 export const RETENTION_SWEEP_BATCH: number = Number(process.env.RETENTION_SWEEP_BATCH ?? 5_000);
+/** Pages each retention sweep hands back to the filesystem, per database.
+ *  1000 pages is ~4 MB at the default 4 KB page size - enough to drain a large
+ *  freelist over a few hours of sweeps without any single sweep stalling the
+ *  one thread that serves HTTP and MQTT. */
+export const RETENTION_VACUUM_PAGES: number = Number(process.env.RETENTION_VACUUM_PAGES ?? 1_000);
 
 // MQTT configuration (shared by the telemetry capture, provisioning, twin,
 // and application sub-services - each opens its own connection)

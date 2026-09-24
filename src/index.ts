@@ -33,7 +33,7 @@
  *   be for it to count as online (default 90s = two missed 30s heartbeats).
  * - TELEMETRY_RETENTION_DAYS, CONNECTION_EVENT_RETENTION_DAYS: how long each
  *   device_events table keeps rows (0 = keep everything). Swept in batches -
- *   RETENTION_SWEEP_INTERVAL_MS, RETENTION_SWEEP_BATCH.
+ *   RETENTION_SWEEP_INTERVAL_MS, RETENTION_SWEEP_BATCH, RETENTION_VACUUM_PAGES.
  * - CRL_VALIDITY_DAYS, CRL_REFRESH_INTERVAL_MS, CRL_RENEW_BEFORE_RATIO: how
  *   long a generated CRL stays valid, how often freshness is re-checked, and
  *   how much of the window must remain before it is regenerated.
@@ -88,6 +88,7 @@ import {
   RETENTION_SWEEP_INTERVAL_MS,
   CRL_REFRESH_INTERVAL_MS,
   RETENTION_SWEEP_BATCH,
+  RETENTION_VACUUM_PAGES,
   MQTT_URL,
   MQTT_USERNAME,
   MQTT_PASSWORD,
@@ -100,8 +101,8 @@ import { ensureDirs, caExists, generateRootCA, readCertMeta, generateProvisionin
 import { authRequired, clearSessionCookie, getSession, getSessionUserFromHeaders, parseCookies, setSessionCookie } from './auth.js';
 import { createTerminalService } from './terminal.js';
 import { validateDeviceName, INTERNAL_MQTT_CLIENT_PREFIX } from './device-names.js';
-import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents, getDeviceStatus, getAllDeviceStatuses, pruneConnectionEvents, pruneNonDeviceEvents } from './twin-store.js';
-import { pruneTelemetry } from './event-store.js';
+import { getTwin as getDeviceTwin, deleteDeviceEvents as deleteTwinDeviceEvents, deleteTwinDocs, incrementalVacuum as incrementalVacuumTwin, getDeviceStatus, getAllDeviceStatuses, pruneConnectionEvents, pruneNonDeviceEvents } from './twin-store.js';
+import { pruneTelemetry, incrementalVacuum as incrementalVacuumEvents} from './event-store.js';
 import { getDevicesListSync, tryParseJson, normalizeGroups, setGroupsForRole, getGroupsForRole, listGroups } from './devices-store.js';
 import { getAppSetting, setAppSetting, isAuthDisabled, isWebTerminalEnabled } from './app-settings.js';
 import { startProvisioning } from './services/provisioning/mqtt.js';
@@ -1373,6 +1374,21 @@ app.delete('/api/devices/:uuid', authRequired, (req: Request, res: Response) => 
       } catch (e) {
         console.error('[devicehub] Failed to remove device connection-status history:', e);
       }
+    }
+    // ...and the twin documents themselves, which nothing used to remove: the
+    // device's last reported network - SSID, BSSID, IP, MAC - outlived the
+    // device in the registry, permanently. Both identifiers go in, because a
+    // row written before name-keying is keyed by uuid and is unreachable by
+    // every read path, so this is its last chance to be cleaned up.
+    //
+    // Not fatal on failure, matching the events cleanup above: the registry
+    // DELETE has already committed by this point, so throwing here would
+    // report a failure for a decommission that actually happened.
+    try {
+      const removedTwin = deleteTwinDocs([deviceRow?.name, uuid]);
+      if (removedTwin > 0) console.log(`[devicehub] removed ${removedTwin} twin document(s) for ${uuid}`);
+    } catch (e) {
+      console.error('[devicehub] Failed to remove device twin documents:', e);
     }
     res.json({ ok: true, removed: info.changes || 0, whitelist_entries: Number(wlCount) });
   } catch (e:any) {
@@ -2671,6 +2687,22 @@ function sweepRetention(): void {
     const nonDevice = pruneNonDeviceEvents(RETENTION_SWEEP_BATCH);
     if (telemetry || connection || nonDevice) {
       console.log(`[devicehub] retention: removed ${telemetry} telemetry, ${connection} connection, ${nonDevice} non-device event(s)`);
+    }
+    /*
+     *  Hand the pages the deletes above freed back to the filesystem.
+     *
+     *  Without this the prunes keep the row counts bounded while the files
+     *  themselves only ever grow: they reached 531 MB and 35 MB, at 100% and
+     *  83% free space respectively, before anyone noticed. Bounded per sweep
+     *  for the same reason the prunes are - this runs on the one thread that
+     *  also serves HTTP and MQTT.
+     *
+     *  A no-op on a database still in auto_vacuum=NONE; see incrementalVacuum().
+     */
+    const reclaimed = incrementalVacuumEvents(RETENTION_VACUUM_PAGES)
+                    + incrementalVacuumTwin(RETENTION_VACUUM_PAGES);
+    if (reclaimed > 0) {
+      console.log(`[devicehub] retention: returned ${reclaimed} page(s) to the filesystem`);
     }
   } catch (e: any) {
     console.error('[devicehub] retention sweep failed:', e?.message || e);

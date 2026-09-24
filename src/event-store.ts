@@ -14,7 +14,12 @@ function openDb(): any {
     fs.mkdirSync(path.dirname(DEVICEHUB_DB), { recursive: true });
   } catch { /* ignore */ }
   try {
-    return new Database(DEVICEHUB_DB);
+    const db: any = new Database(DEVICEHUB_DB);
+    // Same rationale as twin-store's: only takes effect on a database
+    // created from scratch, so a fresh install never grows the freelist
+    // that incrementalVacuum() drains on existing ones.
+    db.pragma('auto_vacuum = INCREMENTAL');
+    return db;
   } catch (error) {
     console.error(`Failed to open database ${DEVICEHUB_DB}:`, error);
     return null;
@@ -60,6 +65,39 @@ export function recordEvent(deviceUuid: string, eventType: string, data: any): {
  * SQLite compiled with SQLITE_ENABLE_UPDATE_DELETE_LIMIT and so is not
  * portable across better-sqlite3 builds.
  */
+/**
+ * Return up to `pages` freed pages to the filesystem.
+ *
+ * Deleting rows does not shrink a SQLite file - the pages go on a freelist and
+ * are reused, but never handed back. Pruning alone therefore leaves a database
+ * that is mostly empty and still enormous: before this existed, devicehub.db
+ * had reached 531 MB of which 530.6 MB was free, and twin.db 35 MB at 83% free.
+ *
+ * Bounded per call, for the same reason the prunes above are batched:
+ * better-sqlite3 is synchronous, so an unbounded reclaim would block HTTP and
+ * MQTT for its whole duration - the very stall retention exists to avoid.
+ *
+ * Silently does nothing unless the database was created with, or has since been
+ * converted to, `auto_vacuum = INCREMENTAL`. Converting an existing file needs a
+ * one-off `PRAGMA auto_vacuum = INCREMENTAL; VACUUM;` with the service stopped;
+ * the pragma in openDb() only takes effect on a database created from scratch.
+ */
+export function incrementalVacuum(pages: number): number {
+  const db = openDb();
+  try {
+    const before = db.pragma('freelist_count', { simple: true }) as number;
+    if (!(before > 0)) return 0;
+    db.pragma(`incremental_vacuum(${Math.max(1, Math.floor(pages))})`);
+    const after = db.pragma('freelist_count', { simple: true }) as number;
+    return Math.max(0, before - after);
+  } catch (error) {
+    console.error('[event-store] incrementalVacuum failed:', error instanceof Error ? error.message : error);
+    return 0;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
 export function pruneTelemetry(retentionDays: number, batch: number): number {
   if (!(retentionDays > 0)) return 0;
   const db = openDb();
