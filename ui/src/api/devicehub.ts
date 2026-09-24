@@ -78,6 +78,14 @@ export async function getDevice(uuid: string){ return jsonOrMessage(await fetch(
  */
 export async function getDeviceEvents(uuid: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(uuid)}/events`, { credentials:'include' })); }
 /**
+ * Get a device's twin (desired + reported).
+ *
+ * Keyed by hardware uuid here; the route resolves that to the device's
+ * assigned MQTT name, which is what the twin tables are actually keyed by.
+ * @param uuid device uuid
+ */
+export async function getDeviceTwin(uuid: string){ return jsonOrMessage(await fetch(base()+`/devices/${encodeURIComponent(uuid)}/twin`, { credentials:'include' })); }
+/**
  * Create a device (future)
  * @param body device data
  */
