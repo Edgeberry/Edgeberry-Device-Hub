@@ -56,9 +56,63 @@ The handshake is two MQTT round trips on the same connection, distinguished by w
 
 Whitelist enforcement (`ENFORCE_WHITELIST`, default on) gates step 1 on the UUID being pre-registered; it's not a one-shot lock, so a whitelisted device can reprovision indefinitely — useful for SD-card re-flashes or certificate renewal. Revoking a device's certificate publishes an updated CRL to Mosquitto immediately, no broker restart required.
 
+### Device identity
+
+A device carries three identifiers, and they are not interchangeable. Most confusion about this codebase starts with treating them as one thing.
+
+| | identifies | lifetime | where it appears |
+|---|---|---|---|
+| **`uuid`** | the physical board (HAT EEPROM) | fixed to the hardware | claim handshake only |
+| **`name`** | the wire identity | assigned at provisioning, never mutated | MQTT client ID, certificate CN, twin key |
+| **`role`** | the application identity | admin-chosen, repointed on hardware swap | UI, `device_roles` |
+
+**`uuid` is a claim token, not an identity.** That is the whole reason provisioning is two round trips: the UUID gets a device far enough to earn a certificate, and is then never used on the wire again. Anything that puts the UUID back on a hot path is working against that.
+
+**`name` is what the broker and the twin see.** Device rows are never mutated or deleted, so `uuid` ↔ `name` is 1:1 and stable — which is why keying the twin by `name` still means "keyed by the hardware".
+
+**`role` is the only one that moves.** A hardware swap repoints a role's `uuid` at a different device; neither device row changes. The application ID and its groups follow the role. Telemetry and twin history do not — they belong to the hardware that produced them.
+
+#### Which store is keyed by what
+
+`devicehub.db` (registry, certificates, whitelist, roles) is keyed by **`uuid`**. `twin.db` (twin documents, connection events) is keyed by **`name`**, because the twin sub-service reads the device out of the MQTT topic — `$devicehub/devices/{name}/twin/update` — and has nothing else to go on.
+
+So any read that crosses from one to the other resolves first:
+
+```js
+const row = db.prepare('SELECT name FROM devices WHERE uuid = ?').get(uuid);
+```
+
+This is a join, not a seam: both keys are stable per board. Re-keying the twin by `uuid` would mean a registry lookup on every twin message, on the single synchronous thread that also serves HTTP and MQTT — the exact shape of the outage retention and indexing were added to prevent.
+
+The registry still owns the device's **lifecycle**, though the twin is stored apart from it: decommissioning deletes the twin documents (by both identifiers, so pre-`name` rows go too), the connection events, the role and its groups.
+
 ### Digital twin
 
 Standard desired/reported split, MQTT-native (`.../twin/get`, `.../twin/update`, `.../twin/update/{accepted,delta,rejected}`), the same shape whether you get there from a device or from the application API. Presence is derived from heartbeats plus the underlying MQTT connection state, not assumed from twin activity.
+
+#### Reported document layout
+
+Devices running the Edgeberry device software report one top-level key per section:
+
+```jsonc
+{
+  "system":      { "platform": "...", "state": "running", "version": "3.8.6",
+                   "board": "edgeberry", "board_version": "1.6", "uuid": "..." },
+  "connection":  { "provision": "disabled", "connection": "connected",
+                   "network": "connected", "wifi": "connected" },
+  "application": { "state": "...", "health": "ok", "version": "..." },
+  "network":     { "medium": "wifi", "interface": "wlan0", "mac": "...",
+                   "ipv4": { "address": "...", "prefix": 24, "gateway": "...", "dns": ["..."] },
+                   "wifi": { "ssid": "...", "bssid": "...", "channel": 2, "band": "2.4GHz",
+                             "strength": 78, "bitrate": 72200, "security": "wpa2" } }
+}
+```
+
+Reported documents merge **shallowly, one top-level key at a time**, so each section is replaced whole and sections update independently.
+
+`network` is latest-value like everything else in a twin — signal strength is published on change past a deadband, not continuously. For signal over time, use telemetry.
+
+> **Deprecated:** the device software previously published the entire document under the single key `system`, putting the real values at `system.system.version`, `system.connection.wifi` and so on. For one release both resolve — the sections are still nested inside `system` as well — so existing readers keep working. Move to the flat keys; the nested copies will be removed.
 
 ## SDKs
 

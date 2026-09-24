@@ -4,6 +4,22 @@
  * twin-service; storage calls go directly into twin-store.ts, and device
  * status updates persist + broadcast via the callback passed to
  * startTwin() (previously a D-Bus round trip to core's TwinService).
+ *
+ * This is the hot path. Every twin update, from every device, arrives here and
+ * lands in synchronous SQLite on the one thread that also serves HTTP and the
+ * Hub's other MQTT connections - so what this file does per message is the
+ * budget for the whole fleet.
+ *
+ * That is why the device is identified by parsing its NAME out of the topic
+ * ($devicehub/devices/{name}/twin/update) and why twin.db is keyed by that
+ * name: recording a twin update touches the twin database and nothing else.
+ * Resolving the name to a hardware uuid first - to key the twin the way the
+ * registry is keyed - would add a devicehub.db lookup to every message on that
+ * same thread. See device-names.ts for the full identity model.
+ *
+ * The reverse direction is fine and is what the admin/application APIs do:
+ * they hold a uuid, resolve it to a name once per request on a cold path, and
+ * read the twin with it.
  */
 import { connect, IClientOptions, MqttClient } from 'mqtt';
 import { readFileSync, existsSync } from 'fs';

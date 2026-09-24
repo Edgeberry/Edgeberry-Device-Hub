@@ -1,6 +1,54 @@
-// Device name validation and generation utilities
-
 /**
+ * Device identity: names, and what they are for.
+ *
+ * ---------------------------------------------------------------------------
+ * A device carries THREE identifiers. They are not interchangeable, and most
+ * confusion about this codebase starts with treating them as one thing.
+ *
+ *   uuid   The physical board, burned into the HAT EEPROM. It is a one-time
+ *          CLAIM TOKEN, not an identity: it authenticates the provisioning
+ *          handshake and is then deliberately never used on the wire again.
+ *          That is the entire reason provisioning is two round trips (see
+ *          services/provisioning/). Keys the registry: devicehub.db.
+ *
+ *   name   The device's ongoing identity on the wire. Assigned by the Hub at
+ *          provisioning and never mutated afterwards - it is the MQTT clientId,
+ *          the CN of the device's certificate, and the key its twin is stored
+ *          under. This file decides what a valid one looks like.
+ *
+ *   role   The application identity: an admin-chosen label pointing at a uuid
+ *          (device_roles). The only one that moves - a hardware swap repoints a
+ *          role at a different device, and neither device row is touched. The
+ *          application id and its groups follow the role; telemetry and twin
+ *          history do not, because they belong to the hardware that produced
+ *          them.
+ *
+ * Because device rows are never mutated or deleted, uuid <-> name is 1:1 and
+ * stable for the life of the board. Keying the twin by name therefore still
+ * means "keyed by the hardware".
+ *
+ * ---------------------------------------------------------------------------
+ * Which store is keyed by what, and why it is not a mistake:
+ *
+ *   devicehub.db  registry, certificates, whitelist, roles   keyed by UUID
+ *   twin.db       twin documents, connection events          keyed by NAME
+ *
+ * The twin sub-service reads the device out of the MQTT topic
+ * ($devicehub/devices/{name}/twin/update) and has nothing else to go on, so
+ * name-keying is what lets it record a twin update without touching the
+ * registry at all. Re-keying the twin by uuid would put a registry lookup on
+ * every twin message - on the single synchronous thread that also serves HTTP
+ * and MQTT. Do not do it.
+ *
+ * The cost is that any read crossing from one store to the other resolves
+ * first (`SELECT name FROM devices WHERE uuid = ?`). That is a join, not a
+ * seam: both keys are stable per board.
+ *
+ * The registry still owns the device's LIFECYCLE even though the twin is
+ * stored apart from it - decommissioning deletes the twin documents, the
+ * connection events, the role and its groups. See twin-store.ts.
+ *
+ * ---------------------------------------------------------------------------
  * Device naming conventions:
  * - Default format: EDGB-<first 4 UUID chars>
  * - Allowed characters: alphanumeric, hyphens, underscores
